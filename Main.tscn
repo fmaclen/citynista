@@ -1,8 +1,12 @@
-[gd_scene load_steps=8 format=2]
+[gd_scene load_steps=12 format=2]
 
 [ext_resource path="res://Camera.gd" type="Script" id=1]
 [ext_resource path="res://grass.png" type="Texture" id=2]
 [ext_resource path="res://dirt.png" type="Texture" id=3]
+[ext_resource path="res://Map.gd" type="Script" id=4]
+
+[sub_resource type="BoxShape" id=5]
+extents = Vector3( 16, 2, 16 )
 
 [sub_resource type="SpatialMaterial" id=1]
 albedo_texture = ExtResource( 2 )
@@ -16,25 +20,46 @@ size = Vector3( 32, 3, 32 )
 [sub_resource type="SpatialMaterial" id=4]
 albedo_texture = ExtResource( 3 )
 
+[sub_resource type="CylinderMesh" id=6]
+height = 0.5
+
+[sub_resource type="SpatialMaterial" id=7]
+albedo_color = Color( 0.909804, 0.835294, 0.0470588, 1 )
+
 [node name="Main" type="Spatial"]
 
-[node name="Map" type="Spatial" parent="."]
-
-[node name="Grass" type="MeshInstance" parent="Map"]
-transform = Transform( 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.5, 0 )
-material_override = SubResource( 1 )
-mesh = SubResource( 2 )
-material/0 = null
-
-[node name="Dirt" type="MeshInstance" parent="Map"]
-transform = Transform( 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -2.5, 0 )
-mesh = SubResource( 3 )
-material/0 = SubResource( 4 )
-
 [node name="CameraController" type="Position3D" parent="."]
+transform = Transform( 0.707107, 0, 0.707107, 0, 1, 0, -0.707107, 0, 0.707107, 0, 0, 0 )
 script = ExtResource( 1 )
 
 [node name="Camera" type="Camera" parent="CameraController"]
-transform = Transform( -1, 4.76139e-08, -7.33189e-08, 0, 0.838671, 0.544639, 8.74228e-08, 0.544639, -0.838671, 0, 16, -28 )
+transform = Transform( -1, -4.76139e-08, 7.33189e-08, 0, 0.838671, 0.544639, -8.74228e-08, 0.544639, -0.838671, 0, 16, -28 )
 projection = 1
 size = 21.0
+
+[node name="Map" type="StaticBody" parent="."]
+script = ExtResource( 4 )
+
+[node name="Ground" type="CollisionShape" parent="Map"]
+transform = Transform( 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -2, 0 )
+shape = SubResource( 5 )
+
+[node name="Grass" type="MeshInstance" parent="Map/Ground"]
+transform = Transform( 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.5, 0 )
+material_override = SubResource( 1 )
+mesh = SubResource( 2 )
+skeleton = NodePath("../..")
+material/0 = null
+
+[node name="Dirt" type="MeshInstance" parent="Map/Ground"]
+transform = Transform( 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.5, 0 )
+mesh = SubResource( 3 )
+skeleton = NodePath("../..")
+material/0 = SubResource( 4 )
+
+[node name="Marker" type="MeshInstance" parent="Map"]
+transform = Transform( 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -1, 0 )
+mesh = SubResource( 6 )
+material/0 = SubResource( 7 )
+
+[connection signal="input_event" from="Map" to="Map" method="_on_StaticBody_input_event"]
