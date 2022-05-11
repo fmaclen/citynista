@@ -1,8 +1,8 @@
 [gd_scene load_steps=9 format=2]
 
-[ext_resource path="res://scenes/MainMap.gd" type="Script" id=1]
-[ext_resource path="res://scenes/MainCamera.gd" type="Script" id=2]
-[ext_resource path="res://scenes/MainNetwork.gd" type="Script" id=3]
+[ext_resource path="res://scripts/MainMap.gd" type="Script" id=1]
+[ext_resource path="res://scripts/MainCamera.gd" type="Script" id=2]
+[ext_resource path="res://scripts/MainNetwork.gd" type="Script" id=3]
 
 [sub_resource type="BoxShape" id=5]
 extents = Vector3( 16, 2, 16 )
@@ -28,7 +28,7 @@ script = ExtResource( 2 )
 [node name="Camera" type="Camera" parent="CameraController"]
 transform = Transform( -1, -4.76139e-08, 7.33189e-08, 0, 0.838671, 0.544639, -8.74228e-08, 0.544639, -0.838671, 0, 16, -28 )
 projection = 1
-size = 21.0
+size = 24.0
 
 [node name="Map" type="StaticBody" parent="."]
 script = ExtResource( 1 )

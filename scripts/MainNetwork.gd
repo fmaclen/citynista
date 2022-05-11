@@ -7,7 +7,7 @@ func add_child(child, legible = false):
 
 
 func connect_network_nodes():
-	if get_child_count() > 3:
+	if get_child_count() > 2:
 		var line = $DrawLine
 		line.begin(Mesh.PRIMITIVE_LINE_STRIP)
 
