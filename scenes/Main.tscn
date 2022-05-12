@@ -55,4 +55,10 @@ script = ExtResource( 3 )
 
 [node name="DrawLine" type="ImmediateGeometry" parent="Map/Network"]
 
-[connection signal="input_event" from="Map" to="Map" method="_on_StaticBody_input_event"]
+[node name="Sun" type="DirectionalLight" parent="."]
+transform = Transform( 0.707107, -0.385118, 0.59303, 0, 0.838671, 0.544639, -0.707107, -0.385118, 0.59303, 0, 12, 0 )
+light_color = Color( 0.909804, 0.886275, 0.807843, 1 )
+light_energy = 0.75
+shadow_enabled = true
+
+[connection signal="input_event" from="Map" to="Map" method="_on_Map_input_event"]

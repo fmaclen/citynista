@@ -8,16 +8,6 @@
 
 config_version=4
 
-_global_script_classes=[ {
-"base": "Node",
-"class": "Intersection",
-"language": "GDScript",
-"path": "res://scripts/GlobalIntersection.gd"
-} ]
-_global_script_class_icons={
-"Intersection": ""
-}
-
 [application]
 
 config/name="Simways"
