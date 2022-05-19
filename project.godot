@@ -13,7 +13,12 @@ config_version=4
 config/name="Citynista"
 run/main_scene="res://scenes/Main.tscn"
 run/low_processor_mode=true
-config/icon="res://icon.png"
+config/icon="res://assets/icon.png"
+
+[display]
+
+window/size/width=1366
+window/size/height=768
 
 [input]
 
