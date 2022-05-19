@@ -8,7 +8,7 @@ func _input(event):
 	if pressed:
 		if event is InputEventKey and event.is_action_released("ui_cancel"):
 			pressed = false
-
+			_on_Button_pressed()
 
 func _on_Button_pressed():
 	if pressed:
