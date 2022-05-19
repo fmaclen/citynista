@@ -10,7 +10,7 @@ config_version=4
 
 [application]
 
-config/name="Simways"
+config/name="Citynista"
 run/main_scene="res://scenes/Main.tscn"
 run/low_processor_mode=true
 config/icon="res://icon.png"
