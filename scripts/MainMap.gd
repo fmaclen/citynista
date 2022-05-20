@@ -1,48 +1,79 @@
 extends CollisionObject
 
 
-onready var network = $Network
-var intersection_scene = preload("res://scenes/Intersection.tscn")
+onready var network: Node = $Network
+onready var network_nodes: Node = network.get_child(0)
+onready var network_ways: Node = network.get_child(1)
+
+const network_node_scene: Resource = preload("res://scenes/NetworkNode.tscn")
+const network_way_scene: Resource = preload("res://scenes/NetworkWay.tscn")
+
 var is_building_mode: bool = false
-var staged_intersection
+var network_node_origin: Area
+var network_node_destination: Area
 
 
-func _on_Button_is_building_mode_active(state):
+func _on_Button_set_is_building_mode(state):
 	is_building_mode = state
+
 	if !is_building_mode:
-		staged_intersection.queue_free()
+		remove_staged_network_node()
 
 
 func _on_Map_input_event(_camera, event, click_position, _click_normal, _shape_idx):
 	if is_building_mode:
-		if event is InputEventMouseButton and event.button_index == BUTTON_LEFT:
-			add_segment(click_position)
-		else:
-			stage_segment(click_position)
+		if network_node_origin == null:
+			add_new_staged_network_node(click_position)
+
+		elif network_node_origin.is_staged:
+			move_network_node(network_node_origin, click_position)
+			if event is InputEventMouseButton and event.button_index == BUTTON_LEFT:
+				commit_network_node(network_node_origin, click_position)
+
+		elif network_node_destination.is_staged:
+			move_network_node(network_node_destination, click_position)
+			if event is InputEventMouseButton and event.button_index == BUTTON_LEFT:
+				commit_network_node(network_node_destination, click_position)
 
 
-func create_segment(position):
-	print("creating new segment")
-	var intersection_instance = intersection_scene.instance()
-	intersection_instance.transform.origin = position
-	intersection_instance.is_staged = false
-	network.add_child(intersection_instance)
+func move_network_node(node: Area, position: Vector3):
+	node.transform.origin = position
 
 
-func stage_segment(position):
-	if network.get_child_count() > 1:
-		staged_intersection = network.get_child(network.get_child_count() - 1)
-		staged_intersection.is_staged = true
-		staged_intersection.transform.origin = position
-	else:
-		create_segment(position)
-
-
-func add_segment(position):
-	print("adding segment")
-	# Prevent adding multiple intersections when many click events are fired in the same position
+func commit_network_node(node: Area, position: Vector3):
 	if is_click_debounced(position):
-		create_segment(position)
+		node.transform.origin = position
+		node.is_staged = false
+		add_new_staged_network_node(position)
+
+
+func add_new_staged_network_node(position):
+	var network_node = network_node_scene.instance()
+	network_node.transform.origin = position
+	network_node.is_staged = true
+	network_nodes.add_child(network_node)
+
+	if network_node_origin == null:
+		network_node_origin = get_last_network_node()
+	else:
+		network_node_destination = get_last_network_node()
+		add_new_network_way(network_node_origin, network_node_destination)
+
+
+func remove_staged_network_node():
+	var last_network_node = get_last_network_node()
+	if last_network_node.is_staged:
+		last_network_node.queue_free()
+		network_node_origin = null
+		network_node_destination = null
+
+
+func add_new_network_way(origin: Area, destination: Area):
+	print("Adding new network way, from: ", origin.transform.origin, " to: ", destination.transform.origin)
+
+
+func get_last_network_node():
+	return network_nodes.get_child(network_nodes.get_child_count() - 1)
 
 
 func is_click_debounced(clicked_position):

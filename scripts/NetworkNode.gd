@@ -1,4 +1,4 @@
-extends CollisionObject
+extends Area
 
 
 var is_staged: bool = true
@@ -11,9 +11,9 @@ func _process(_delta):
 		$CollisionShape.disabled = false
 
 
-func _on_Intersection_mouse_entered():
+func _on_NetworkNode_mouse_entered():
 	$Puck.transform.origin.y = $Puck.transform.origin.y + 0.25
 
 
-func _on_Intersection_mouse_exited():
+func _on_NetworkNode_mouse_exited():
 	$Puck.transform.origin.y = $Puck.transform.origin.y - 0.25
