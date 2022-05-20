@@ -34,6 +34,8 @@ func _on_Map_input_event(_camera, event, click_position, _click_normal, _shape_i
 			move_network_node(network_node_destination, click_position)
 			if event is InputEventMouseButton and event.button_index == BUTTON_LEFT:
 				commit_network_node(network_node_destination, click_position)
+				add_new_network_way(network_node_origin, network_node_destination)
+				reset_network_node_positions()
 
 
 func move_network_node(node: Area, position: Vector3):
@@ -57,23 +59,29 @@ func add_new_staged_network_node(position):
 		network_node_origin = get_last_network_node()
 	else:
 		network_node_destination = get_last_network_node()
-		add_new_network_way(network_node_origin, network_node_destination)
 
 
 func remove_staged_network_node():
 	var last_network_node = get_last_network_node()
 	if last_network_node.is_staged:
 		last_network_node.queue_free()
-		network_node_origin = null
-		network_node_destination = null
+		reset_network_node_positions()
 
 
-func add_new_network_way(origin: Area, destination: Area):
-	print("Adding new network way, from: ", origin.transform.origin, " to: ", destination.transform.origin)
+func reset_network_node_positions():
+	network_node_origin = null
+	network_node_destination = null
 
 
 func get_last_network_node():
 	return network_nodes.get_child(network_nodes.get_child_count() - 1)
+
+
+func add_new_network_way(origin: Area, destination: Area):
+	var network_way = network_way_scene.instance()
+	network_way.add_network_node(origin.get_instance_id())
+	network_way.add_network_node(destination.get_instance_id())
+	network_ways.add_child(network_way)
 
 
 func is_click_debounced(clicked_position):
