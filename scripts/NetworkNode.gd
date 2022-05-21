@@ -2,6 +2,8 @@ extends Area
 
 
 var is_staged: bool = true
+const material_default: SpatialMaterial = preload("res://assets/theme/ColorDefault.tres")
+const material_active: SpatialMaterial = preload("res://assets/theme/ColorActive.tres")
 
 
 func _process(_delta):
@@ -12,8 +14,9 @@ func _process(_delta):
 
 
 func _on_NetworkNode_mouse_entered():
-	$Puck.transform.origin.y = $Puck.transform.origin.y + 0.25
+	$Puck.set_surface_material(0, material_active)
 
 
 func _on_NetworkNode_mouse_exited():
-	$Puck.transform.origin.y = $Puck.transform.origin.y - 0.25
+	$Puck.set_surface_material(0, material_default)
+
