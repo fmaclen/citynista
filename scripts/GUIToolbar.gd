@@ -4,14 +4,10 @@ extends GridContainer
 signal set_is_building
 signal set_is_editing
 
-var button_ids: PoolIntArray
-
 
 func _ready():
-	button_ids = [$ButtonBuild.get_instance_id(),	$ButtonEdit.get_instance_id()]
-
-	for id in button_ids:
-		instance_from_id(id).connect("pressed", self, "handle_button", [instance_from_id(id)])
+	for button in get_children():
+		button.connect("pressed", self, "handle_button", [button])
 
 
 func handle_button(button: Button):
@@ -30,8 +26,8 @@ func _input(event):
 
 
 func unpress_buttons():
-	for id in button_ids:
-		instance_from_id(id).pressed = false
+	for button in get_children():
+		button.pressed = false
 
 	emit_signal("set_is_building", false)
 	emit_signal("set_is_editing", false)
