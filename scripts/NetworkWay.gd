@@ -7,8 +7,8 @@ var is_staged: bool = true
 
 func add_network_node(id: int):
 	network_node_ids.append(id)
-	instance_from_id(id).connect("network_node_changed", self, "_update")
-	instance_from_id(id).connect("network_node_removed", self, "remove_network_node")
+	instance_from_id(id).connect("network_node_updated", self, "_update")
+	# instance_from_id(id).connect("network_node_removed", self, "remove_network_node")
 	_update()
 
 
@@ -41,5 +41,3 @@ func _update():
 		debug_line.add_vertex(waypoint)
 
 	debug_line.end()
-
-	
