@@ -5,14 +5,22 @@ var network_node_ids: PoolIntArray
 var is_staged: bool = true
 
 
-func update_destination_node(id: int):
-	network_node_ids.remove(network_node_ids.size() - 1)
-	add_network_node(id)
-
-
 func add_network_node(id: int):
 	network_node_ids.append(id)
+	instance_from_id(id).connect("network_node_changed", self, "_update")
+	instance_from_id(id).connect("network_node_removed", self, "remove_network_node")
 	_update()
+
+
+func remove_network_node(id: int):
+	if network_node_ids.size() == 2:
+		for id in network_node_ids:
+			instance_from_id(id).queue_free()
+			queue_free()
+
+	else:
+		var network_node_index = Array(network_node_ids).find_last(id)
+		network_node_ids.remove(network_node_index)
 
 
 func _update():
@@ -33,3 +41,5 @@ func _update():
 		debug_line.add_vertex(waypoint)
 
 	debug_line.end()
+
+	
