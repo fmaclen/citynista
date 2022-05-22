@@ -7,8 +7,8 @@ var is_building: bool = false
 var is_editing: bool = false
 
 onready var network: Node = $Network
-onready var network_nodes: Node = network.get_child(0)
-onready var network_ways: Node = network.get_child(1)
+onready var network_nodes_container: Node = network.get_child(0)
+onready var network_ways_container: Node = network.get_child(1)
 
 const network_node_scene: PackedScene = preload("res://scenes/NetworkNode.tscn")
 const network_way_scene: PackedScene = preload("res://scenes/NetworkWay.tscn")
@@ -33,6 +33,11 @@ func set_is_building(state: bool):
 
 func set_is_editing(state: bool):
 	is_editing = state
+
+	if network_nodes_container.get_child_count() > 0:
+		for node in network_nodes_container.get_children():
+			node.is_editable = state
+			node._update()
 
 
 func _on_Map_input_event(_camera:Node, event:InputEvent, position:Vector3, _normal:Vector3, _shape_idx:int):
@@ -76,14 +81,14 @@ func add_network_node_origin(position):
 	network_node_origin = network_node_scene.instance()
 	network_node_origin.transform.origin = position
 	network_node_origin.is_staged = true
-	network_nodes.add_child(network_node_origin)
+	network_nodes_container.add_child(network_node_origin)
 
 
 func add_network_node_destination(position):
 	network_node_destination = network_node_scene.instance()
 	network_node_destination.transform.origin = position
 	network_node_destination.is_staged = true
-	network_nodes.add_child(network_node_destination)
+	network_nodes_container.add_child(network_node_destination)
 
 
 func remove_staged_network_way():
@@ -104,14 +109,14 @@ func reset_network_variables():
 
 
 func get_last_network_node():
-	return network_nodes.get_child(network_nodes.get_child_count() - 1)
+	return network_nodes_container.get_child(network_nodes_container.get_child_count() - 1)
 
 
 func add_network_way():
 	network_way = network_way_scene.instance()
 	network_way.add_network_node(network_node_origin.get_instance_id())
 	network_way.add_network_node(network_node_destination.get_instance_id())
-	network_ways.add_child(network_way)
+	network_ways_container.add_child(network_way)
 
 
 func move_network_way():

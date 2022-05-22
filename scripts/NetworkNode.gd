@@ -9,6 +9,7 @@ const material_active: SpatialMaterial = preload("res://assets/theme/ColorActive
 
 var is_staged: bool = true
 var is_dragging: bool = false
+var is_editable: bool = false
 var previous_position: Vector3
 
 var COLLISION_RADIUS_DEFAULT: float = 0.25
@@ -23,7 +24,7 @@ func _ready():
 
 
 func _update():
-	if is_staged:
+	if is_staged or !is_editable:
 		$CollisionShape.disabled = true
 	else:
 		$CollisionShape.disabled = false
