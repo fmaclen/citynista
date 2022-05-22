@@ -11,13 +11,12 @@ func _ready():
 
 
 func handle_button(button: Button):
-	unpress_buttons()
-	button.pressed = true
+	unpress_buttons(button)
 
 	if button.text == "Build":
-		emit_signal("set_is_building", true)
+		emit_signal("set_is_building", button.pressed)
 	elif button.text == "Edit":
-		emit_signal("set_is_editing", true)
+		emit_signal("set_is_editing", button.pressed)
 
 
 func _input(event):
@@ -25,9 +24,10 @@ func _input(event):
 		unpress_buttons()
 
 
-func unpress_buttons():
+func unpress_buttons(button_exemption: Button = null):
 	for button in get_children():
-		button.pressed = false
+		if button != button_exemption:
+			button.pressed = false
 
 	emit_signal("set_is_building", false)
 	emit_signal("set_is_editing", false)

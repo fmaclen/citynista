@@ -62,9 +62,6 @@ func _on_Map_input_event(_camera:Node, event:InputEvent, position:Vector3, _norm
 					commit_network_node(network_node_destination, position)
 					commit_network_way()
 
-	elif is_editing:
-		pass
-
 
 func move_network_node(node: Area, position: Vector3):
 	node.transform.origin = position
