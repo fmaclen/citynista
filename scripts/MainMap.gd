@@ -48,7 +48,7 @@ func _on_Map_input_event(_camera:Node, event:InputEvent, position:Vector3, _norm
 		elif network_node_origin.is_staged:
 			move_network_node(network_node_origin, position)
 
-			if event is InputEventMouseButton and event.button_index == BUTTON_LEFT:
+			if event.is_action_released("ui_left_click"):
 				commit_network_node(network_node_origin, position)
 				add_network_node_destination(position)
 				add_network_way()
@@ -57,8 +57,7 @@ func _on_Map_input_event(_camera:Node, event:InputEvent, position:Vector3, _norm
 			move_network_node(network_node_destination, position)
 			move_network_way()
 
-			if event is InputEventMouseButton and event.button_index == BUTTON_LEFT:
-				if is_click_debounced(position):
+			if event.is_action_released("ui_left_click"):
 					commit_network_node(network_node_destination, position)
 					commit_network_way()
 
@@ -68,10 +67,9 @@ func move_network_node(node: Area, position: Vector3):
 
 
 func commit_network_node(node: Area, position: Vector3):
-	if is_click_debounced(position):
-		node.transform.origin = position
-		node.is_staged = false
-		node._update()
+	node.transform.origin = position
+	node.is_staged = false
+	node._update()
 
 
 func add_network_node_origin(position):
@@ -124,12 +122,4 @@ func commit_network_way():
 	network_way.is_staged = false
 	reset_network_variables()
 
-
-func is_click_debounced(clicked_position):
-	var last_clicked_position: Vector3
-	if last_clicked_position == Vector3.ZERO || last_clicked_position != clicked_position:
-		return true
-	else:
-		last_clicked_position = clicked_position
-		return false
 

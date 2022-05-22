@@ -24,7 +24,7 @@ func _ready():
 
 
 func _update():
-	if is_staged or !is_editable:
+	if is_staged:
 		$CollisionShape.disabled = true
 	else:
 		$CollisionShape.disabled = false
