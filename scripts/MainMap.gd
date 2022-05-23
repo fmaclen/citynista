@@ -5,6 +5,7 @@ onready var toolbar: Node = get_parent().get_node("GUI").get_node("Toolbar")
 
 var is_building: bool = false
 var is_editing: bool = false
+var is_removing: bool = false
 
 onready var network: Node = $Network
 onready var network_nodes_container: Node = network.get_child(0)
@@ -22,6 +23,7 @@ var network_node_snap_to: Area
 func _ready():
 	toolbar.connect("set_is_building", self, "set_network_state", ["build"])
 	toolbar.connect("set_is_editing", self, "set_network_state", ["edit"])
+	toolbar.connect("set_is_removing", self, "set_network_state", ["remove"])
 
 
 func set_network_state(state: bool, mode: String):
@@ -32,6 +34,8 @@ func set_network_state(state: bool, mode: String):
 				remove_staged_network_way()
 		"edit":
 			is_editing = state
+		"remove":
+			is_removing = state
 
 	if network_nodes_container.get_child_count() > 0:
 		for node in network_nodes_container.get_children():
@@ -40,6 +44,8 @@ func set_network_state(state: bool, mode: String):
 					node.is_snappable = state
 				"edit":
 					node.is_editable = state
+				"remove":
+					node.is_removable = state
 			node._update()
 
 
@@ -60,6 +66,7 @@ func add_network_node(position) -> Node:
 
 	node.connect("network_node_snap_to", self, "handle_network_node_snap_to", [node])
 	node.connect("network_node_snapped", self, "handle_network_node_snapped", [node])
+	node.connect("network_node_removed", self, "cleanup_network")
 
 	node.transform.origin = position
 	node.is_staged = true
@@ -120,6 +127,14 @@ func reset_network_variables():
 	network_node_b = null
 	network_node_snap_to = null
 	network_way = null
+
+
+func cleanup_network():
+	# If there are no NetworkWays after removing a NetworkNode, then remove all
+	# of the remaining NetworkNodes.
+	if network_ways_container.get_child_count() == 1:
+		for node in network_nodes_container.get_children():
+			node.queue_free()
 
 
 func add_network_way():

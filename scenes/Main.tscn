@@ -32,27 +32,35 @@ theme = ExtResource( 4 )
 anchor_top = 1.0
 anchor_bottom = 1.0
 margin_left = 64.0
-margin_top = -104.0
-margin_right = 297.0
-margin_bottom = -64.0
-columns = 2
+margin_top = -88.0
+margin_right = 1430.0
+margin_bottom = -62.0
+custom_constants/hseparation = 8
+columns = 3
 script = ExtResource( 3 )
-__meta__ = {
-"_edit_group_": true
-}
 
-[node name="ButtonBuild" type="CheckButton" parent="GUI/Toolbar"]
-margin_right = 119.0
-margin_bottom = 40.0
-focus_mode = 0
+[node name="ButtonBuild" type="Button" parent="GUI/Toolbar"]
+margin_right = 51.0
+margin_bottom = 26.0
+custom_constants/hseparation = 4
+toggle_mode = true
 text = "Build"
 
-[node name="ButtonEdit" type="CheckButton" parent="GUI/Toolbar"]
-margin_left = 123.0
-margin_right = 233.0
-margin_bottom = 40.0
-focus_mode = 0
+[node name="ButtonEdit" type="Button" parent="GUI/Toolbar"]
+margin_left = 59.0
+margin_right = 101.0
+margin_bottom = 26.0
+custom_constants/hseparation = 4
+toggle_mode = true
 text = "Edit"
+
+[node name="ButtonRemove" type="Button" parent="GUI/Toolbar"]
+margin_left = 109.0
+margin_right = 186.0
+margin_bottom = 26.0
+custom_constants/hseparation = 4
+toggle_mode = true
+text = "Remove"
 
 [node name="CameraController" type="Position3D" parent="."]
 transform = Transform( 0.707107, 0, 0.707107, 0, 1, 0, -0.707107, 0, 0.707107, 0, 0, 0 )

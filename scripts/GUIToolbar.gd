@@ -3,6 +3,7 @@ extends GridContainer
 
 signal set_is_building
 signal set_is_editing
+signal set_is_removing
 
 
 func _ready():
@@ -17,6 +18,8 @@ func handle_button(button: Button):
 		emit_signal("set_is_building", button.pressed)
 	elif button.text == "Edit":
 		emit_signal("set_is_editing", button.pressed)
+	elif button.text == "Remove":
+		emit_signal("set_is_removing", button.pressed)
 
 
 func _input(event):
@@ -31,3 +34,4 @@ func unpress_buttons(button_exemption: Button = null):
 
 	emit_signal("set_is_building", false)
 	emit_signal("set_is_editing", false)
+	emit_signal("set_is_removing", false)

@@ -4,15 +4,18 @@ extends Area
 signal network_node_updated
 signal network_node_snap_to
 signal network_node_snapped
+signal network_node_removed
 
 const material_default: SpatialMaterial = preload("res://assets/theme/ColorDefault.tres")
 const material_selected: SpatialMaterial = preload("res://assets/theme/ColorSelected.tres")
-const material_active: SpatialMaterial = preload("res://assets/theme/ColorActive.tres")
+const material_staged: SpatialMaterial = preload("res://assets/theme/ColorStaged.tres")
+const material_removable: SpatialMaterial = preload("res://assets/theme/ColorRemovable.tres")
 
 var is_staged: bool = false
-var is_dragging: bool = false
 var is_editable: bool = false
+var is_dragging: bool = false
 var is_snappable: bool = false
+var is_removable: bool = false
 var previous_position: Vector3
 
 var COLLISION_RADIUS_DEFAULT: float = 1.0
@@ -29,29 +32,35 @@ func _ready():
 func _update():
 	if is_staged:
 		$CollisionShape.disabled = true
+		$Puck.set_surface_material(0, material_staged)
 	else:
 		$CollisionShape.disabled = false
-
-	if is_dragging:
-		$Puck.set_surface_material(0, material_active)
 
 	emit_signal("network_node_updated")
 
 
 func _on_NetworkNode_mouse_entered():
-	$Puck.set_surface_material(0, material_selected)
-	_update()
+	if is_editable or is_snappable:
+		$Puck.set_surface_material(0, material_selected)
+
+	if is_removable:
+		$Puck.set_surface_material(0, material_removable)
 
 	if is_snappable:
 		emit_signal("network_node_snap_to", true)
 
-
-func _on_NetworkNode_mouse_exited():
-	$Puck.set_surface_material(0, material_default)
 	_update()
 
-	if is_snappable:
+
+func _on_NetworkNode_mouse_exited():
+	_update()
+
+	if !is_staged:
+		$Puck.set_surface_material(0, material_default)
+
+	if is_snappable or is_snappable:
 		emit_signal("network_node_snap_to", false)
+
 
 
 func _on_NetworkNode_input_event(_camera:Node, event:InputEvent, position:Vector3, _normal:Vector3, _shape_idx:int):
@@ -81,4 +90,9 @@ func _on_NetworkNode_input_event(_camera:Node, event:InputEvent, position:Vector
 	elif is_snappable:
 		if event.is_action_pressed("ui_left_click"):
 			emit_signal("network_node_snapped")
+
+	elif is_removable:
+		if event.is_action_pressed("ui_left_click"):
+			emit_signal("network_node_removed")
+			queue_free()
 
