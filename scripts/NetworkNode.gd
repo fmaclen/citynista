@@ -3,18 +3,19 @@ extends Area
 
 signal network_node_updated
 signal network_node_snap_to
+signal network_node_snapped
 
 const material_default: SpatialMaterial = preload("res://assets/theme/ColorDefault.tres")
 const material_selected: SpatialMaterial = preload("res://assets/theme/ColorSelected.tres")
 const material_active: SpatialMaterial = preload("res://assets/theme/ColorActive.tres")
 
-var is_staged: bool = true
+var is_staged: bool = false
 var is_dragging: bool = false
 var is_editable: bool = false
 var is_snappable: bool = false
 var previous_position: Vector3
 
-var COLLISION_RADIUS_DEFAULT: float = 0.25
+var COLLISION_RADIUS_DEFAULT: float = 1.0
 var COLLISION_RADIUS_DRAGGING: float = 8.0
 var COLLISION_RADIUS_HEIGHT: float = 0.1
 
@@ -41,10 +42,16 @@ func _on_NetworkNode_mouse_entered():
 	$Puck.set_surface_material(0, material_selected)
 	_update()
 
+	if is_snappable:
+		emit_signal("network_node_snap_to", true)
+
 
 func _on_NetworkNode_mouse_exited():
 	$Puck.set_surface_material(0, material_default)
 	_update()
+
+	if is_snappable:
+		emit_signal("network_node_snap_to", false)
 
 
 func _on_NetworkNode_input_event(_camera:Node, event:InputEvent, position:Vector3, _normal:Vector3, _shape_idx:int):
@@ -70,8 +77,8 @@ func _on_NetworkNode_input_event(_camera:Node, event:InputEvent, position:Vector
 			translation += adjusted_position - previous_position
 			previous_position = adjusted_position
 			_update()
-	
-	if is_snappable:
+
+	elif is_snappable:
 		if event.is_action_pressed("ui_left_click"):
-			emit_signal("network_node_snap_to")
+			emit_signal("network_node_snapped")
 
