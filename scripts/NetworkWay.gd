@@ -12,11 +12,16 @@ func _update():
 	var network_node_b = instance_from_id(network_node_b_id)
 
 	# Connect to signals
-	network_node_a.connect("network_node_updated", self, "_update")
-	network_node_b.connect("network_node_updated", self, "_update")
+	var UPDATED_SIGNAL = "network_node_updated"
+	var REMOVED_SIGNAL = "network_node_removed"
 
-	network_node_a.connect("network_node_removed", self, "queue_free")
-	network_node_b.connect("network_node_removed", self, "queue_free")
+	if !network_node_a.is_connected(UPDATED_SIGNAL, self, "_update"):
+		network_node_a.connect(UPDATED_SIGNAL, self, "_update")
+		network_node_a.connect(REMOVED_SIGNAL, self, "queue_free")
+	
+	if !network_node_b.is_connected(UPDATED_SIGNAL, self, "_update"):
+		network_node_b.connect(UPDATED_SIGNAL, self, "_update")
+		network_node_b.connect(REMOVED_SIGNAL, self, "queue_free")
 
 	# Draw line between nodes
 	var debug_line = $Draw3D
@@ -33,7 +38,3 @@ func _update():
 	$Path.curve.add_point(network_node_b_position)
 
 	debug_line.end()
-
-
-func remove():
-	print("handle removal of NetworkWay")
