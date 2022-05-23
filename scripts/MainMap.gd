@@ -58,7 +58,7 @@ func commit_network_node(node: Area, position: Vector3):
 func add_network_node(position) -> Node:
 	var node = network_node_scene.instance()
 
-	node.connect("network_node_snap_to", self, "handle_netwokr_node_snap_to")
+	node.connect("network_node_snap_to", self, "handle_network_node_snap_to", [node])
 	node.connect("network_node_snapped", self, "handle_network_node_snapped", [node])
 
 	node.transform.origin = position
@@ -70,13 +70,15 @@ func add_network_node(position) -> Node:
 	return node
 
 
-func handle_netwokr_node_snap_to(node_is_snappable: bool):
+func handle_network_node_snap_to(node_is_snappable: bool, node: Node):
 	if node_is_snappable:
 		if network_node_a != null and network_node_a.is_staged:
 			network_node_a.visible = false
+			move_network_node(network_node_a, node.transform.origin)
 
 		if network_node_b != null and network_node_b.is_staged:
 			network_node_b.visible = false
+			move_network_node(network_node_b, node.transform.origin)
 
 	else:
 		if network_node_a != null and network_node_a.is_staged:
