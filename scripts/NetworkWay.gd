@@ -9,28 +9,24 @@ var network_node_b_id: int
 var network_node_b: Area
 
 var is_staged: bool = true
-var network_sub_node: Area
+
 
 func _update():
-	# if is_cleaning and network_node_a == null and network_node_b == null:
-	# 	queue_free()
-
 	network_node_a = instance_from_id(network_node_a_id)
 	network_node_b = instance_from_id(network_node_b_id)
 
 	# Connect to signals
 	if !network_node_a.is_connected("network_node_updated", self, "_update"):
 		network_node_a.connect("network_node_updated", self, "_update")
-		network_node_a.connect("tree_exited", self, "cleanup", [network_node_a])
+		network_node_a.connect("tree_exited", self, "remove_network_way", [network_node_a])
 	
 	if !network_node_b.is_connected("network_node_updated", self, "_update"):
 		network_node_b.connect("network_node_updated", self, "_update")
-		network_node_b.connect("tree_exited", self, "cleanup", [network_node_b])
+		network_node_b.connect("tree_exited", self, "remove_network_way", [network_node_b])
 
 	draw_line()
 
-	# TODO: check if collision detected
-	if !is_staged: 
+	if !is_staged:
 		add_network_sub_nodes()
 
 
@@ -53,16 +49,29 @@ func draw_line():
 
 
 func add_network_sub_nodes():
-	if network_sub_node == null:
-		network_sub_node = network_sub_node_scene.instance()
-		add_child(network_sub_node)
+	var MAX_SEGMENT_LENGTH = 2
 
-	# Add the NetworkSubNode in the middle of the line
-	network_sub_node.transform.origin = network_node_a.transform.origin.linear_interpolate(network_node_b.transform.origin, 0.5)
+	# Clean up existing NetworkSubNodes
+	for node in $NetworkSubNodes.get_children():
+		node.queue_free()
+
+	var total_distance = network_node_a.transform.origin.distance_to(network_node_b.transform.origin)
+	var segment_count = int(total_distance / MAX_SEGMENT_LENGTH) - 1
+
+	if segment_count > 0:
+		var weight = 1.0 / float(segment_count) # Distance between the NetworkSubNodes
+		var segment_weight = 0
+
+		for segment in segment_count:
+			segment_weight = segment_weight + weight
+
+			var network_sub_node = network_sub_node_scene.instance()
+			network_sub_node.transform.origin = network_node_a.transform.origin.linear_interpolate(network_node_b.transform.origin, segment_weight)
+			$NetworkSubNodes.add_child(network_sub_node)
 
 
-func cleanup(removed_node: Area):
-	# Ignore NetworkNodes that are staged
+func remove_network_way(removed_node: Area):
+	# Ignore if event was triggered by removing a staged NetworkNode
 	if removed_node.is_staged:
 		return
 
@@ -79,6 +88,6 @@ func cleanup(removed_node: Area):
 	network_node_a = null
 	network_node_b = null
 
-	# Then remove the NetworkWay after resetting the NetworkNodes
+	# Remove the NetworkWay after resetting any orphan NetworkNodes
 	queue_free()
 
