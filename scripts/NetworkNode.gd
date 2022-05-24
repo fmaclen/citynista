@@ -4,7 +4,6 @@ extends Area
 signal network_node_updated
 signal network_node_snap_to
 signal network_node_snapped
-signal network_node_removed
 
 const material_default: SpatialMaterial = preload("res://assets/theme/ColorDefault.tres")
 const material_selected: SpatialMaterial = preload("res://assets/theme/ColorSelected.tres")
@@ -58,7 +57,7 @@ func _on_NetworkNode_mouse_exited():
 	if !is_staged:
 		$Puck.set_surface_material(0, material_default)
 
-	if is_snappable or is_snappable:
+	if is_snappable:
 		emit_signal("network_node_snap_to", false)
 
 
@@ -93,6 +92,5 @@ func _on_NetworkNode_input_event(_camera:Node, event:InputEvent, position:Vector
 
 	elif is_removable:
 		if event.is_action_pressed("ui_left_click"):
-			emit_signal("network_node_removed")
 			queue_free()
 
