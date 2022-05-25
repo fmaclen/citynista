@@ -1,19 +1,27 @@
-extends Node
+extends Area
 
 
 const network_sub_node_scene: PackedScene = preload("res://scenes/NetworkSubNode.tscn")
 
 var network_node_a_id: int
 var network_node_a: Area
+var network_node_a_origin: Vector3
 var network_node_b_id: int
 var network_node_b: Area
+var network_node_b_origin: Vector3
+var network_nodes_distance: float
 
 var is_staged: bool = true
+var is_snappable: bool = false
 
 
 func _update():
 	network_node_a = instance_from_id(network_node_a_id)
 	network_node_b = instance_from_id(network_node_b_id)
+
+	network_node_a_origin = network_node_a.transform.origin
+	network_node_b_origin = network_node_b.transform.origin
+	network_nodes_distance = network_node_a_origin.distance_to(network_node_b_origin)
 
 	# Connect to signals
 	if !network_node_a.is_connected("network_node_updated", self, "_update"):
@@ -26,7 +34,9 @@ func _update():
 
 	draw_line()
 
-	if !is_staged:
+	set_collision_shape()
+
+	if !is_staged and is_snappable:
 		add_network_sub_nodes()
 
 
@@ -36,8 +46,8 @@ func draw_line():
 	debug_line.clear()
 	debug_line.begin(Mesh.PRIMITIVE_LINE_STRIP)
 
-	var network_node_a_position = network_node_a.transform.origin
-	var network_node_b_position = network_node_b.transform.origin
+	var network_node_a_position = network_node_a_origin
+	var network_node_b_position = network_node_b_origin
 
 	debug_line.add_vertex(network_node_a_position)
 	debug_line.add_vertex(network_node_b_position)
@@ -48,6 +58,13 @@ func draw_line():
 	debug_line.end()
 
 
+func set_collision_shape():
+	var collision_position = lerp_network_nodes(0.5)
+	$CollisionShape.shape = BoxShape.new()
+	$CollisionShape.look_at_from_position(collision_position, network_node_a_origin, network_node_b_origin)
+	$CollisionShape.shape.extents = Vector3(0.5, 0.5, network_nodes_distance * 0.5)
+
+
 func add_network_sub_nodes():
 	var MAX_SEGMENT_LENGTH = 2
 
@@ -55,8 +72,7 @@ func add_network_sub_nodes():
 	for node in $NetworkSubNodes.get_children():
 		node.queue_free()
 
-	var total_distance = network_node_a.transform.origin.distance_to(network_node_b.transform.origin)
-	var segment_count = int(total_distance / MAX_SEGMENT_LENGTH) - 1
+	var segment_count = int(network_nodes_distance / MAX_SEGMENT_LENGTH) - 1
 
 	if segment_count > 0:
 		var weight = 1.0 / float(segment_count) # Distance between the NetworkSubNodes
@@ -66,8 +82,12 @@ func add_network_sub_nodes():
 			segment_weight = segment_weight + weight
 
 			var network_sub_node = network_sub_node_scene.instance()
-			network_sub_node.transform.origin = network_node_a.transform.origin.linear_interpolate(network_node_b.transform.origin, segment_weight)
+			network_sub_node.transform.origin = lerp_network_nodes(segment_weight)
 			$NetworkSubNodes.add_child(network_sub_node)
+
+
+func lerp_network_nodes(weight: float):
+	return network_node_a_origin.linear_interpolate(network_node_b_origin, weight)
 
 
 func remove_network_way(removed_node: Area):

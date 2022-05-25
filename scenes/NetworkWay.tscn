@@ -8,7 +8,7 @@ _data = {
 "tilts": PoolRealArray(  )
 }
 
-[node name="NetworkWay" type="Spatial"]
+[node name="NetworkWay" type="Area"]
 script = ExtResource( 1 )
 
 [node name="Path" type="Path" parent="."]
@@ -18,3 +18,6 @@ curve = SubResource( 1 )
 transform = Transform( 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.05, 0 )
 
 [node name="NetworkSubNodes" type="Spatial" parent="."]
+
+[node name="CollisionShape" type="CollisionShape" parent="."]
+disabled = true

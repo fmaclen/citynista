@@ -66,7 +66,6 @@ func add_network_node(position) -> Node:
 
 	node.connect("network_node_snap_to", self, "handle_network_node_snap_to", [node])
 	node.connect("network_node_snapped", self, "handle_network_node_snapped", [node])
-	# node.connect("tree_exited", self, "cleanup_network", [node])
 
 	node.transform.origin = position
 	node.is_staged = true
@@ -129,13 +128,6 @@ func reset_network_variables():
 	network_way = null
 
 
-# func cleanup_network(node: Area):
-# 	if network_nodes_container.get_children().size() != 0:
-# 		for node in network_nodes_container.get_children():
-# 			if node.get_signal_connection_list("network_node_updated").size() == 0:
-# 				node.queue_free()
-
-
 func add_network_way():
 	network_way = network_way_scene.instance()
 	network_ways_container.add_child(network_way)
@@ -150,6 +142,7 @@ func update_network_way():
 
 func commit_network_way():
 	network_way.is_staged = false
+	network_way.is_snappable = true
 	network_node_a.is_snappable = true
 	network_node_b.is_snappable = true
 	update_network_way()
