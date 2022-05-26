@@ -20,4 +20,6 @@ transform = Transform( 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.05, 0 )
 [node name="NetworkSubNodes" type="Spatial" parent="."]
 
 [node name="CollisionShape" type="CollisionShape" parent="."]
-disabled = true
+
+[connection signal="mouse_entered" from="." to="." method="_on_NetworkWay_mouse_entered"]
+[connection signal="mouse_exited" from="." to="." method="_on_NetworkWay_mouse_exited"]

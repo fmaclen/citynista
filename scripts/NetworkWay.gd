@@ -33,11 +33,15 @@ func _update():
 		network_node_b.connect("tree_exited", self, "remove_network_way", [network_node_b])
 
 	draw_line()
+	
+	if !is_staged:
+		set_collision_shape()
 
-	set_collision_shape()
-
-	if !is_staged and is_snappable:
+	if is_snappable:
 		add_network_sub_nodes()
+	else:
+		remove_network_sub_nodes()
+
 
 
 func draw_line():
@@ -59,10 +63,11 @@ func draw_line():
 
 
 func set_collision_shape():
+	# FIXME: this collision shape blocks the underlying collision shapes
 	var collision_position = lerp_network_nodes(0.5)
 	$CollisionShape.shape = BoxShape.new()
 	$CollisionShape.look_at_from_position(collision_position, network_node_a_origin, network_node_b_origin)
-	$CollisionShape.shape.extents = Vector3(0.5, 0.5, network_nodes_distance * 0.5)
+	$CollisionShape.shape.extents = Vector3(0.05, 0.5, network_nodes_distance * 0.5)
 
 
 func add_network_sub_nodes():
@@ -83,7 +88,18 @@ func add_network_sub_nodes():
 
 			var network_sub_node = network_sub_node_scene.instance()
 			network_sub_node.transform.origin = lerp_network_nodes(segment_weight)
+			network_sub_node.connect("network_sub_node_snap_to", self, "handle_network_sub_node_snap_to")
 			$NetworkSubNodes.add_child(network_sub_node)
+
+
+func handle_network_sub_node_snap_to(state: bool):
+	# TODO: not sure if we need to handle "..._snap_to", we might only need to handle "..._snapped"
+	print("WIP — snapping to handle_network_sub_node_snap_to:", state)
+
+
+func remove_network_sub_nodes():
+	for network_sub_node in $NetworkSubNodes.get_children():
+		network_sub_node.queue_free()
 
 
 func lerp_network_nodes(weight: float):
@@ -111,3 +127,13 @@ func remove_network_way(removed_node: Area):
 	# Remove the NetworkWay after resetting any orphan NetworkNodes
 	queue_free()
 
+
+# FIXME: this behaves wonky AF!
+func _on_NetworkWay_mouse_entered():
+	if !is_staged:
+		is_snappable = true
+		_update()
+
+func _on_NetworkWay_mouse_exited():
+	is_snappable = false
+	_update()

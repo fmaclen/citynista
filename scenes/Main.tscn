@@ -9,7 +9,7 @@
 extents = Vector3( 16, 0, 16 )
 
 [sub_resource type="SpatialMaterial" id=8]
-albedo_color = Color( 0.0117647, 0.623529, 0.384314, 1 )
+albedo_color = Color( 0.172549, 0.176471, 0.211765, 1 )
 
 [sub_resource type="CubeMesh" id=2]
 size = Vector3( 32, 1, 32 )
