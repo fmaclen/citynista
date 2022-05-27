@@ -1,6 +1,9 @@
 extends Area
 
 
+signal network_way_sub_node_snap_to
+signal network_way_collided
+
 const network_sub_node_scene: PackedScene = preload("res://scenes/NetworkSubNode.tscn")
 
 var network_node_a_id: int
@@ -13,6 +16,8 @@ var network_nodes_distance: float
 
 var is_staged: bool = true
 var is_snappable: bool = false
+var is_hovering: bool = false
+var is_hovering_sub_node: bool = false
 
 
 func _update():
@@ -38,10 +43,15 @@ func _update():
 		set_collision_shape()
 
 	if is_snappable:
-		add_network_sub_nodes()
+		if $NetworkSubNodes.get_child_count() == 0:
+			add_network_sub_nodes()
 	else:
 		remove_network_sub_nodes()
 
+	if is_hovering:
+		$NetworkSubNodes.visible = true
+	else:
+		$NetworkSubNodes.visible = false
 
 
 func draw_line():
@@ -63,38 +73,46 @@ func draw_line():
 
 
 func set_collision_shape():
-	# FIXME: this collision shape blocks the underlying collision shapes
 	var collision_position = lerp_network_nodes(0.5)
 	$CollisionShape.shape = BoxShape.new()
 	$CollisionShape.look_at_from_position(collision_position, network_node_a_origin, network_node_b_origin)
-	$CollisionShape.shape.extents = Vector3(0.05, 0.5, network_nodes_distance * 0.5)
+	$CollisionShape.shape.extents = Vector3(0.1, 1.0, network_nodes_distance * 0.5)
 
 
 func add_network_sub_nodes():
 	var MAX_SEGMENT_LENGTH = 2
 
-	# Clean up existing NetworkSubNodes
-	for node in $NetworkSubNodes.get_children():
-		node.queue_free()
-
-	var segment_count = int(network_nodes_distance / MAX_SEGMENT_LENGTH) - 1
+	var segment_count = int(network_nodes_distance / MAX_SEGMENT_LENGTH) # Ignore the first and last segments
 
 	if segment_count > 0:
 		var weight = 1.0 / float(segment_count) # Distance between the NetworkSubNodes
 		var segment_weight = 0
+		var segment_index = 0
 
 		for segment in segment_count:
+			# No no need to create the last NetworkSubNode
+			if segment_index == segment_count - 1:
+				break
+
+			segment_index += 1
 			segment_weight = segment_weight + weight
 
 			var network_sub_node = network_sub_node_scene.instance()
 			network_sub_node.transform.origin = lerp_network_nodes(segment_weight)
-			network_sub_node.connect("network_sub_node_snap_to", self, "handle_network_sub_node_snap_to")
+			network_sub_node.connect("network_sub_node_snap_to", self, "handle_network_sub_node_snap_to", [network_sub_node])
+			network_sub_node.connect("network_sub_node_snapped", self, "handle_network_sub_node_snapped", [network_sub_node])
+			network_sub_node.look_at_from_position(network_sub_node.transform.origin, network_node_a_origin, network_node_b_origin)
 			$NetworkSubNodes.add_child(network_sub_node)
 
 
-func handle_network_sub_node_snap_to(state: bool):
-	# TODO: not sure if we need to handle "..._snap_to", we might only need to handle "..._snapped"
-	print("WIP — snapping to handle_network_sub_node_snap_to:", state)
+func handle_network_sub_node_snap_to(state: bool, node: Area):
+	is_hovering_sub_node = state
+	emit_signal("network_way_sub_node_snap_to", state, node)
+	_update()
+
+
+func handle_network_sub_node_snapped(network_sub_node_snapped: Area):
+	emit_signal("network_way_collided", network_sub_node_snapped.transform.origin)
 
 
 func remove_network_sub_nodes():
@@ -128,12 +146,11 @@ func remove_network_way(removed_node: Area):
 	queue_free()
 
 
-# FIXME: this behaves wonky AF!
 func _on_NetworkWay_mouse_entered():
-	if !is_staged:
-		is_snappable = true
-		_update()
+	is_hovering = true
+	_update()
 
 func _on_NetworkWay_mouse_exited():
-	is_snappable = false
+	if !is_hovering_sub_node:
+		is_hovering = false
 	_update()

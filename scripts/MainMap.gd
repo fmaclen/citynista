@@ -19,6 +19,11 @@ var network_node_a: Area
 var network_node_b: Area
 var network_node_snap_to: Area
 
+############################################3
+var network_node_collision: Area
+var network_ways_collided: Array
+############################################3
+
 
 func _ready():
 	toolbar.connect("set_is_building", self, "set_network_state", ["build"])
@@ -46,6 +51,13 @@ func set_network_state(state: bool, mode: String):
 					node.is_editable = state
 				"remove":
 					node.is_removable = state
+			node._update()
+
+		for node in network_ways_container.get_children():
+			match(mode):
+				"build":
+					node.is_snappable = state
+					print("node.is_snappable", node.is_snappable)
 			node._update()
 
 
@@ -121,13 +133,6 @@ func remove_staged_network_way():
 	reset_network_variables()
 
 
-func reset_network_variables():
-	network_node_a = null
-	network_node_b = null
-	network_node_snap_to = null
-	network_way = null
-
-
 func add_network_way():
 	network_way = network_way_scene.instance()
 	network_ways_container.add_child(network_way)
@@ -141,12 +146,45 @@ func update_network_way():
 
 
 func commit_network_way():
+	network_way.connect("network_way_sub_node_snap_to", self, "handle_network_node_snap_to")
+	network_way.connect("network_way_collided", self, "handle_network_way_collided", [network_way])
 	network_way.is_staged = false
 	network_way.is_snappable = true
 	network_node_a.is_snappable = true
 	network_node_b.is_snappable = true
 	update_network_way()
+	update_collided_network_ways()
 	reset_network_variables()
+
+
+################################################################################
+
+
+func handle_network_way_collided(collision_position: Vector3, collided_network_way: Area):
+	network_ways_collided.append(collided_network_way)
+	network_node_collision = add_network_node(collision_position)
+	handle_network_node_snapped(network_node_collision)
+
+
+func update_collided_network_ways():
+	if network_node_collision != null:
+		var new_network_id = network_node_collision.get_instance_id()
+
+		# TODO: DRY this
+		add_network_way()
+		network_way.network_node_a_id = new_network_id
+		network_way.network_node_b_id = network_ways_collided[0].network_node_b_id
+		network_way.connect("network_way_sub_node_snap_to", self, "handle_network_node_snap_to")
+		network_way.connect("network_way_collided", self, "handle_network_way_collided", [network_way])
+		network_way.is_staged = false
+		network_way.is_snappable = true
+
+		network_ways_collided[0].network_node_b_id = new_network_id
+		network_ways_collided[0]._update()
+	pass
+
+
+################################################################################
 
 
 func _on_Map_input_event(_camera:Node, event:InputEvent, position:Vector3, _normal:Vector3, _shape_idx:int):
@@ -168,3 +206,11 @@ func _on_Map_input_event(_camera:Node, event:InputEvent, position:Vector3, _norm
 			if event.is_action_released("ui_left_click"):
 				commit_network_node(network_node_b, position)
 				commit_network_way()
+
+
+func reset_network_variables():
+	network_node_a = null
+	network_node_b = null
+	network_node_snap_to = null
+	network_way = null
+	network_ways_collided = []
