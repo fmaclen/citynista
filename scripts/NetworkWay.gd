@@ -107,7 +107,7 @@ func add_network_sub_nodes():
 
 func handle_network_sub_node_snap_to(state: bool, node: Area):
 	is_hovering_sub_node = state
-	emit_signal("network_way_sub_node_snap_to", state, node)
+	emit_signal("network_way_sub_node_snap_to", state, node.transform.origin)
 	_update()
 
 

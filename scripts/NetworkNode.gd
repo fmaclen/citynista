@@ -46,7 +46,7 @@ func _on_NetworkNode_mouse_entered():
 		$Puck.set_surface_material(0, material_removable)
 
 	if is_snappable:
-		emit_signal("network_node_snap_to", true)
+		emit_signal("network_node_snap_to", true, transform.origin)
 
 	_update()
 
@@ -58,7 +58,7 @@ func _on_NetworkNode_mouse_exited():
 		$Puck.set_surface_material(0, material_default)
 
 	if is_snappable:
-		emit_signal("network_node_snap_to", false)
+		emit_signal("network_node_snap_to", false, transform.origin)
 
 
 
