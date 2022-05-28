@@ -179,7 +179,7 @@ func set_network_way_nodes():
 
 
 func commit_network_way():
-	network_way.connect("network_way_sub_node_snap_to", self, "handle_snap_to")
+	network_way.connect("network_way_snap_to", self, "handle_snap_to")
 	network_way.connect("network_way_collided", self, "handle_network_way_collided", [network_way])
 
 	network_way.is_staged = false
@@ -187,9 +187,11 @@ func commit_network_way():
 
 	network_node_a.is_staged = false
 	network_node_a.is_snappable = true
+	network_node_a._update()
 
 	network_node_b.is_staged = false
 	network_node_b.is_snappable = true
+	network_node_b._update()
 
 
 func handle_network_way_collided(collision_position: Vector3, collided_network_way: Area):

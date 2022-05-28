@@ -1,8 +1,8 @@
 extends Area
 
 
-signal network_way_sub_node_snap_to
-signal network_way_collided
+signal network_way_snap_to(snap_position)
+signal network_way_collided(collision_point)
 
 const network_sub_node_scene: PackedScene = preload("res://scenes/NetworkSubNode.tscn")
 
@@ -15,7 +15,10 @@ var network_nodes_distance: float
 var is_staged: bool = true
 var is_snappable: bool = false
 var is_hovering: bool = false
-var is_hovering_sub_node: bool = false
+var snap_points: PoolVector3Array = []
+var snapped_point: Vector3
+
+var MAX_SNAPPING_DISTANCE = 1.0
 
 
 func _on_NetworkWay_mouse_entered():
@@ -24,9 +27,27 @@ func _on_NetworkWay_mouse_entered():
 
 
 func _on_NetworkWay_mouse_exited():
-	if !is_hovering_sub_node:
-		is_hovering = false
+	is_hovering = false
 	_update()
+
+
+func _on_NetworkWay_input_event(_camera:Node, event:InputEvent, position:Vector3, _normal:Vector3, _shape_idx:int):
+	if !is_snappable:
+		return
+
+	if is_hovering and event is InputEventMouse:
+		for snap_point in snap_points:
+			if position.distance_to(snap_point) < MAX_SNAPPING_DISTANCE:
+				snapped_point = snap_point
+				emit_signal("network_way_snap_to", true, snap_point)
+				break
+			else:
+				snapped_point = Vector3.ZERO
+				emit_signal("network_way_snap_to", false, position)
+
+	if event.is_action_pressed("ui_left_click"):
+		if snapped_point != Vector3.ZERO:
+			emit_signal("network_way_collided", snapped_point)
 
 
 func _update():
@@ -34,7 +55,7 @@ func _update():
 	network_node_b_origin = network_node_b.transform.origin
 	network_nodes_distance = network_node_a_origin.distance_to(network_node_b_origin)
 
-	# Connect to signals
+	# Connect to signals (if not's not already connected)
 	if !network_node_a.is_connected("network_node_updated", self, "_update"):
 		network_node_a.connect("network_node_updated", self, "_update")
 		network_node_a.connect("tree_exited", self, "remove_network_way", [network_node_a])
@@ -50,9 +71,9 @@ func _update():
 
 	if is_snappable:
 		if $NetworkSubNodes.get_child_count() == 0:
-			add_network_sub_nodes()
+			add_snap_points()
 	else:
-		remove_network_sub_nodes()
+		remove_snap_points()
 
 	if is_hovering:
 		$NetworkSubNodes.visible = true
@@ -85,43 +106,34 @@ func set_collision_shape():
 	$CollisionShape.shape.extents = Vector3(0.1, 1.0, network_nodes_distance * 0.5)
 
 
-func add_network_sub_nodes():
+func add_snap_points():
 	var MAX_SEGMENT_LENGTH = 2
 
-	var segment_count = int(network_nodes_distance / MAX_SEGMENT_LENGTH) # Ignore the first and last segments
+	var snap_point_count = int(network_nodes_distance / MAX_SEGMENT_LENGTH) # Ignore the first and last segments
 
-	if segment_count > 0:
-		var weight = 1.0 / float(segment_count) # Distance between the NetworkSubNodes
+	if snap_point_count > 0:
+		var weight = 1.0 / float(snap_point_count) # Distance between the NetworkSubNodes
 		var segment_weight = 0
 		var segment_index = 0
 
-		for segment in segment_count:
+		for segment in snap_point_count:
 			# No no need to create the last NetworkSubNode
-			if segment_index == segment_count - 1:
+			if segment_index == snap_point_count - 1:
 				break
 
 			segment_index += 1
 			segment_weight = segment_weight + weight
 
+			var snap_point = lerp_network_nodes(segment_weight)
+			snap_points.append(snap_point)
+
 			var network_sub_node = network_sub_node_scene.instance()
-			network_sub_node.transform.origin = lerp_network_nodes(segment_weight)
-			network_sub_node.connect("network_sub_node_snap_to", self, "handle_network_sub_node_snap_to", [network_sub_node])
-			network_sub_node.connect("network_sub_node_snapped", self, "handle_network_sub_node_snapped", [network_sub_node])
+			network_sub_node.transform.origin = snap_point
 			network_sub_node.look_at_from_position(network_sub_node.transform.origin, network_node_a_origin, network_node_b_origin)
 			$NetworkSubNodes.add_child(network_sub_node)
 
 
-func handle_network_sub_node_snap_to(state: bool, node: Area):
-	is_hovering_sub_node = state
-	emit_signal("network_way_sub_node_snap_to", state, node.transform.origin)
-	_update()
-
-
-func handle_network_sub_node_snapped(network_sub_node_snapped: Area):
-	emit_signal("network_way_collided", network_sub_node_snapped.transform.origin)
-
-
-func remove_network_sub_nodes():
+func remove_snap_points():
 	for network_sub_node in $NetworkSubNodes.get_children():
 		network_sub_node.queue_free()
 
@@ -153,5 +165,3 @@ func remove_network_way(removed_node: Area):
 
 	# Remove the NetworkWay after resetting any orphan NetworkNodes
 	queue_free()
-
-

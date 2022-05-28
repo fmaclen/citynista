@@ -18,7 +18,3 @@ material/0 = ExtResource( 2 )
 
 [node name="CollisionShape" type="CollisionShape" parent="."]
 shape = SubResource( 2 )
-
-[connection signal="input_event" from="." to="." method="_on_NetworkSubNode_input_event"]
-[connection signal="mouse_entered" from="." to="." method="_on_NetworkSubNode_mouse_entered"]
-[connection signal="mouse_exited" from="." to="." method="_on_NetworkSubNode_mouse_exited"]
