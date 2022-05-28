@@ -96,6 +96,7 @@ func reset_network_variables():
 	network_node_b = null
 	network_node_snap_to = null
 	network_way = null
+	network_way_collided = null
 
 
 # NetworkNodes -----------------------------------------------------------------
@@ -171,9 +172,9 @@ func add_network_way():
 	set_network_way_nodes()
 
 
-func set_network_way_nodes(node_a = network_node_a, node_b = network_node_b):
-	network_way.network_node_a_id = node_a.get_instance_id()
-	network_way.network_node_b_id = node_b.get_instance_id()
+func set_network_way_nodes():
+	network_way.network_node_a = network_node_a
+	network_way.network_node_b = network_node_b
 	network_way._update()
 
 
@@ -199,18 +200,23 @@ func handle_network_way_collided(collision_position: Vector3, collided_network_w
 
 # Split the collided NetworkWay into two NetworkWays at the collision point
 func update_collided_network_way():
-	var new_network_id = network_node_collision.get_instance_id()
 
 	# Create a new NetworkWay from Node A to the collision point
 	add_network_way()
-	network_way.network_node_a_id = new_network_id
-	network_way.network_node_b_id = network_way_collided.network_node_b_id
+	network_way.network_node_a = network_node_collision
+	network_way.network_node_b = network_way_collided.network_node_b
 	commit_network_way()
+	network_way._update()
+	
+	# Add a second NetworkWay from the collision point to the Node B
+	add_network_way()
+	network_way.network_node_a = network_way_collided.network_node_a
+	network_way.network_node_b = network_node_collision
+	commit_network_way()
+	network_way._update()
 
-	# Update the collided NetworkWay from the collision point to the Node B
-	network_way_collided.network_node_b_id = new_network_id
-	network_way_collided._update()
-	network_way_collided = null
+	# Remove the old NetworkWay
+	network_way_collided.queue_free()
 
 
 func remove_staged_network_way():

@@ -94,3 +94,8 @@ func _on_NetworkNode_input_event(_camera:Node, event:InputEvent, position:Vector
 		if event.is_action_pressed("ui_left_click"):
 			queue_free()
 
+
+func remove_from_network_way():
+	# If the NetworkNode is not connected to any NetworkWay, remove it completely.
+	if get_signal_connection_list("network_node_updated").size() == 0:
+		queue_free()

@@ -6,10 +6,8 @@ signal network_way_collided
 
 const network_sub_node_scene: PackedScene = preload("res://scenes/NetworkSubNode.tscn")
 
-var network_node_a_id: int
 var network_node_a: Area
 var network_node_a_origin: Vector3
-var network_node_b_id: int
 var network_node_b: Area
 var network_node_b_origin: Vector3
 var network_nodes_distance: float
@@ -20,10 +18,18 @@ var is_hovering: bool = false
 var is_hovering_sub_node: bool = false
 
 
-func _update():
-	network_node_a = instance_from_id(network_node_a_id)
-	network_node_b = instance_from_id(network_node_b_id)
+func _on_NetworkWay_mouse_entered():
+	is_hovering = true
+	_update()
 
+
+func _on_NetworkWay_mouse_exited():
+	if !is_hovering_sub_node:
+		is_hovering = false
+	_update()
+
+
+func _update():
 	network_node_a_origin = network_node_a.transform.origin
 	network_node_b_origin = network_node_b.transform.origin
 	network_nodes_distance = network_node_a_origin.distance_to(network_node_b_origin)
@@ -131,26 +137,21 @@ func remove_network_way(removed_node: Area):
 
 	# Check if the "other" NetworkNode is associated with another NetworkWay,
 	# if not remove such NetworkNode.
-	if network_node_a == removed_node:
-		if network_node_b != null and network_node_b.get_signal_connection_list("network_node_updated").size() < 2:
-			network_node_b.queue_free()
+	if removed_node == network_node_a:
+		network_node_a = null
 
-	if network_node_b == removed_node:
-		if network_node_a != null and network_node_a.get_signal_connection_list("network_node_updated").size() < 2:
-			network_node_a.queue_free()
+	if removed_node == network_node_b:
+		network_node_b = null
 
-	network_node_a = null
-	network_node_b = null
+	if network_node_a != null:
+		network_node_a.disconnect("network_node_updated", self, "_update")
+		network_node_a.remove_from_network_way()
+
+	if network_node_b != null:
+		network_node_b.disconnect("network_node_updated", self, "_update")
+		network_node_b.remove_from_network_way()
 
 	# Remove the NetworkWay after resetting any orphan NetworkNodes
 	queue_free()
 
 
-func _on_NetworkWay_mouse_entered():
-	is_hovering = true
-	_update()
-
-func _on_NetworkWay_mouse_exited():
-	if !is_hovering_sub_node:
-		is_hovering = false
-	_update()
