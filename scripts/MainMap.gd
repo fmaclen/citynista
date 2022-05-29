@@ -129,17 +129,18 @@ func add_network_node(position) -> Node:
 	return node
 
 
+func handle_snap_to_network_node(should_snap: bool, snap_position: Vector3):
+	handle_snap_to(should_snap, snap_position)
+
+	# Show or hide the staged NetworkNode
 	if should_snap:
 		if network_node_a != null and network_node_a.is_staged:
 			network_node_a.visible = false
 		if network_node_b != null and network_node_b.is_staged:
 			network_node_b.visible = false
-			move_network_node(network_node_b, snap_position)
-
 	else:
 		if network_node_a != null and network_node_a.is_staged:
 			network_node_a.visible = true
-
 		if network_node_b != null and network_node_b.is_staged:
 			network_node_b.visible = true
 
@@ -173,6 +174,7 @@ func handle_snapped_to(node: Node):
 
 func add_network_way():
 	network_way = network_way_scene.instance()
+	network_way.monitoring = true
 	network_ways_container.add_child(network_way)
 	set_network_way_nodes()
 
@@ -190,6 +192,7 @@ func commit_network_way():
 	network_way.connect("network_way_intersected", self, "handle_network_way_intersected", [network_way])
 	##############################################################################
 
+	network_way.monitoring = false
 	network_way.is_staged = false
 	network_way.is_snappable = true
 
