@@ -19,7 +19,11 @@ var snap_points: PoolVector3Array = []
 var snapped_point: Vector3
 var collided_point: Vector3
 
-var MAX_SNAPPING_DISTANCE = 1.0
+const MAX_SNAPPING_DISTANCE: float = 1.0
+const MAX_SNAPPING_LENGTH: int = 2
+
+const COLLISION_SHAPE_HEIGHT: float = 0.1
+const COLLISION_SHAPE_WIDTH: float = 1.0
 
 
 func _on_NetworkWay_mouse_entered():
@@ -68,16 +72,14 @@ func _update():
 	draw_line()
 	update_collision_shape()
 
+	# Show or hide the snap point guides
+	$NetworkSubNodes.visible = is_hovering
+
 	if is_snappable:
 		if $NetworkSubNodes.get_child_count() == 0:
 			add_snap_points()
 	else:
 		remove_snap_points()
-
-	if is_hovering:
-		$NetworkSubNodes.visible = true
-	else:
-		$NetworkSubNodes.visible = false
 
 
 func draw_line():
@@ -100,16 +102,16 @@ func draw_line():
 
 func update_collision_shape():
 	if network_node_a_origin != network_node_b_origin:
-		var collision_position = lerp_network_nodes(0.5)
+		var shape_length = (network_nodes_distance * 0.5) - COLLISION_SHAPE_WIDTH
+		var current_position = lerp_network_nodes(0.5)
+
 		$CollisionShape.shape = BoxShape.new()
-		$CollisionShape.shape.extents = Vector3(0.1, 1.0, (network_nodes_distance * 0.5) - 1.0)
-		$CollisionShape.look_at_from_position(collision_position, network_node_a_origin, network_node_b_origin)
+		$CollisionShape.shape.extents = Vector3(COLLISION_SHAPE_HEIGHT, COLLISION_SHAPE_WIDTH, shape_length)
+		$CollisionShape.look_at_from_position(current_position, network_node_a_origin, network_node_b_origin)
 
 
 func add_snap_points():
-	var MAX_SEGMENT_LENGTH = 2
-
-	var snap_point_count = int(network_nodes_distance / MAX_SEGMENT_LENGTH) # Ignore the first and last segments
+	var snap_point_count = int(network_nodes_distance / MAX_SNAPPING_LENGTH) # Ignore the first and last segments
 
 	if snap_point_count > 0:
 		var weight = 1.0 / float(snap_point_count) # Distance between the NetworkSubNodes
