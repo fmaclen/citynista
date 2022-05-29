@@ -117,7 +117,7 @@ func commit_network_node(node: Area, position: Vector3):
 func add_network_node(position) -> Node:
 	var node = network_node_scene.instance()
 
-	node.connect("network_node_snap_to", self, "handle_snap_to")
+	node.connect("network_node_snap_to", self, "handle_snap_to_network_node")
 	node.connect("network_node_snapped", self, "handle_snapped_to", [node])
 
 	node.transform.origin = position
@@ -129,12 +129,9 @@ func add_network_node(position) -> Node:
 	return node
 
 
-func handle_snap_to(should_snap: bool, snap_position: Vector3):
 	if should_snap:
 		if network_node_a != null and network_node_a.is_staged:
 			network_node_a.visible = false
-			move_network_node(network_node_a, snap_position)
-
 		if network_node_b != null and network_node_b.is_staged:
 			network_node_b.visible = false
 			move_network_node(network_node_b, snap_position)
@@ -145,6 +142,14 @@ func handle_snap_to(should_snap: bool, snap_position: Vector3):
 
 		if network_node_b != null and network_node_b.is_staged:
 			network_node_b.visible = true
+
+
+func handle_snap_to(should_snap: bool, snap_position: Vector3):
+	if should_snap:
+		if network_node_a != null and network_node_a.is_staged:
+			move_network_node(network_node_a, snap_position)
+		if network_node_b != null and network_node_b.is_staged:
+			move_network_node(network_node_b, snap_position)
 
 
 func handle_snapped_to(node: Node):
@@ -181,6 +186,9 @@ func set_network_way_nodes():
 func commit_network_way():
 	network_way.connect("network_way_snap_to", self, "handle_snap_to")
 	network_way.connect("network_way_collided", self, "handle_network_way_collided", [network_way])
+	##############################################################################
+	network_way.connect("network_way_intersected", self, "handle_network_way_intersected", [network_way])
+	##############################################################################
 
 	network_way.is_staged = false
 	network_way.is_snappable = true
@@ -192,6 +200,22 @@ func commit_network_way():
 	network_node_b.is_staged = false
 	network_node_b.is_snappable = true
 	network_node_b._update()
+
+
+################################################################################
+
+func handle_network_way_intersected(intersected_network_way: Area, current_network_way: Area):
+	if network_way_collided == null:
+		return
+
+	network_way_collided = intersected_network_way
+	var net_node_a1 = intersected_network_way.network_node_a
+	var net_node_b1 = intersected_network_way.network_node_b
+
+	print("intersected_network_way", net_node_a1.transform.origin)
+	print("intersected_network_way", net_node_b1.transform.origin)
+
+################################################################################
 
 
 func handle_network_way_collided(collision_position: Vector3, collided_network_way: Area):

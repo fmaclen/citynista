@@ -17,6 +17,7 @@ var is_snappable: bool = false
 var is_hovering: bool = false
 var snap_points: PoolVector3Array = []
 var snapped_point: Vector3
+var collided_point: Vector3
 
 var MAX_SNAPPING_DISTANCE = 1.0
 
@@ -65,9 +66,7 @@ func _update():
 		network_node_b.connect("tree_exited", self, "remove_network_way", [network_node_b])
 
 	draw_line()
-	
-	if !is_staged:
-		set_collision_shape()
+	update_collision_shape()
 
 	if is_snappable:
 		if $NetworkSubNodes.get_child_count() == 0:
@@ -99,11 +98,12 @@ func draw_line():
 	debug_line.end()
 
 
-func set_collision_shape():
-	var collision_position = lerp_network_nodes(0.5)
-	$CollisionShape.shape = BoxShape.new()
-	$CollisionShape.look_at_from_position(collision_position, network_node_a_origin, network_node_b_origin)
-	$CollisionShape.shape.extents = Vector3(0.1, 1.0, network_nodes_distance * 0.5)
+func update_collision_shape():
+	if network_node_a_origin != network_node_b_origin:
+		var collision_position = lerp_network_nodes(0.5)
+		$CollisionShape.shape = BoxShape.new()
+		$CollisionShape.shape.extents = Vector3(0.1, 1.0, (network_nodes_distance * 0.5) - 1.0)
+		$CollisionShape.look_at_from_position(collision_position, network_node_a_origin, network_node_b_origin)
 
 
 func add_snap_points():
