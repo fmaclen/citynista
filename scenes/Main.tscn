@@ -76,6 +76,8 @@ script = ExtResource( 1 )
 
 [node name="Network" type="Spatial" parent="Map"]
 
+[node name="Gizmos" type="Spatial" parent="Map/Network"]
+
 [node name="Nodes" type="Spatial" parent="Map/Network"]
 
 [node name="Ways" type="Spatial" parent="Map/Network"]

@@ -2,10 +2,11 @@
 
 [ext_resource path="res://assets/theme/ColorStaged.tres" type="Material" id=2]
 
-[sub_resource type="CubeMesh" id=1]
-size = Vector3( 0.2, 0.2, 0.2 )
+[sub_resource type="SphereMesh" id=1]
+radius = 0.3
+height = 0.6
 
-[node name="NetworkSubNode" type="Spatial"]
+[node name="NetworkWayIntersection" type="Spatial"]
 
 [node name="Cube" type="MeshInstance" parent="."]
 mesh = SubResource( 1 )

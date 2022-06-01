@@ -3,7 +3,7 @@ extends Area
 
 signal network_node_updated
 signal network_node_snap_to
-signal network_node_snapped
+signal network_node_snapped_to
 
 const material_default: SpatialMaterial = preload("res://assets/theme/ColorDefault.tres")
 const material_selected: SpatialMaterial = preload("res://assets/theme/ColorSelected.tres")
@@ -88,7 +88,7 @@ func _on_NetworkNode_input_event(_camera:Node, event:InputEvent, position:Vector
 
 	elif is_snappable:
 		if event.is_action_pressed("ui_left_click"):
-			emit_signal("network_node_snapped")
+			emit_signal("network_node_snapped_to")
 
 	elif is_removable:
 		if event.is_action_pressed("ui_left_click"):
@@ -97,5 +97,5 @@ func _on_NetworkNode_input_event(_camera:Node, event:InputEvent, position:Vector
 
 func remove_from_network_way():
 	# If the NetworkNode is not connected to any NetworkWay, remove it completely.
-	if get_signal_connection_list("network_node_updated").size() == 0:
+	if get_signal_connection_list("network_node_updated").empty():
 		queue_free()

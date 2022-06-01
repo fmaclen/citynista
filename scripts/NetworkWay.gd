@@ -1,10 +1,10 @@
 extends Area
 
 
-signal network_way_snap_to(snap_position)
-signal network_way_collided(collision_point)
+signal network_way_snap_to(should_snap, snap_position)
+signal network_way_snapped_to(collision_point)
 
-const network_sub_node_scene: PackedScene = preload("res://scenes/NetworkSubNode.tscn")
+const gizmo_snap_to: PackedScene = preload("res://scenes/GizmoSnapTo.tscn")
 
 var network_node_a: Area
 var network_node_a_origin: Vector3
@@ -52,7 +52,7 @@ func _on_NetworkWay_input_event(_camera:Node, event:InputEvent, position:Vector3
 
 	if event.is_action_pressed("ui_left_click"):
 		if snapped_point != Vector3.ZERO:
-			emit_signal("network_way_collided", snapped_point)
+			emit_signal("network_way_snapped_to", snapped_point)
 
 
 func _update():
@@ -73,10 +73,10 @@ func _update():
 	update_collision_shape()
 
 	# Show or hide the snap point guides
-	$NetworkSubNodes.visible = is_hovering
+	$Gizmos.visible = is_hovering
 
 	if is_snappable:
-		if $NetworkSubNodes.get_child_count() == 0:
+		if $Gizmos.get_child_count() == 0:
 			add_snap_points()
 	else:
 		remove_snap_points()
@@ -110,11 +110,25 @@ func update_collision_shape():
 		$CollisionShape.look_at_from_position(current_position, network_node_a_origin, network_node_b_origin)
 
 
+func get_intersecting_network_ways() -> Array:
+	# HACK: resetting the position re-calculates the overlapping collisions
+	# https://godotengine.org/qa/56354/get_overlapping_areas-working-when-changing-collision-size
+	transform.origin = Vector3.ZERO
+
+	var intersecting_network_ways: Array = []
+
+	for node in get_overlapping_areas():
+		if node.get_parent().name == "Ways":
+			intersecting_network_ways.append(node)
+
+	return intersecting_network_ways
+
+
 func add_snap_points():
 	var snap_point_count = int(network_nodes_distance / MAX_SNAPPING_LENGTH) # Ignore the first and last segments
 
 	if snap_point_count > 0:
-		var weight = 1.0 / float(snap_point_count) # Distance between the NetworkSubNodes
+		var weight = 1.0 / float(snap_point_count) # Distance between the NetworkNodes
 		var segment_weight = 0
 		var segment_index = 0
 
@@ -129,15 +143,15 @@ func add_snap_points():
 			var snap_point = lerp_network_nodes(segment_weight)
 			snap_points.append(snap_point)
 
-			var network_sub_node = network_sub_node_scene.instance()
-			network_sub_node.transform.origin = snap_point
-			network_sub_node.look_at_from_position(network_sub_node.transform.origin, network_node_a_origin, network_node_b_origin)
-			$NetworkSubNodes.add_child(network_sub_node)
+			var gizmo = gizmo_snap_to.instance()
+			gizmo.transform.origin = snap_point
+			gizmo.look_at_from_position(gizmo.transform.origin, network_node_a_origin, network_node_b_origin)
+			$Gizmos.add_child(gizmo)
 
 
 func remove_snap_points():
-	for network_sub_node in $NetworkSubNodes.get_children():
-		network_sub_node.queue_free()
+	for gizmo in $Gizmos.get_children():
+		gizmo.queue_free()
 
 
 func lerp_network_nodes(weight: float):
