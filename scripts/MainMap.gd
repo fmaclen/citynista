@@ -17,12 +17,8 @@ const gizmo_intersection_scene: PackedScene = preload("res://scenes/GizmoInterse
 
 var network_node_a: Area
 var network_node_b: Area
-var network_node_snap_to: Area
-var network_node_collision: Area
 
 var network_way: Spatial
-var network_way_collided: Area
-
 var network_way_intersections: Array
 
 
@@ -105,9 +101,7 @@ func commit_network():
 func reset_network_variables():
 	network_node_a = null
 	network_node_b = null
-	network_node_snap_to = null
 	network_way = null
-	network_way_collided = null
 
 
 func reset_gizmos():
@@ -245,6 +239,7 @@ func commit_network_way_intersections():
 	if network_way_intersections.empty():
 		return
 
+	# Sort the intersections by distance from the `NetworkWay.network_node_a`
 	network_way_intersections.sort_custom(self, "sort_network_way_intersections")
 
 	for intersection in network_way_intersections:
@@ -299,7 +294,6 @@ func split_network_way(existing_network_way: Area, intersection_network_node: Ar
 
 func handle_snapped_to_network_way(position: Vector3):
 	if network_node_a != null and network_node_a.is_staged:
-		network_node_a.name = "NoditoA"
 		commit_network_node(network_node_a, position)
 		network_node_b = add_network_node(position)
 		network_way = add_network_way()
@@ -307,5 +301,4 @@ func handle_snapped_to_network_way(position: Vector3):
 
 	elif network_node_b != null and network_node_b.is_staged:
 		commit_network_node(network_node_b, position)
-		network_node_b.name = "NoditoB"
 		commit_network()
