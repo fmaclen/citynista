@@ -10,7 +10,7 @@ const material_selected: SpatialMaterial = preload("res://assets/theme/ColorSele
 const material_staged: SpatialMaterial = preload("res://assets/theme/ColorStaged.tres")
 const material_removable: SpatialMaterial = preload("res://assets/theme/ColorRemovable.tres")
 
-var is_staged: bool = false
+var is_staged: bool = true
 var is_editable: bool = false
 var is_dragging: bool = false
 var is_snappable: bool = false

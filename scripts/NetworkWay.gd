@@ -112,7 +112,8 @@ func update_collision_shape():
 
 func get_intersecting_network_ways() -> Array:
 	# HACK: resetting the position re-calculates the overlapping collisions
-	# https://godotengine.org/qa/56354/get_overlapping_areas-working-when-changing-collision-size
+	# It appears as if this is fixed in Godot 3.5.
+	# https://www.reddit.com/r/godot/comments/v2km8v/sorting_an_array_of_vector3s_between_2_known/
 	transform.origin = Vector3.ZERO
 
 	var intersecting_network_ways: Array = []
