@@ -27,6 +27,7 @@ func _ready():
 	$CollisionShape.shape = CylinderShape.new()
 	$CollisionShape.shape.radius = COLLISION_RADIUS_DEFAULT
 	$CollisionShape.shape.height = COLLISION_RADIUS_HEIGHT
+	$CollisionShape.disabled = true
 
 
 func _update():

@@ -63,6 +63,7 @@ func _on_World_input_event(_camera: Node, event: InputEvent, position: Vector3, 
 	if event.is_action_released("ui_left_click"):
 		if current_network_node_a and !current_network_node_b:
 			add_current_network_way()
+
 		elif current_network_node_a and current_network_node_b:
 			commit_current_network_way()
 			continue_network_way_from_network_node_b()
@@ -106,6 +107,7 @@ func add_network_node(position: Vector3) -> Area:
 	new_network_node.connect("network_node_snap_to", self, "snap_to_position")
 	new_network_node.connect("network_node_snapped_to", self, "handle_snapped_to_network_node", [new_network_node])
 	new_network_node.transform.origin = position
+
 	network_nodes_container.add_child(new_network_node)
 	return new_network_node
 
