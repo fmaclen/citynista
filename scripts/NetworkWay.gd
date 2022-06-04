@@ -102,7 +102,7 @@ func draw_line():
 
 func update_collision_shape():
 	if network_node_a_origin != network_node_b_origin:
-		var shape_length = (network_nodes_distance * 0.5) - (COLLISION_SHAPE_WIDTH * 2.0)
+		var shape_length = (network_nodes_distance * 0.5) - (COLLISION_SHAPE_WIDTH)
 		var current_position = lerp_network_nodes(0.5)
 
 		$CollisionShape.shape = BoxShape.new()

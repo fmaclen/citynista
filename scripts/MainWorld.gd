@@ -55,23 +55,17 @@ func _on_World_input_event(_camera: Node, event: InputEvent, position: Vector3, 
 	if !is_building:
 		return
 
+	move_current_network_node(position)
+
 	if !current_network_node_a:
 		current_network_node_a = add_network_node(position)
 
-	if current_network_node_a and current_network_node_a.is_staged:
-		move_network_node(current_network_node_a, position)
-
-	elif current_network_node_b and current_network_node_b.is_staged:
-		move_network_node(current_network_node_b, position)
-		update_current_network_way()
-
 	if event.is_action_released("ui_left_click"):
-		if current_network_node_a.is_staged:
-			commit_current_network_node_a()
-		else:
-			commit_current_network_node_b()
+		if current_network_node_a and !current_network_node_b:
+			add_current_network_way()
+		elif current_network_node_a and current_network_node_b:
 			commit_current_network_way()
-			continue_network_way_from_network_node_b(position)
+			continue_network_way_from_network_node_b()
 
 	if event.is_action_released("ui_right_click"):
 		stop_building()
@@ -79,12 +73,7 @@ func _on_World_input_event(_camera: Node, event: InputEvent, position: Vector3, 
 
 func snap_to_position(should_snap: bool, snap_position: Vector3):
 	if should_snap:
-		if current_network_node_a and current_network_node_a.is_staged:
-			move_network_node(current_network_node_a, snap_position)
-		elif current_network_node_b and current_network_node_b.is_staged:
-			move_network_node(current_network_node_b, snap_position)
-
-		update_current_network_way()
+		move_current_network_node(snap_position)
 
 
 func stop_building():
@@ -121,29 +110,13 @@ func add_network_node(position: Vector3) -> Area:
 	return new_network_node
 
 
-func commit_current_network_node_a():
-	current_network_node_a.is_staged = false
-	current_network_node_a.is_snappable = true
-	current_network_node_a._update()
-
-	current_network_node_b = add_network_node(current_network_node_a.transform.origin)
-
-	add_current_network_way()
-
-
-func commit_current_network_node_b():
-	current_network_node_b.is_staged = false
-	current_network_node_b.is_snappable = true
-	current_network_node_b._update()
-
-
 func handle_snapped_to_network_node(node: Area):
-	if current_network_node_a.is_staged:
+	if current_network_node_a and !current_network_node_b:
 		current_network_node_a.queue_free()
 		current_network_node_a = node
-		commit_current_network_node_a()
+		add_current_network_way()
 
-	elif current_network_node_b.is_staged:
+	elif current_network_node_a and current_network_node_b:
 		current_network_node_b.queue_free()
 		current_network_node_b = node
 		commit_current_network_way()
@@ -153,13 +126,19 @@ func handle_snapped_to_network_node(node: Area):
 	update_current_network_way()
 
 
-func move_network_node(node: Node, position: Vector3):
-	node.transform.origin = position
+func move_current_network_node(position: Vector3):
+	if current_network_node_a and !current_network_node_b:
+		current_network_node_a.transform.origin = position
+	elif current_network_node_a and current_network_node_b:
+		current_network_node_b.transform.origin = position
+	else:
+		return
+
+	update_current_network_way()
 
 
-func continue_network_way_from_network_node_b(position: Vector3):
+func continue_network_way_from_network_node_b():
 	current_network_node_a = current_network_node_b
-	current_network_node_b = add_network_node(position)
 	add_current_network_way()
 
 
@@ -175,6 +154,7 @@ func add_network_way() -> Area:
 
 
 func add_current_network_way():
+	current_network_node_b = add_network_node(current_network_node_a.transform.origin)
 	current_network_way = add_network_way()
 	update_current_network_way()
 
@@ -188,7 +168,15 @@ func update_current_network_way():
 
 
 func commit_current_network_way():
+	current_network_way.network_node_a.is_staged = false
+	current_network_way.network_node_a.is_snappable = true
+	current_network_way.network_node_a._update()
+
 	current_network_way.network_node_b = current_network_node_b
+	current_network_way.network_node_b.is_staged = false
+	current_network_way.network_node_b.is_snappable = true
+	current_network_way.network_node_b._update()
+
 	current_network_way.is_staged = false
 	current_network_way.is_snappable = true
 	update_current_network_way()
@@ -196,11 +184,11 @@ func commit_current_network_way():
 
 
 func handle_snapped_to_network_way():
-	if current_network_node_a.is_staged:
-		commit_current_network_node_a()
-	else:
-		commit_current_network_node_b()
+	if current_network_node_a and !current_network_node_b:
+		add_current_network_way()
+	elif current_network_node_a and current_network_node_b:
 		commit_current_network_way()
+		stop_building()
 
 
 # NetworkWayIntersections ------------------------------------------------------
@@ -208,8 +196,17 @@ func handle_snapped_to_network_way():
 
 func add_network_way_intersections():
 	reset_existing_network_node_intersections()
-	
+
 	for intersected_network_way in current_network_way.get_intersecting_network_ways():
+		if current_network_node_a == intersected_network_way.network_node_a:
+			return
+		elif current_network_node_a == intersected_network_way.network_node_b:
+			return
+		elif current_network_node_b == intersected_network_way.network_node_a:
+			return
+		elif current_network_node_b == intersected_network_way.network_node_b:
+			return
+
 		var intersected_way_node_a = intersected_network_way.network_node_a.transform.origin
 		var intersected_way_node_b = intersected_network_way.network_node_b.transform.origin
 
