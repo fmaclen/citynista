@@ -16,8 +16,7 @@ var is_removing: bool = false
 var current_network_node_a: Area
 var current_network_node_b: Area
 var current_network_way: Area
-var existing_network_node_snapped_to: Area
-
+var network_way_intersections: Array = []
 
 
 # World ------------------------------------------------------------------------
@@ -34,8 +33,19 @@ func set_world_state(state: bool, mode: String):
 		"build":
 			is_building = state
 
+			for node in network_ways_container.get_children():
+				node.is_snappable = state
+				node._update()
+
+			if !is_building:
+				stop_building()
+
 		"edit":
 			is_editing = state
+
+			for node in network_nodes_container.get_children():
+				node.is_editable = state
+				node._update()
 
 		"remove":
 			is_removing = state
@@ -58,23 +68,45 @@ func _on_World_input_event(_camera: Node, event: InputEvent, position: Vector3, 
 	if event.is_action_released("ui_left_click"):
 		if current_network_node_a.is_staged:
 			commit_current_network_node_a()
-			current_network_node_b = add_network_node(position)
-			add_current_network_way()
-
 		else:
 			commit_current_network_node_b()
 			commit_current_network_way()
 			continue_network_way_from_network_node_b(position)
+
+	if event.is_action_released("ui_right_click"):
+		stop_building()
 
 
 func snap_to_position(should_snap: bool, snap_position: Vector3):
 	if should_snap:
 		if current_network_node_a and current_network_node_a.is_staged:
 			move_network_node(current_network_node_a, snap_position)
-		else:
+		elif current_network_node_b and current_network_node_b.is_staged:
 			move_network_node(current_network_node_b, snap_position)
 
 		update_current_network_way()
+
+
+func stop_building():
+	remove_staged_nodes()
+	reset_network_variables()
+	reset_existing_network_node_intersections()
+
+
+func remove_staged_nodes():
+	for network_node in network_nodes_container.get_children():
+		if network_node.is_staged:
+			network_node.queue_free()
+
+	for network_way in network_ways_container.get_children():
+		if network_way.is_staged:
+			network_way.queue_free()
+
+
+func reset_network_variables():
+	current_network_node_a = null
+	current_network_node_b = null
+	current_network_way = null
 
 
 # NetworkNodes -----------------------------------------------------------------
@@ -92,20 +124,31 @@ func add_network_node(position: Vector3) -> Area:
 func commit_current_network_node_a():
 	current_network_node_a.is_staged = false
 	current_network_node_a.is_snappable = true
+	current_network_node_a._update()
+
+	current_network_node_b = add_network_node(current_network_node_a.transform.origin)
+
+	add_current_network_way()
 
 
 func commit_current_network_node_b():
 	current_network_node_b.is_staged = false
 	current_network_node_b.is_snappable = true
+	current_network_node_b._update()
 
 
 func handle_snapped_to_network_node(node: Area):
 	if current_network_node_a.is_staged:
 		current_network_node_a.queue_free()
 		current_network_node_a = node
-	else:
+		commit_current_network_node_a()
+
+	elif current_network_node_b.is_staged:
 		current_network_node_b.queue_free()
 		current_network_node_b = node
+		commit_current_network_way()
+		stop_building()
+		return
 
 	update_current_network_way()
 
@@ -126,7 +169,7 @@ func continue_network_way_from_network_node_b(position: Vector3):
 func add_network_way() -> Area:
 	var new_network_way = network_way_scene.instance()
 	new_network_way.connect("network_way_snap_to", self, "snap_to_position")
-	# new_network_way.connect("network_way_snapped_to", self, "handle_snapped_to_network_way")
+	new_network_way.connect("network_way_snapped_to", self, "handle_snapped_to_network_way")
 	network_ways_container.add_child(new_network_way)
 	return new_network_way
 
@@ -141,6 +184,7 @@ func update_current_network_way():
 		current_network_way.network_node_a = current_network_node_a
 		current_network_way.network_node_b = current_network_node_b
 		current_network_way._update()
+		add_network_way_intersections()
 
 
 func commit_current_network_way():
@@ -148,3 +192,105 @@ func commit_current_network_way():
 	current_network_way.is_staged = false
 	current_network_way.is_snappable = true
 	update_current_network_way()
+	commit_network_way_intersections()
+
+
+func handle_snapped_to_network_way():
+	if current_network_node_a.is_staged:
+		commit_current_network_node_a()
+	else:
+		commit_current_network_node_b()
+		commit_current_network_way()
+
+
+# NetworkWayIntersections ------------------------------------------------------
+
+
+func add_network_way_intersections():
+	reset_existing_network_node_intersections()
+	
+	for intersected_network_way in current_network_way.get_intersecting_network_ways():
+		var intersected_way_node_a = intersected_network_way.network_node_a.transform.origin
+		var intersected_way_node_b = intersected_network_way.network_node_b.transform.origin
+
+		var intersects_at = Geometry.get_closest_points_between_segments(
+			current_network_node_a.transform.origin,
+			current_network_node_b.transform.origin,
+			intersected_way_node_a,
+			intersected_way_node_b
+		)[0]
+
+		if !intersects_at:
+			return
+
+		var intersected_network_node: Area
+
+		if intersects_at == current_network_node_a.transform.origin:
+			intersected_network_node = current_network_node_a
+
+		elif intersects_at == current_network_node_b.transform.origin:
+			intersected_network_node = current_network_node_b
+
+		else:
+			intersected_network_node = add_network_node(intersects_at)
+			intersected_network_node.is_intersection_gizmo = true
+
+		network_way_intersections.append({
+				"intersected_at": intersects_at,
+				"intersected_network_way": intersected_network_way,
+				"intersected_network_node": intersected_network_node
+		})
+
+
+func commit_network_way_intersections():
+	if network_way_intersections.empty():
+		return
+
+	# Sort the intersections by distance from the `NetworkWay.network_node_a`
+	network_way_intersections.sort_custom(self, "sort_network_way_intersections")
+
+	for intersection in network_way_intersections:
+		var intersected_network_way: Area = intersection["intersected_network_way"]
+		var intersected_network_node: Area = intersection["intersected_network_node"]
+
+		split_network_way(
+			current_network_way,
+			intersected_network_node
+		)
+		split_network_way(
+			intersected_network_way,
+			intersected_network_node
+		)
+
+
+func split_network_way(existing_network_way: Area, intersection_network_node: Area):
+	var new_network_way = add_network_way()
+	new_network_way.network_node_a = existing_network_way.network_node_a
+	new_network_way.network_node_b = intersection_network_node
+	new_network_way.is_staged = false
+	new_network_way._update()
+
+	existing_network_way.network_node_a = intersection_network_node
+	existing_network_way.is_staged = false
+	existing_network_way._update()
+
+	intersection_network_node.is_staged = false
+	intersection_network_node.is_intersection_gizmo = false
+	intersection_network_node.is_snappable = true
+	intersection_network_node._update()
+
+
+func sort_network_way_intersections(a: Dictionary, b: Dictionary):
+	var current_network_node_a_position = current_network_node_a.transform.origin
+	if a["intersected_at"].distance_to(current_network_node_a_position) < b["intersected_at"].distance_to(current_network_node_a_position):
+		return true
+	else:
+		return false
+
+
+func reset_existing_network_node_intersections():
+	network_way_intersections = []
+
+	for network_node in network_nodes_container.get_children():
+		if network_node.is_intersection_gizmo:
+			network_node.queue_free()

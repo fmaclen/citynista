@@ -52,7 +52,7 @@ func _on_NetworkWay_input_event(_camera:Node, event:InputEvent, position:Vector3
 
 	if event.is_action_pressed("ui_left_click"):
 		if snapped_point != Vector3.ZERO:
-			emit_signal("network_way_snapped_to", snapped_point)
+			emit_signal("network_way_snapped_to")
 
 
 func _update():
@@ -102,7 +102,7 @@ func draw_line():
 
 func update_collision_shape():
 	if network_node_a_origin != network_node_b_origin:
-		var shape_length = (network_nodes_distance * 0.5) - COLLISION_SHAPE_WIDTH
+		var shape_length = (network_nodes_distance * 0.5) - (COLLISION_SHAPE_WIDTH * 2.0)
 		var current_position = lerp_network_nodes(0.5)
 
 		$CollisionShape.shape = BoxShape.new()

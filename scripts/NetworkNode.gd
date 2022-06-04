@@ -15,6 +15,7 @@ var is_editable: bool = false
 var is_dragging: bool = false
 var is_snappable: bool = false
 var is_removable: bool = false
+var is_intersection_gizmo: bool = false
 var previous_position: Vector3
 
 const COLLISION_RADIUS_DEFAULT: float = 1.0
