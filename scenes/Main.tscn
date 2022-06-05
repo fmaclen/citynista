@@ -71,39 +71,6 @@ transform = Transform( -1, -4.76139e-08, 7.33189e-08, 0, 0.838671, 0.544639, -8.
 projection = 1
 size = 24.0
 
-[node name="Map" type="StaticBody" parent="."]
-visible = false
-
-[node name="Network" type="Spatial" parent="Map"]
-
-[node name="Gizmos" type="Spatial" parent="Map/Network"]
-
-[node name="Nodes" type="Spatial" parent="Map/Network"]
-
-[node name="Ways" type="Spatial" parent="Map/Network"]
-
-[node name="Ground" type="CollisionShape" parent="Map"]
-shape = SubResource( 5 )
-
-[node name="Grass" type="MeshInstance" parent="Map/Ground"]
-transform = Transform( 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.5, 0 )
-material_override = SubResource( 8 )
-mesh = SubResource( 2 )
-skeleton = NodePath("../..")
-material/0 = null
-
-[node name="Dirt" type="MeshInstance" parent="Map/Ground"]
-transform = Transform( 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -2.5, 0 )
-mesh = SubResource( 3 )
-skeleton = NodePath("../..")
-material/0 = SubResource( 9 )
-
-[node name="Sun" type="DirectionalLight" parent="Map"]
-transform = Transform( 0.707107, -0.385118, 0.59303, 0, 0.838671, 0.544639, -0.707107, -0.385118, 0.59303, 0, 12, 0 )
-light_color = Color( 0.909804, 0.886275, 0.807843, 1 )
-light_energy = 0.75
-shadow_enabled = true
-
 [node name="World" type="StaticBody" parent="."]
 script = ExtResource( 1 )
 
@@ -135,5 +102,4 @@ light_color = Color( 0.909804, 0.886275, 0.807843, 1 )
 light_energy = 0.75
 shadow_enabled = true
 
-[connection signal="input_event" from="Map" to="Map" method="_on_Map_input_event"]
 [connection signal="input_event" from="World" to="World" method="_on_World_input_event"]

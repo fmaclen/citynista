@@ -18,6 +18,8 @@ var current_network_node_b: Area
 var current_network_way: Area
 var network_way_intersections: Array = []
 
+var MIN_INTERSECTION_DISTANCE = 0.01
+
 
 # World ------------------------------------------------------------------------
 
@@ -66,7 +68,7 @@ func _on_World_input_event(_camera: Node, event: InputEvent, position: Vector3, 
 
 		elif current_network_node_a and current_network_node_b:
 			commit_current_network_way()
-			continue_network_way_from_network_node_b()
+			continue_building()
 
 	if event.is_action_released("ui_right_click"):
 		stop_building()
@@ -81,6 +83,11 @@ func stop_building():
 	remove_staged_nodes()
 	reset_network_variables()
 	reset_existing_network_node_intersections()
+
+
+func continue_building():
+	current_network_node_a = current_network_node_b
+	add_current_network_way()
 
 
 func remove_staged_nodes():
@@ -139,11 +146,6 @@ func move_current_network_node(position: Vector3):
 	update_current_network_way()
 
 
-func continue_network_way_from_network_node_b():
-	current_network_node_a = current_network_node_b
-	add_current_network_way()
-
-
 # NetworkWays ------------------------------------------------------------------
 
 
@@ -200,15 +202,6 @@ func add_network_way_intersections():
 	reset_existing_network_node_intersections()
 
 	for intersected_network_way in current_network_way.get_intersecting_network_ways():
-		if current_network_node_a == intersected_network_way.network_node_a:
-			return
-		elif current_network_node_a == intersected_network_way.network_node_b:
-			return
-		elif current_network_node_b == intersected_network_way.network_node_a:
-			return
-		elif current_network_node_b == intersected_network_way.network_node_b:
-			return
-
 		var intersected_way_node_a = intersected_network_way.network_node_a.transform.origin
 		var intersected_way_node_b = intersected_network_way.network_node_b.transform.origin
 
@@ -223,21 +216,17 @@ func add_network_way_intersections():
 			return
 
 		var intersected_network_node: Area
-
-		if intersects_at == current_network_node_a.transform.origin:
+		if intersects_at.distance_to(current_network_node_a.transform.origin) < MIN_INTERSECTION_DISTANCE:
 			intersected_network_node = current_network_node_a
-
-		elif intersects_at == current_network_node_b.transform.origin:
+		elif intersects_at.distance_to(current_network_node_b.transform.origin) < MIN_INTERSECTION_DISTANCE:
 			intersected_network_node = current_network_node_b
-
 		else:
 			intersected_network_node = add_network_node(intersects_at)
 			intersected_network_node.is_intersection_gizmo = true
 
 		network_way_intersections.append({
-				"intersected_at": intersects_at,
-				"intersected_network_way": intersected_network_way,
-				"intersected_network_node": intersected_network_node
+			"intersected_network_way": intersected_network_way,
+			"intersected_network_node": intersected_network_node
 		})
 
 
@@ -252,10 +241,12 @@ func commit_network_way_intersections():
 		var intersected_network_way: Area = intersection["intersected_network_way"]
 		var intersected_network_node: Area = intersection["intersected_network_node"]
 
-		split_network_way(
-			current_network_way,
-			intersected_network_node
-		)
+		if current_network_node_a != intersected_network_node and current_network_node_b != intersected_network_node:
+			split_network_way(
+				current_network_way,
+				intersected_network_node
+			)
+
 		split_network_way(
 			intersected_network_way,
 			intersected_network_node
@@ -281,7 +272,7 @@ func split_network_way(existing_network_way: Area, intersection_network_node: Ar
 
 func sort_network_way_intersections(a: Dictionary, b: Dictionary):
 	var current_network_node_a_position = current_network_node_a.transform.origin
-	if a["intersected_at"].distance_to(current_network_node_a_position) < b["intersected_at"].distance_to(current_network_node_a_position):
+	if a["intersects_at"].distance_to(current_network_node_a_position) < b["intersects_at"].distance_to(current_network_node_a_position):
 		return true
 	else:
 		return false
