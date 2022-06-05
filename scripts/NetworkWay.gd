@@ -6,6 +6,10 @@ signal network_way_snapped_to(collision_point)
 
 const gizmo_snap_to: PackedScene = preload("res://scenes/GizmoSnapTo.tscn")
 
+const material_default: SpatialMaterial = preload("res://assets/theme/ColorDefault.tres")
+const material_staged: SpatialMaterial = preload("res://assets/theme/ColorStaged.tres")
+const material_removable: SpatialMaterial = preload("res://assets/theme/ColorRemovable.tres")
+
 var network_node_a: Area
 var network_node_a_origin: Vector3
 var network_node_b: Area
@@ -15,6 +19,7 @@ var network_nodes_distance: float
 var is_staged: bool = true
 var is_snappable: bool = false
 var is_hovering: bool = false
+var is_removable: bool = false
 var snap_points: PoolVector3Array = []
 var snapped_point: Vector3
 var collided_point: Vector3
@@ -37,22 +42,29 @@ func _on_NetworkWay_mouse_exited():
 
 
 func _on_NetworkWay_input_event(_camera:Node, event:InputEvent, position:Vector3, _normal:Vector3, _shape_idx:int):
-	if !is_snappable:
+	_update()
+
+	if !is_hovering:
 		return
 
-	if is_hovering and event is InputEventMouse:
-		for snap_point in snap_points:
-			if position.distance_to(snap_point) < MAX_SNAPPING_DISTANCE:
-				snapped_point = snap_point
-				emit_signal("network_way_snap_to", true, snap_point)
-				break
-			else:
-				snapped_point = Vector3.ZERO
-				emit_signal("network_way_snap_to", false, position)
+	if event is InputEventMouse:
+		if is_snappable:
+			for snap_point in snap_points:
+				if position.distance_to(snap_point) < MAX_SNAPPING_DISTANCE:
+					snapped_point = snap_point
+					emit_signal("network_way_snap_to", true, snap_point)
+					break
+				else:
+					snapped_point = Vector3.ZERO
+					emit_signal("network_way_snap_to", false, position)
 
 	if event.is_action_pressed("ui_left_click"):
-		if snapped_point != Vector3.ZERO:
-			emit_signal("network_way_snapped_to")
+		if is_snappable:
+			if snapped_point != Vector3.ZERO:
+				emit_signal("network_way_snapped_to")
+
+		elif is_removable:
+			remove_network_way()
 
 
 func _update():
@@ -63,13 +75,12 @@ func _update():
 	# Connect to signals (if not's not already connected)
 	if !network_node_a.is_connected("network_node_updated", self, "_update"):
 		network_node_a.connect("network_node_updated", self, "_update")
-		network_node_a.connect("tree_exited", self, "remove_network_way", [network_node_a])
 	
 	if !network_node_b.is_connected("network_node_updated", self, "_update"):
 		network_node_b.connect("network_node_updated", self, "_update")
-		network_node_b.connect("tree_exited", self, "remove_network_way", [network_node_b])
 
 	draw_line()
+	update_material()
 	update_collision_shape()
 
 	# Show or hide the snap point guides
@@ -85,6 +96,7 @@ func _update():
 func draw_line():
 	# Draw line between nodes
 	var debug_line = $Draw3D
+	debug_line.material_override = material_staged
 	debug_line.clear()
 	debug_line.begin(Mesh.PRIMITIVE_LINE_STRIP)
 
@@ -98,6 +110,15 @@ func draw_line():
 	$Path.curve.add_point(network_node_b_position)
 
 	debug_line.end()
+
+
+func update_material():
+	if is_staged:
+		$Draw3D.material_override = material_staged
+	elif is_hovering and is_removable:
+		$Draw3D.material_override = material_removable
+	else:
+		$Draw3D.material_override = material_default
 
 
 func update_collision_shape():
@@ -159,26 +180,11 @@ func lerp_network_nodes(weight: float):
 	return network_node_a_origin.linear_interpolate(network_node_b_origin, weight)
 
 
-func remove_network_way(removed_node: Area):
-	# Ignore if event was triggered by removing a staged NetworkNode
-	if removed_node.is_staged:
-		return
+func remove_network_way():
+	network_node_a.disconnect("network_node_updated", self, "_update")
+	network_node_a.remove_from_network_way()
 
-	# Check if the "other" NetworkNode is associated with another NetworkWay,
-	# if not remove such NetworkNode.
-	if removed_node == network_node_a:
-		network_node_a = null
+	network_node_b.disconnect("network_node_updated", self, "_update")
+	network_node_b.remove_from_network_way()
 
-	if removed_node == network_node_b:
-		network_node_b = null
-
-	if network_node_a != null:
-		network_node_a.disconnect("network_node_updated", self, "_update")
-		network_node_a.remove_from_network_way()
-
-	if network_node_b != null:
-		network_node_b.disconnect("network_node_updated", self, "_update")
-		network_node_b.remove_from_network_way()
-
-	# Remove the NetworkWay after resetting any orphan NetworkNodes
 	queue_free()

@@ -52,6 +52,10 @@ func set_world_state(state: bool, mode: String):
 		"remove":
 			is_removing = state
 
+			for node in network_ways_container.get_children():
+				node.is_removable = state
+				node._update()
+
 
 func _on_World_input_event(_camera: Node, event: InputEvent, position: Vector3, _normal: Vector3, _shape_idx: int):
 	if !is_building:
@@ -225,6 +229,7 @@ func add_network_way_intersections():
 			intersected_network_node.is_intersection_gizmo = true
 
 		network_way_intersections.append({
+			"intersects_at": intersects_at,
 			"intersected_network_way": intersected_network_way,
 			"intersected_network_node": intersected_network_node
 		})

@@ -8,14 +8,13 @@ signal network_node_snapped_to
 const material_default: SpatialMaterial = preload("res://assets/theme/ColorDefault.tres")
 const material_selected: SpatialMaterial = preload("res://assets/theme/ColorSelected.tres")
 const material_staged: SpatialMaterial = preload("res://assets/theme/ColorStaged.tres")
-const material_removable: SpatialMaterial = preload("res://assets/theme/ColorRemovable.tres")
 
 var is_staged: bool = true
 var is_editable: bool = false
 var is_dragging: bool = false
 var is_snappable: bool = false
-var is_removable: bool = false
 var is_intersection_gizmo: bool = false
+var is_hovering: bool = false
 var previous_position: Vector3
 
 const COLLISION_RADIUS_DEFAULT: float = 1.0
@@ -31,37 +30,25 @@ func _ready():
 
 
 func _update():
-	if is_staged:
-		$CollisionShape.disabled = true
-		$Puck.set_surface_material(0, material_staged)
-	else:
-		$CollisionShape.disabled = false
-
+	$CollisionShape.disabled = is_staged
+	update_material()
 	emit_signal("network_node_updated")
 
 
 func _on_NetworkNode_mouse_entered():
-	if is_editable or is_snappable:
-		$Puck.set_surface_material(0, material_selected)
-
-	if is_removable:
-		$Puck.set_surface_material(0, material_removable)
+	is_hovering = true
+	_update()
 
 	if is_snappable:
 		emit_signal("network_node_snap_to", true, transform.origin)
 
-	_update()
-
 
 func _on_NetworkNode_mouse_exited():
+	is_hovering = false
 	_update()
-
-	if !is_staged:
-		$Puck.set_surface_material(0, material_default)
 
 	if is_snappable:
 		emit_signal("network_node_snap_to", false, transform.origin)
-
 
 
 func _on_NetworkNode_input_event(_camera:Node, event:InputEvent, position:Vector3, _normal:Vector3, _shape_idx:int):
@@ -92,12 +79,18 @@ func _on_NetworkNode_input_event(_camera:Node, event:InputEvent, position:Vector
 		if event.is_action_pressed("ui_left_click"):
 			emit_signal("network_node_snapped_to")
 
-	elif is_removable:
-		if event.is_action_pressed("ui_left_click"):
-			queue_free()
+
+func update_material():
+	if is_hovering:
+		$Puck.set_surface_material(0, material_selected)
+	elif is_staged:
+		$Puck.set_surface_material(0, material_staged)
+	else:
+		$Puck.set_surface_material(0, material_default)
 
 
 func remove_from_network_way():
 	# If the NetworkNode is not connected to any NetworkWay, remove it completely.
 	if get_signal_connection_list("network_node_updated").empty():
+		print("removing network node")
 		queue_free()
