@@ -26,7 +26,6 @@ func _ready():
 	$CollisionShape.shape = CylinderShape.new()
 	$CollisionShape.shape.radius = COLLISION_RADIUS_DEFAULT
 	$CollisionShape.shape.height = COLLISION_RADIUS_HEIGHT
-	$CollisionShape.disabled = true
 
 
 func _update():
@@ -92,5 +91,4 @@ func update_material():
 func remove_from_network_way():
 	# If the NetworkNode is not connected to any NetworkWay, remove it completely.
 	if get_signal_connection_list("network_node_updated").empty():
-		print("removing network node")
 		queue_free()

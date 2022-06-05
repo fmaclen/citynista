@@ -246,25 +246,23 @@ func commit_network_way_intersections():
 		var intersected_network_way: Area = intersection["intersected_network_way"]
 		var intersected_network_node: Area = intersection["intersected_network_node"]
 
-		if current_network_node_a != intersected_network_node and current_network_node_b != intersected_network_node:
-			split_network_way(
-				current_network_way,
-				intersected_network_node
-			)
-
-		split_network_way(
-			intersected_network_way,
-			intersected_network_node
-		)
+		split_network_way(current_network_way, intersected_network_node)
+		split_network_way(intersected_network_way, intersected_network_node)
 
 
 func split_network_way(existing_network_way: Area, intersection_network_node: Area):
+	if existing_network_way.network_node_a == intersection_network_node:
+		return
+	if existing_network_way.network_node_b == intersection_network_node:
+		return
+
 	var new_network_way = add_network_way()
-	new_network_way.network_node_a = existing_network_way.network_node_a
-	new_network_way.network_node_b = intersection_network_node
+	new_network_way.network_node_a = intersection_network_node
+	new_network_way.network_node_b = existing_network_way.network_node_a
 	new_network_way.is_staged = false
 	new_network_way._update()
 
+	existing_network_way.network_node_a.disconnect("network_node_updated", existing_network_way, "_update")
 	existing_network_way.network_node_a = intersection_network_node
 	existing_network_way.is_staged = false
 	existing_network_way._update()
