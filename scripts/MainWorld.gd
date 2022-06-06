@@ -260,11 +260,13 @@ func split_network_way(existing_network_way: Area, intersection_network_node: Ar
 	new_network_way.network_node_a = intersection_network_node
 	new_network_way.network_node_b = existing_network_way.network_node_a
 	new_network_way.is_staged = false
+	new_network_way.is_snappable = true
 	new_network_way._update()
 
 	existing_network_way.network_node_a.disconnect("network_node_updated", existing_network_way, "_update")
 	existing_network_way.network_node_a = intersection_network_node
 	existing_network_way.is_staged = false
+	existing_network_way.is_snappable = true
 	existing_network_way._update()
 
 	intersection_network_node.is_staged = false

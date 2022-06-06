@@ -80,7 +80,7 @@ func _on_NetworkNode_input_event(_camera:Node, event:InputEvent, position:Vector
 
 
 func update_material():
-	if is_hovering:
+	if is_editable and is_hovering:
 		$Puck.set_surface_material(0, material_selected)
 	elif is_staged:
 		$Puck.set_surface_material(0, material_staged)

@@ -81,16 +81,11 @@ func _update():
 
 	draw_line()
 	update_material()
-	update_collision_shape()
-
-	# Show or hide the snap point guides
-	$Gizmos.visible = is_hovering
+	update_collision_shape()	
 
 	if is_snappable:
-		if $Gizmos.get_child_count() == 0:
-			add_snap_points()
-	else:
-		remove_snap_points()
+		add_snap_points()
+		$Gizmos.visible = is_hovering
 
 
 func draw_line():
@@ -147,6 +142,8 @@ func get_intersecting_network_ways() -> Array:
 
 
 func add_snap_points():
+	remove_snap_points()
+
 	var snap_point_count = int(network_nodes_distance / MAX_SNAPPING_LENGTH) # Ignore the first and last segments
 
 	if snap_point_count > 0:
@@ -172,6 +169,8 @@ func add_snap_points():
 
 
 func remove_snap_points():
+	snap_points = []
+
 	for gizmo in $Gizmos.get_children():
 		gizmo.queue_free()
 
