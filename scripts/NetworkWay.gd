@@ -24,7 +24,7 @@ var snap_points: PoolVector3Array = []
 var snapped_point: Vector3
 var collided_point: Vector3
 
-const MAX_SNAPPING_DISTANCE: float = 1.0
+const MAX_SNAPPING_DISTANCE: float = 1.5
 const MAX_SNAPPING_LENGTH: int = 2
 
 const COLLISION_SHAPE_HEIGHT: float = 0.1
