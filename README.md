@@ -19,4 +19,4 @@ _(if you can call it that)_
 
 ### So far it looks like this...
 
-<img width="1478" alt="image" src="https://user-images.githubusercontent.com/1434675/169721853-cfb59d94-8a8f-4fd8-9e86-6124f7185c2a.png">
+https://user-images.githubusercontent.com/1434675/172186810-7a254226-c15a-4a62-98d7-62dae7a9b60b.mp4
