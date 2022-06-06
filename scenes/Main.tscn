@@ -1,24 +1,21 @@
 [gd_scene load_steps=10 format=2]
 
-[ext_resource path="res://scripts/MainMap.gd" type="Script" id=1]
+[ext_resource path="res://scripts/MainWorld.gd" type="Script" id=1]
 [ext_resource path="res://scripts/MainCamera.gd" type="Script" id=2]
 [ext_resource path="res://scripts/GUIToolbar.gd" type="Script" id=3]
 [ext_resource path="res://assets/theme/default_theme.tres" type="Theme" id=4]
+[ext_resource path="res://assets/theme/ColorGraphite.tres" type="Material" id=5]
+[ext_resource path="res://assets/theme/ColorGround.tres" type="Material" id=6]
 
 [sub_resource type="BoxShape" id=5]
 extents = Vector3( 16, 0, 16 )
 
-[sub_resource type="SpatialMaterial" id=8]
-albedo_color = Color( 0.172549, 0.176471, 0.211765, 1 )
-
 [sub_resource type="CubeMesh" id=2]
+material = ExtResource( 5 )
 size = Vector3( 32, 1, 32 )
 
 [sub_resource type="CubeMesh" id=3]
 size = Vector3( 32, 3, 32 )
-
-[sub_resource type="SpatialMaterial" id=9]
-albedo_color = Color( 0.776471, 0.666667, 0.427451, 1 )
 
 [node name="Main" type="Spatial"]
 
@@ -71,35 +68,32 @@ transform = Transform( -1, -4.76139e-08, 7.33189e-08, 0, 0.838671, 0.544639, -8.
 projection = 1
 size = 24.0
 
-[node name="Map" type="StaticBody" parent="."]
+[node name="World" type="StaticBody" parent="."]
 script = ExtResource( 1 )
 
-[node name="Network" type="Spatial" parent="Map"]
+[node name="Network" type="Spatial" parent="World"]
 
-[node name="Nodes" type="Spatial" parent="Map/Network"]
+[node name="Nodes" type="Spatial" parent="World/Network"]
 
-[node name="Ways" type="Spatial" parent="Map/Network"]
+[node name="Ways" type="Spatial" parent="World/Network"]
 
-[node name="Ground" type="CollisionShape" parent="Map"]
+[node name="Ground" type="CollisionShape" parent="World"]
 shape = SubResource( 5 )
 
-[node name="Grass" type="MeshInstance" parent="Map/Ground"]
+[node name="Grass" type="MeshInstance" parent="World/Ground"]
 transform = Transform( 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.5, 0 )
-material_override = SubResource( 8 )
 mesh = SubResource( 2 )
 skeleton = NodePath("../..")
 material/0 = null
 
-[node name="Dirt" type="MeshInstance" parent="Map/Ground"]
+[node name="Dirt" type="MeshInstance" parent="World/Ground"]
 transform = Transform( 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -2.5, 0 )
 mesh = SubResource( 3 )
 skeleton = NodePath("../..")
-material/0 = SubResource( 9 )
+material/0 = ExtResource( 6 )
 
-[node name="Sun" type="DirectionalLight" parent="Map"]
+[node name="Sun" type="DirectionalLight" parent="World"]
 transform = Transform( 0.707107, -0.385118, 0.59303, 0, 0.838671, 0.544639, -0.707107, -0.385118, 0.59303, 0, 12, 0 )
-light_color = Color( 0.909804, 0.886275, 0.807843, 1 )
-light_energy = 0.75
 shadow_enabled = true
 
-[connection signal="input_event" from="Map" to="Map" method="_on_Map_input_event"]
+[connection signal="input_event" from="World" to="World" method="_on_World_input_event"]
