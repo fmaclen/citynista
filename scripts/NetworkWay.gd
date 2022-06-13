@@ -5,6 +5,7 @@ signal network_way_snap_to(should_snap, snap_position)
 signal network_way_snapped_to(collision_point)
 
 const gizmo_snap_to: PackedScene = preload("res://scenes/GizmoSnapTo.tscn")
+const network_way_lane_scene: PackedScene = preload("res://scenes/NetworkWayLane.tscn")
 
 const material_default: SpatialMaterial = preload("res://assets/theme/ColorDefault.tres")
 const material_staged: SpatialMaterial = preload("res://assets/theme/ColorStaged.tres")
@@ -81,7 +82,8 @@ func _update():
 
 	draw_line()
 	update_material()
-	update_collision_shape()	
+	update_collision_shape()
+	generate_lanes()
 
 	if is_snappable:
 		add_snap_points()
@@ -105,6 +107,18 @@ func draw_line():
 	$Path.curve.add_point(network_node_b_position)
 
 	debug_line.end()
+
+
+func generate_lanes():
+	for lane in $Lanes.get_children():
+		lane.queue_free()
+
+	var network_way_lane_road = network_way_lane_scene.instance()
+	network_way_lane_road.point_a = network_node_a_origin
+	network_way_lane_road.point_b = network_node_b_origin
+	network_way_lane_road.lane_type = network_way_lane_road.lane_types.ROAD
+	network_way_lane_road._update()
+	$Lanes.add_child(network_way_lane_road)
 
 
 func update_material():
