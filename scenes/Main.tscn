@@ -4,18 +4,18 @@
 [ext_resource path="res://scripts/MainCamera.gd" type="Script" id=2]
 [ext_resource path="res://scripts/GUIToolbar.gd" type="Script" id=3]
 [ext_resource path="res://assets/theme/default_theme.tres" type="Theme" id=4]
-[ext_resource path="res://assets/theme/ColorGraphite.tres" type="Material" id=5]
+[ext_resource path="res://assets/theme/ColorGrass.tres" type="Material" id=5]
 [ext_resource path="res://assets/theme/ColorGround.tres" type="Material" id=6]
 
 [sub_resource type="BoxShape" id=5]
-extents = Vector3( 16, 0, 16 )
+extents = Vector3( 20, 0, 20 )
 
 [sub_resource type="CubeMesh" id=2]
 material = ExtResource( 5 )
-size = Vector3( 32, 1, 32 )
+size = Vector3( 48, 1, 48 )
 
 [sub_resource type="CubeMesh" id=3]
-size = Vector3( 32, 3, 32 )
+size = Vector3( 50, 3, 50 )
 
 [node name="Main" type="Spatial"]
 
@@ -66,7 +66,7 @@ script = ExtResource( 2 )
 [node name="Camera" type="Camera" parent="CameraController"]
 transform = Transform( -1, -4.76139e-08, 7.33189e-08, 0, 0.838671, 0.544639, -8.74228e-08, 0.544639, -0.838671, 0, 16, -28 )
 projection = 1
-size = 24.0
+size = 32.0
 
 [node name="World" type="StaticBody" parent="."]
 script = ExtResource( 1 )
@@ -93,7 +93,7 @@ skeleton = NodePath("../..")
 material/0 = ExtResource( 6 )
 
 [node name="Sun" type="DirectionalLight" parent="World"]
-transform = Transform( 0.707107, -0.385118, 0.59303, 0, 0.838671, 0.544639, -0.707107, -0.385118, 0.59303, 0, 12, 0 )
+transform = Transform( 0.707107, 0.385118, -0.59303, 0, 0.838671, 0.544639, 0.707107, -0.385118, 0.59303, 0, 12, 0 )
 shadow_enabled = true
 
 [connection signal="input_event" from="World" to="World" method="_on_World_input_event"]

@@ -196,8 +196,8 @@ func remove_network_way():
 # NetworkWayLanes
 
 enum lane_types { ROAD, SIDEWALK }
-const material_road: SpatialMaterial = preload("res://assets/theme/ColorGround.tres")
-const material_sidewalk: SpatialMaterial = preload("res://assets/theme/ColorStaged.tres")
+const material_road: SpatialMaterial = preload("res://assets/theme/ColorRoad.tres")
+const material_sidewalk: SpatialMaterial = preload("res://assets/theme/ColorSidewalk.tres")
 
 var lanes = [
 	{
