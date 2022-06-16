@@ -1,39 +1,26 @@
 extends MeshInstance
 
 
-const material_road: SpatialMaterial = preload("res://assets/theme/ColorGround.tres")
-const material_sidewalk: SpatialMaterial = preload("res://assets/theme/ColorStaged.tres")
-
-enum lane_types { ROAD, SIDEWALK }
-
 var point_a: Vector3
 var point_b: Vector3
 var width: float
 var height: float
 var length: float
-var lane_type: int
+var type: int
+var offset: float = 0.0
 
 
-func _ready():
-	pass
+func _init():
+	mesh = CubeMesh.new()
+	visible = false
+
 
 func _update():
-	mesh = CubeMesh.new()
+	# Offsets the lane by the aggregate half-widths of all lanes before it
+	translation.y = translation.y + offset
 
-
-	match(lane_type):
-		lane_types.ROAD:
-			width = 3.0
-			height = 0.1
-			mesh.material = material_road
-
-		lane_types.SIDEWALK:
-			width = 1.5
-			height = 0.2
-			mesh.material = material_sidewalk
-
-	translation = point_a.linear_interpolate(point_b, 0.5)
-	look_at_from_position(translation, point_a, point_b)
-
+	# Set the length of the lane
 	length = point_a.distance_to(point_b)
 	mesh.size = Vector3(height, width, length)
+
+	visible = true

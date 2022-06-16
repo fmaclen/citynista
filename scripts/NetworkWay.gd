@@ -25,6 +25,8 @@ var snap_points: PoolVector3Array = []
 var snapped_point: Vector3
 var collided_point: Vector3
 
+const HALF: float = 0.5
+
 const MAX_SNAPPING_DISTANCE: float = 1.5
 const MAX_SNAPPING_LENGTH: int = 2
 
@@ -109,18 +111,6 @@ func draw_line():
 	debug_line.end()
 
 
-func generate_lanes():
-	for lane in $Lanes.get_children():
-		lane.queue_free()
-
-	var network_way_lane_road = network_way_lane_scene.instance()
-	network_way_lane_road.point_a = network_node_a_origin
-	network_way_lane_road.point_b = network_node_b_origin
-	network_way_lane_road.lane_type = network_way_lane_road.lane_types.ROAD
-	network_way_lane_road._update()
-	$Lanes.add_child(network_way_lane_road)
-
-
 func update_material():
 	if is_staged:
 		$Draw3D.material_override = material_staged
@@ -132,8 +122,8 @@ func update_material():
 
 func update_collision_shape():
 	if network_node_a_origin != network_node_b_origin:
-		var shape_length = (network_nodes_distance * 0.5) - (COLLISION_SHAPE_WIDTH)
-		var current_position = lerp_network_nodes(0.5)
+		var shape_length = (network_nodes_distance * HALF) - (COLLISION_SHAPE_WIDTH)
+		var current_position = lerp_network_nodes(HALF)
 
 		$CollisionShape.shape = BoxShape.new()
 		$CollisionShape.shape.extents = Vector3(COLLISION_SHAPE_HEIGHT, COLLISION_SHAPE_WIDTH, shape_length)
@@ -201,3 +191,61 @@ func remove_network_way():
 	network_node_b.remove_from_network_way()
 
 	queue_free()
+
+
+# NetworkWayLanes
+
+enum lane_types { ROAD, SIDEWALK }
+const material_road: SpatialMaterial = preload("res://assets/theme/ColorGround.tres")
+const material_sidewalk: SpatialMaterial = preload("res://assets/theme/ColorStaged.tres")
+
+var lanes = [
+	{
+		"type": lane_types.ROAD,
+		"width": 3.0,
+		"height": 0.1,
+		"material": material_road
+	},
+	{
+		"type": lane_types.SIDEWALK,
+		"width": 1.5,
+		"height": 0.2,
+		"material": material_sidewalk
+	},
+]
+
+
+func generate_lanes():
+	if network_node_a_origin == network_node_b_origin:
+		return
+
+	for lane in $Lanes.get_children():
+		lane.queue_free()
+
+	var offset: float = 0.0
+
+	for lane in lanes:
+		var new_network_way_lane = network_way_lane_scene.instance()
+
+		new_network_way_lane.point_a = network_node_a_origin
+		new_network_way_lane.point_b = network_node_b_origin
+		new_network_way_lane.offset = offset
+		new_network_way_lane.type = lane["type"]
+		new_network_way_lane.width = lane["width"]
+		new_network_way_lane.height = lane["height"]
+		new_network_way_lane.mesh.material = lane["material"]
+
+		new_network_way_lane._update()
+
+		# Increase offset counter by —half— of the lane's width
+		offset = offset + (lane["width"] * HALF)
+
+		$Lanes.add_child(new_network_way_lane)
+
+	# Orient all lanes between `network_node_a_origin` and `network_node_b_origin`
+	var current_position = lerp_network_nodes(HALF)
+	$Lanes.look_at_from_position(current_position, network_node_a_origin, network_node_b_origin)
+
+
+func update_lanes():
+	pass
