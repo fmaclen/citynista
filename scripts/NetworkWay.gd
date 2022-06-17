@@ -82,8 +82,8 @@ func _update():
 
 	draw_line()
 	update_material()
-	update_collision_shape()
 	generate_lanes()
+	update_collision_shape()
 
 	if is_snappable:
 		add_snap_points()
