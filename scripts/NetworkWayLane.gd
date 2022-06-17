@@ -1,8 +1,6 @@
 extends MeshInstance
 
 
-const HALF = 0.5
-
 var point_a: Vector3
 var point_b: Vector3
 var width: float
@@ -10,6 +8,8 @@ var height: float
 var length: float
 var type: int
 var offset: float = 0.0
+
+const HALF = 0.5
 
 
 func _init():
