@@ -201,6 +201,18 @@ const material_sidewalk: SpatialMaterial = preload("res://assets/theme/ColorSide
 
 var lanes = [
 	{
+		"type": lane_types.SIDEWALK,
+		"width": 1.5,
+		"height": 0.2,
+		"material": material_sidewalk
+	},
+	{
+		"type": lane_types.ROAD,
+		"width": 3.0,
+		"height": 0.1,
+		"material": material_road
+	},
+	{
 		"type": lane_types.ROAD,
 		"width": 3.0,
 		"height": 0.1,
@@ -222,30 +234,30 @@ func generate_lanes():
 	for lane in $Lanes.get_children():
 		lane.queue_free()
 
-	var offset: float = 0.0
+	var network_way_width: float = 0.0
 
 	for lane in lanes:
 		var new_network_way_lane = network_way_lane_scene.instance()
 
 		new_network_way_lane.point_a = network_node_a_origin
 		new_network_way_lane.point_b = network_node_b_origin
-		new_network_way_lane.offset = offset
+		new_network_way_lane.offset = network_way_width
 		new_network_way_lane.type = lane["type"]
 		new_network_way_lane.width = lane["width"]
 		new_network_way_lane.height = lane["height"]
 		new_network_way_lane.mesh.material = lane["material"]
-
 		new_network_way_lane._update()
 
-		# Increase offset counter by —half— of the lane's width
-		offset = offset + (lane["width"] * HALF)
+		# Increase offset counter by the lane's width
+		network_way_width = network_way_width + new_network_way_lane.width
 
 		$Lanes.add_child(new_network_way_lane)
+
+	# Center lanes in relation to the NetworkWay
+	for lane in $Lanes.get_children():
+		lane.center_lane_in_network_way(network_way_width)
 
 	# Orient all lanes between `network_node_a_origin` and `network_node_b_origin`
 	var current_position = lerp_network_nodes(HALF)
 	$Lanes.look_at_from_position(current_position, network_node_a_origin, network_node_b_origin)
 
-
-func update_lanes():
-	pass
