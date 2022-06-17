@@ -80,8 +80,8 @@ func _update():
 	if !network_node_b.is_connected("network_node_updated", self, "_update"):
 		network_node_b.connect("network_node_updated", self, "_update")
 
-	draw_line()
-	update_material()
+	# draw_line()
+	# update_material()
 	generate_lanes()
 	update_collision_shape()
 
@@ -90,32 +90,38 @@ func _update():
 		$Gizmos.visible = is_hovering
 
 
-func draw_line():
-	# Draw line between nodes
-	var debug_line = $Draw3D
-	debug_line.material_override = material_staged
-	debug_line.clear()
-	debug_line.begin(Mesh.PRIMITIVE_LINE_STRIP)
+# NOTE: the line is rendered underneath the lanes so it's not visible.
+# If we don't use it in the next few feature implementations we should remove it.
+#
+# func draw_line():
+# 	# Draw line between nodes
+# 	var debug_line = $Draw3D
+# 	debug_line.material_override = material_staged
+# 	debug_line.clear()
+# 	debug_line.begin(Mesh.PRIMITIVE_LINE_STRIP)
+#
+# 	var network_node_a_position = network_node_a_origin
+# 	var network_node_b_position = network_node_b_origin
+#
+# 	debug_line.add_vertex(network_node_a_position)
+# 	debug_line.add_vertex(network_node_b_position)
+#
+# 	$Path.curve.add_point(network_node_a_position)
+# 	$Path.curve.add_point(network_node_b_position)
+#
+# 	debug_line.end()
 
-	var network_node_a_position = network_node_a_origin
-	var network_node_b_position = network_node_b_origin
 
-	debug_line.add_vertex(network_node_a_position)
-	debug_line.add_vertex(network_node_b_position)
-
-	$Path.curve.add_point(network_node_a_position)
-	$Path.curve.add_point(network_node_b_position)
-
-	debug_line.end()
-
-
-func update_material():
-	if is_staged:
-		$Draw3D.material_override = material_staged
-	elif is_hovering and is_removable:
-		$Draw3D.material_override = material_removable
-	else:
-		$Draw3D.material_override = material_default
+# FIXME: instead of changing the material of the Draw3D we might want to change
+# the material of all the `$Lanes`.
+#
+# func update_material():
+# 	if is_staged:
+# 		$Draw3D.material_override = material_staged
+# 	elif is_hovering and is_removable:
+# 		$Draw3D.material_override = material_removable
+# 	else:
+# 		$Draw3D.material_override = material_default
 
 
 func update_collision_shape():
