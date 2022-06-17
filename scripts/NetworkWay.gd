@@ -17,6 +17,7 @@ var network_node_b: Area
 var network_node_b_origin: Vector3
 var network_nodes_distance: float
 
+var width: float
 var is_staged: bool = true
 var is_snappable: bool = false
 var is_hovering: bool = false
@@ -30,8 +31,8 @@ const HALF: float = 0.5
 const MAX_SNAPPING_DISTANCE: float = 1.5
 const MAX_SNAPPING_LENGTH: int = 2
 
-const COLLISION_SHAPE_HEIGHT: float = 0.1
-const COLLISION_SHAPE_WIDTH: float = 1.0
+const COLLISION_SHAPE_HEIGHT: float = 0.25
+# const COLLISION_SHAPE_WIDTH: float = 1.0
 
 
 func _on_NetworkWay_mouse_entered():
@@ -122,11 +123,12 @@ func update_material():
 
 func update_collision_shape():
 	if network_node_a_origin != network_node_b_origin:
-		var shape_length = (network_nodes_distance * HALF) - (COLLISION_SHAPE_WIDTH)
+		var shape_width = width * HALF
+		var shape_length = (network_nodes_distance * HALF) - shape_width
 		var current_position = lerp_network_nodes(HALF)
 
 		$CollisionShape.shape = BoxShape.new()
-		$CollisionShape.shape.extents = Vector3(COLLISION_SHAPE_HEIGHT, COLLISION_SHAPE_WIDTH, shape_length)
+		$CollisionShape.shape.extents = Vector3(COLLISION_SHAPE_HEIGHT, shape_width, shape_length)
 		$CollisionShape.look_at_from_position(current_position, network_node_a_origin, network_node_b_origin)
 
 
@@ -234,14 +236,15 @@ func generate_lanes():
 	for lane in $Lanes.get_children():
 		lane.queue_free()
 
-	var network_way_width: float = 0.0
+	# Reset network_way_width
+	width = 0.0
 
 	for lane in lanes:
 		var new_network_way_lane = network_way_lane_scene.instance()
 
 		new_network_way_lane.point_a = network_node_a_origin
 		new_network_way_lane.point_b = network_node_b_origin
-		new_network_way_lane.offset = network_way_width
+		new_network_way_lane.offset = width
 		new_network_way_lane.type = lane["type"]
 		new_network_way_lane.width = lane["width"]
 		new_network_way_lane.height = lane["height"]
@@ -249,15 +252,14 @@ func generate_lanes():
 		new_network_way_lane._update()
 
 		# Increase offset counter by the lane's width
-		network_way_width = network_way_width + new_network_way_lane.width
+		width = width + new_network_way_lane.width
 
 		$Lanes.add_child(new_network_way_lane)
 
 	# Center lanes in relation to the NetworkWay
 	for lane in $Lanes.get_children():
-		lane.center_lane_in_network_way(network_way_width)
+		lane.center_lane_in_network_way(width)
 
 	# Orient all lanes between `network_node_a_origin` and `network_node_b_origin`
 	var current_position = lerp_network_nodes(HALF)
 	$Lanes.look_at_from_position(current_position, network_node_a_origin, network_node_b_origin)
-

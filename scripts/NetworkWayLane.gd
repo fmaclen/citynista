@@ -1,5 +1,6 @@
 extends MeshInstance
 
+
 const HALF = 0.5
 
 var point_a: Vector3
@@ -28,5 +29,5 @@ func _update():
 	visible = true
 
 
-func center_lane_in_network_way(way_width: float):
-	translation.y = translation.y - (way_width * HALF)
+func center_lane_in_network_way(network_way_width: float):
+	translation.y = translation.y - (network_way_width * HALF)
