@@ -6,7 +6,7 @@
 [sub_resource type="CylinderMesh" id=1]
 top_radius = 0.25
 bottom_radius = 0.25
-height = 0.1
+height = 0.25
 
 [node name="NetworkNode" type="Area"]
 script = ExtResource( 1 )

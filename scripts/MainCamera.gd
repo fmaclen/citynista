@@ -1,16 +1,16 @@
 extends Spatial
 
 
-var MOVEMENT_SPEED: float = 25.0
-var ROTATION_SPEED: float = 100.0
-var ZOOM_SENSITIVITY: float = 1.0
-var ZOOM_MIN: float = 4.0
-var ZOOM_MAX: float = 64.0
-
 var space_state = null
 var move_longitudinal = Vector3.ZERO
 var move_lateral = Vector3.ZERO
 onready var camera = $Camera
+
+const MOVEMENT_SPEED: float = 25.0
+const ROTATION_SPEED: float = 100.0
+const ZOOM_SENSITIVITY: float = 1.0
+const ZOOM_MIN: float = 4.0
+const ZOOM_MAX: float = 64.0
 
 
 func _ready():

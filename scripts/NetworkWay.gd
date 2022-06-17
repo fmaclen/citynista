@@ -5,6 +5,7 @@ signal network_way_snap_to(should_snap, snap_position)
 signal network_way_snapped_to(collision_point)
 
 const gizmo_snap_to: PackedScene = preload("res://scenes/GizmoSnapTo.tscn")
+const network_way_lane_scene: PackedScene = preload("res://scenes/NetworkWayLane.tscn")
 
 const material_default: SpatialMaterial = preload("res://assets/theme/ColorDefault.tres")
 const material_staged: SpatialMaterial = preload("res://assets/theme/ColorStaged.tres")
@@ -16,6 +17,7 @@ var network_node_b: Area
 var network_node_b_origin: Vector3
 var network_nodes_distance: float
 
+var width: float
 var is_staged: bool = true
 var is_snappable: bool = false
 var is_hovering: bool = false
@@ -24,11 +26,10 @@ var snap_points: PoolVector3Array = []
 var snapped_point: Vector3
 var collided_point: Vector3
 
+const HALF: float = 0.5
 const MAX_SNAPPING_DISTANCE: float = 1.5
 const MAX_SNAPPING_LENGTH: int = 2
-
-const COLLISION_SHAPE_HEIGHT: float = 0.1
-const COLLISION_SHAPE_WIDTH: float = 1.0
+const COLLISION_SHAPE_HEIGHT: float = 0.25
 
 
 func _on_NetworkWay_mouse_entered():
@@ -79,50 +80,58 @@ func _update():
 	if !network_node_b.is_connected("network_node_updated", self, "_update"):
 		network_node_b.connect("network_node_updated", self, "_update")
 
-	draw_line()
-	update_material()
-	update_collision_shape()	
+	# draw_line()
+	# update_material()
+	generate_lanes()
+	update_collision_shape()
 
 	if is_snappable:
 		add_snap_points()
 		$Gizmos.visible = is_hovering
 
 
-func draw_line():
-	# Draw line between nodes
-	var debug_line = $Draw3D
-	debug_line.material_override = material_staged
-	debug_line.clear()
-	debug_line.begin(Mesh.PRIMITIVE_LINE_STRIP)
+# NOTE: the line is rendered underneath the lanes so it's not visible.
+# If we don't use it in the next few feature implementations we should remove it.
+#
+# func draw_line():
+# 	# Draw line between nodes
+# 	var debug_line = $Draw3D
+# 	debug_line.material_override = material_staged
+# 	debug_line.clear()
+# 	debug_line.begin(Mesh.PRIMITIVE_LINE_STRIP)
+#
+# 	var network_node_a_position = network_node_a_origin
+# 	var network_node_b_position = network_node_b_origin
+#
+# 	debug_line.add_vertex(network_node_a_position)
+# 	debug_line.add_vertex(network_node_b_position)
+#
+# 	$Path.curve.add_point(network_node_a_position)
+# 	$Path.curve.add_point(network_node_b_position)
+#
+# 	debug_line.end()
 
-	var network_node_a_position = network_node_a_origin
-	var network_node_b_position = network_node_b_origin
 
-	debug_line.add_vertex(network_node_a_position)
-	debug_line.add_vertex(network_node_b_position)
-
-	$Path.curve.add_point(network_node_a_position)
-	$Path.curve.add_point(network_node_b_position)
-
-	debug_line.end()
-
-
-func update_material():
-	if is_staged:
-		$Draw3D.material_override = material_staged
-	elif is_hovering and is_removable:
-		$Draw3D.material_override = material_removable
-	else:
-		$Draw3D.material_override = material_default
+# FIXME: instead of changing the material of the Draw3D we might want to change
+# the material of all the `$Lanes`.
+#
+# func update_material():
+# 	if is_staged:
+# 		$Draw3D.material_override = material_staged
+# 	elif is_hovering and is_removable:
+# 		$Draw3D.material_override = material_removable
+# 	else:
+# 		$Draw3D.material_override = material_default
 
 
 func update_collision_shape():
 	if network_node_a_origin != network_node_b_origin:
-		var shape_length = (network_nodes_distance * 0.5) - (COLLISION_SHAPE_WIDTH)
-		var current_position = lerp_network_nodes(0.5)
+		var shape_width = width * HALF
+		var shape_length = (network_nodes_distance * HALF) - shape_width
+		var current_position = lerp_network_nodes(HALF)
 
 		$CollisionShape.shape = BoxShape.new()
-		$CollisionShape.shape.extents = Vector3(COLLISION_SHAPE_HEIGHT, COLLISION_SHAPE_WIDTH, shape_length)
+		$CollisionShape.shape.extents = Vector3(COLLISION_SHAPE_HEIGHT, shape_width, shape_length)
 		$CollisionShape.look_at_from_position(current_position, network_node_a_origin, network_node_b_origin)
 
 
@@ -187,3 +196,73 @@ func remove_network_way():
 	network_node_b.remove_from_network_way()
 
 	queue_free()
+
+
+# NetworkWayLanes
+
+enum lane_types { ROAD, SIDEWALK }
+const material_road: SpatialMaterial = preload("res://assets/theme/ColorRoad.tres")
+const material_sidewalk: SpatialMaterial = preload("res://assets/theme/ColorSidewalk.tres")
+
+var lanes = [
+	{
+		"type": lane_types.SIDEWALK,
+		"width": 1.5,
+		"height": 0.2,
+		"material": material_sidewalk
+	},
+	{
+		"type": lane_types.ROAD,
+		"width": 3.0,
+		"height": 0.1,
+		"material": material_road
+	},
+	{
+		"type": lane_types.ROAD,
+		"width": 3.0,
+		"height": 0.1,
+		"material": material_road
+	},
+	{
+		"type": lane_types.SIDEWALK,
+		"width": 1.5,
+		"height": 0.2,
+		"material": material_sidewalk
+	},
+]
+
+
+func generate_lanes():
+	if network_node_a_origin == network_node_b_origin:
+		return
+
+	for lane in $Lanes.get_children():
+		lane.queue_free()
+
+	# Reset network_way_width
+	width = 0.0
+
+	for lane in lanes:
+		var new_network_way_lane = network_way_lane_scene.instance()
+
+		new_network_way_lane.point_a = network_node_a_origin
+		new_network_way_lane.point_b = network_node_b_origin
+		new_network_way_lane.offset = width
+		new_network_way_lane.type = lane["type"]
+		new_network_way_lane.width = lane["width"]
+		new_network_way_lane.height = lane["height"]
+		new_network_way_lane.mesh.material = lane["material"]
+		new_network_way_lane._update()
+
+		# Increase offset counter by the lane's width
+		width = width + new_network_way_lane.width
+
+		$Lanes.add_child(new_network_way_lane)
+
+	# Center lanes in relation to the NetworkWay
+	for lane in $Lanes.get_children():
+		lane.center_lane_in_network_way(width)
+
+	# Orient all lanes between `network_node_a_origin` and `network_node_b_origin`
+	var current_position = lerp_network_nodes(HALF)
+	$Lanes.look_at_from_position(current_position, network_node_a_origin, network_node_b_origin)

@@ -18,7 +18,7 @@ var current_network_node_b: Area
 var current_network_way: Area
 var network_way_intersections: Array = []
 
-var MIN_INTERSECTION_DISTANCE = 0.01
+const MIN_INTERSECTION_DISTANCE = 0.01
 
 
 # World ------------------------------------------------------------------------
