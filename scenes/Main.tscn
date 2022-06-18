@@ -8,14 +8,14 @@
 [ext_resource path="res://assets/theme/ColorGround.tres" type="Material" id=6]
 
 [sub_resource type="BoxShape" id=5]
-extents = Vector3( 20, 0, 20 )
+extents = Vector3( 40, 0, 40 )
 
 [sub_resource type="CubeMesh" id=2]
 material = ExtResource( 5 )
-size = Vector3( 48, 1, 48 )
+size = Vector3( 96, 1, 96 )
 
 [sub_resource type="CubeMesh" id=3]
-size = Vector3( 50, 3, 50 )
+size = Vector3( 256, 3, 256 )
 
 [node name="Main" type="Spatial"]
 
