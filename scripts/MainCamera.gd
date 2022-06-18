@@ -6,10 +6,11 @@ var move_longitudinal = Vector3.ZERO
 var move_lateral = Vector3.ZERO
 onready var camera = $Camera
 
+const HALF = 0.5
 const MOVEMENT_SPEED: float = 64.0
 const ROTATION_SPEED: float = 128.0
 const ZOOM_SENSITIVITY: float = 4.0
-const ZOOM_MIN: float = 4.0
+const ZOOM_MIN: float = 8.0
 const ZOOM_MAX: float = 128.0
 
 
@@ -42,13 +43,13 @@ func _process(delta):
 func _input(event):
 	if event is InputEventMouseButton:
 		if event.button_index == BUTTON_WHEEL_UP:
-			set_camera_zoom(-ZOOM_SENSITIVITY * 2)
+			set_camera_zoom(-ZOOM_SENSITIVITY)
 
 		if event.button_index == BUTTON_WHEEL_DOWN:
-			set_camera_zoom(ZOOM_SENSITIVITY * 2)
+			set_camera_zoom(ZOOM_SENSITIVITY)
 
 	if event is InputEventPanGesture:
-		set_camera_zoom(event.delta.y * ZOOM_SENSITIVITY)
+		set_camera_zoom(event.delta.y * ZOOM_SENSITIVITY * HALF)
 
 
 func set_camera_zoom(size):
