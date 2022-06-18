@@ -6,11 +6,11 @@ var move_longitudinal = Vector3.ZERO
 var move_lateral = Vector3.ZERO
 onready var camera = $Camera
 
-const MOVEMENT_SPEED: float = 25.0
-const ROTATION_SPEED: float = 100.0
-const ZOOM_SENSITIVITY: float = 1.0
+const MOVEMENT_SPEED: float = 64.0
+const ROTATION_SPEED: float = 128.0
+const ZOOM_SENSITIVITY: float = 4.0
 const ZOOM_MIN: float = 4.0
-const ZOOM_MAX: float = 64.0
+const ZOOM_MAX: float = 128.0
 
 
 func _ready():
