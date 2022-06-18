@@ -8,14 +8,14 @@
 [ext_resource path="res://assets/theme/ColorGround.tres" type="Material" id=6]
 
 [sub_resource type="BoxShape" id=5]
-extents = Vector3( 20, 0, 20 )
+extents = Vector3( 40, 0, 40 )
 
 [sub_resource type="CubeMesh" id=2]
 material = ExtResource( 5 )
-size = Vector3( 48, 1, 48 )
+size = Vector3( 96, 1, 96 )
 
 [sub_resource type="CubeMesh" id=3]
-size = Vector3( 50, 3, 50 )
+size = Vector3( 256, 3, 256 )
 
 [node name="Main" type="Spatial"]
 
@@ -64,9 +64,12 @@ transform = Transform( 0.707107, 0, 0.707107, 0, 1, 0, -0.707107, 0, 0.707107, 0
 script = ExtResource( 2 )
 
 [node name="Camera" type="Camera" parent="CameraController"]
-transform = Transform( -1, -4.76139e-08, 7.33189e-08, 0, 0.838671, 0.544639, -8.74228e-08, 0.544639, -0.838671, 0, 16, -28 )
+transform = Transform( -1, 4.76139e-08, -7.33189e-08, 0, 0.83867, 0.544639, 8.74228e-08, 0.544639, -0.83867, 0, 40, -64 )
+keep_aspect = 0
 projection = 1
-size = 32.0
+current = true
+size = 122.0
+far = 256.0
 
 [node name="World" type="StaticBody" parent="."]
 script = ExtResource( 1 )

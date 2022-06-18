@@ -17,6 +17,10 @@ _(if you can call it that)_
 
 ---
 
-### So far it looks like this...
+### YouTube playlist with demos
 
-https://user-images.githubusercontent.com/1434675/172186810-7a254226-c15a-4a62-98d7-62dae7a9b60b.mp4
+https://www.youtube.com/playlist?list=PLYTjyn6fVp5jeQfhXkXse0o__VBC-VmRB
+
+### Latest progress screenshot
+
+<img width="1478" alt="image" src="https://user-images.githubusercontent.com/1434675/174455895-1d579d02-edf4-435b-af1c-8d6a59304f38.png">
