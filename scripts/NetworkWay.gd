@@ -27,9 +27,9 @@ var snapped_point: Vector3
 var collided_point: Vector3
 
 const HALF: float = 0.5
-const MAX_SNAPPING_DISTANCE: float = 1.5
-const MAX_SNAPPING_LENGTH: int = 2
-const COLLISION_SHAPE_HEIGHT: float = 0.25
+const MAX_SNAPPING_DISTANCE: float = 5.0
+const MAX_SNAPPING_LENGTH: int = 5
+const COLLISION_SHAPE_HEIGHT: float = 0.5
 
 
 func _on_NetworkWay_mouse_entered():

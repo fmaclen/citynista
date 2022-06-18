@@ -3,7 +3,7 @@
 [ext_resource path="res://assets/theme/ColorStaged.tres" type="Material" id=1]
 
 [sub_resource type="CubeMesh" id=1]
-size = Vector3( 0.25, 0.25, 0.25 )
+size = Vector3( 0.5, 0.5, 0.5 )
 
 [node name="NetworkWaySnapPoint" type="Spatial"]
 
