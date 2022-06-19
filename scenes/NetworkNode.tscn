@@ -4,9 +4,9 @@
 [ext_resource path="res://assets/theme/ColorStaged.tres" type="Material" id=2]
 
 [sub_resource type="CylinderMesh" id=1]
-top_radius = 1.0
-bottom_radius = 1.0
-height = 0.75
+top_radius = 0.25
+bottom_radius = 0.25
+height = 0.25
 
 [node name="NetworkNode" type="Area"]
 script = ExtResource( 1 )
