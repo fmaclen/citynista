@@ -19,7 +19,7 @@ var previous_position: Vector3
 
 const COLLISION_RADIUS_DEFAULT: float = 3.0
 const COLLISION_RADIUS_DRAGGING: float = 8.0
-const COLLISION_RADIUS_HEIGHT: float = 0.25
+const COLLISION_RADIUS_HEIGHT: float = 0.5
 
 
 func _ready():
