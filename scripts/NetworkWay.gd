@@ -83,7 +83,7 @@ func _update():
 	# draw_line()
 	# update_material()
 	generate_lanes()
-	update_collision_shape()
+	generate_collision_shape()
 
 	if is_snappable:
 		add_snap_points()
@@ -124,7 +124,7 @@ func _update():
 # 		$Draw3D.material_override = material_default
 
 
-func update_collision_shape():
+func generate_collision_shape():
 	if network_node_a_origin != network_node_b_origin:
 		var shape_width = width * HALF
 		var shape_length = (network_nodes_distance * HALF) - shape_width
@@ -236,29 +236,41 @@ func generate_lanes():
 	if network_node_a_origin == network_node_b_origin:
 		return
 
+	# Reset existing lanes
 	for lane in $Lanes.get_children():
 		lane.queue_free()
 
-	# Reset network_way_width
+	# Reset existing NetworkWay width
 	width = 0.0
 
+	# Set NetworkWay width
 	for lane in lanes:
-		var path_offset = width * -1
-		var point_a = Vector3(network_node_a_origin.x + path_offset, network_node_a_origin.y, network_node_a_origin.z)
-		var point_b = Vector3(network_node_b_origin.x + path_offset, network_node_b_origin.y, network_node_b_origin.z)
-		
-		var new_network_way_lane = network_way_lane_scene.instance()
-		new_network_way_lane.set_lane(point_a, point_b, lane)
-
-		# Increase offset counter by the lane's width
 		width = width + lane["width"]
 
+	# Reset network_way_width
+	var lane_offset = 0.0
+
+	for lane in lanes:
+		var shape_length = (network_nodes_distance * HALF) - (width * HALF)
+		var point_a = Vector3(0.0, lane_offset, -shape_length)
+		var point_b = Vector3(0.0, lane_offset, shape_length)
+		
+		# Create NetworkWayLane
+		var new_network_way_lane = network_way_lane_scene.instance()
+		new_network_way_lane.set_lane(point_a, point_b, lane)
 		$Lanes.add_child(new_network_way_lane)
 
+		# Increase offset counter by the lane's width
+		lane_offset = lane_offset + lane["width"]
+
 	# Center lanes in relation to the NetworkWay
-	# for lane in $Lanes.get_children():
-	# 	lane.center_lane_in_network_way(width)
+	for lane in $Lanes.get_children():
+		lane.translation.y = -lane_offset * HALF
 
 	# Orient all lanes between `network_node_a_origin` and `network_node_b_origin`
-	var current_position = lerp_network_nodes(HALF)
-	# $Lanes.look_at_from_position(current_position, network_node_a_origin, network_node_b_origin)
+	var middle_point = lerp_network_nodes(HALF)
+	$Lanes.look_at_from_position(middle_point, network_node_a_origin, network_node_b_origin)
+
+	# Force `$Lanes.rotation.z to always be negative, otherwise the lanes will be
+	# generated upside down.
+	$Lanes.rotation.z = -abs($Lanes.rotation.z)
