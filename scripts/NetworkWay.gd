@@ -128,11 +128,11 @@ func update_collision_shape():
 	if network_node_a_origin != network_node_b_origin:
 		var shape_width = width * HALF
 		var shape_length = (network_nodes_distance * HALF) - shape_width
-		var current_position = lerp_network_nodes(HALF)
+		var middle_point = lerp_network_nodes(HALF)
 
 		$CollisionShape.shape = BoxShape.new()
 		$CollisionShape.shape.extents = Vector3(COLLISION_SHAPE_HEIGHT, shape_width, shape_length)
-		$CollisionShape.look_at_from_position(current_position, network_node_a_origin, network_node_b_origin)
+		$CollisionShape.look_at_from_position(middle_point, network_node_a_origin, network_node_b_origin)
 
 
 func get_intersecting_network_ways() -> Array:
