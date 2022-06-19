@@ -57,6 +57,13 @@ func set_world_state(state: bool, mode: String):
 				node._update()
 
 
+func _input(event):
+
+	if event.is_action_released("remove_all_network_ways"):
+		for network_way in $Network/Ways.get_children():
+			network_way.remove_network_way()
+
+
 func _on_World_input_event(_camera: Node, event: InputEvent, position: Vector3, _normal: Vector3, _shape_idx: int):
 	if !is_building:
 		return
