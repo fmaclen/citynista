@@ -1,33 +1,27 @@
 extends MeshInstance
 
 
-var point_a: Vector3
-var point_b: Vector3
-var width: float
-var height: float
-var length: float
-var type: int
-var offset: float = 0.0
+func set_lane(point_a: Vector3, point_b: Vector3, lane: Dictionary):
+	# Draw line between nodes
+	var debug_line = $Draw3D
+	debug_line.clear()
+	debug_line.begin(Mesh.PRIMITIVE_LINE_STRIP)
+	debug_line.add_vertex(point_a)
+	debug_line.add_vertex(point_b)
+	debug_line.material_override = lane["material"]
+	debug_line.end()
 
-const HALF = 0.5
+	$Path.curve = Curve3D.new()
+	$Path.curve.add_point(point_a)
+	$Path.curve.add_point(point_b)
+	
+	# FIXME: the lanes are oriented the wrong way, not sure why.
+	var polygon: PoolVector2Array = []
+	polygon.empty()
+	polygon.append(Vector2(0, 0))
+	polygon.append(Vector2(0, lane["height"]))
+	polygon.append(Vector2(lane["width"], lane["height"]))
+	polygon.append(Vector2(lane["width"], 0))
 
-
-func _init():
-	mesh = CubeMesh.new()
-	visible = false
-
-
-func _update():
-	# Offsets the lane by the aggregate widths of all lanes before it,
-	# and half of the width of the lane itself.
-	translation.y = translation.y + offset + (width * HALF)
-
-	# Set the length of the lane
-	length = point_a.distance_to(point_b)
-	mesh.size = Vector3(height, width, length)
-
-	visible = true
-
-
-func center_lane_in_network_way(network_way_width: float):
-	translation.y = translation.y - (network_way_width * HALF)
+	$CSGPolygon.polygon = polygon
+	$CSGPolygon.material_override = lane["material"]
