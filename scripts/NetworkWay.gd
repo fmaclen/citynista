@@ -128,11 +128,11 @@ func update_collision_shape():
 	if network_node_a_origin != network_node_b_origin:
 		var shape_width = width * HALF
 		var shape_length = (network_nodes_distance * HALF) - shape_width
-		var current_position = lerp_network_nodes(HALF)
+		var middle_point = lerp_network_nodes(HALF)
 
 		$CollisionShape.shape = BoxShape.new()
 		$CollisionShape.shape.extents = Vector3(COLLISION_SHAPE_HEIGHT, shape_width, shape_length)
-		$CollisionShape.look_at_from_position(current_position, network_node_a_origin, network_node_b_origin)
+		$CollisionShape.look_at_from_position(middle_point, network_node_a_origin, network_node_b_origin)
 
 
 func get_intersecting_network_ways() -> Array:
@@ -243,26 +243,22 @@ func generate_lanes():
 	width = 0.0
 
 	for lane in lanes:
+		var path_offset = width * -1
+		var point_a = Vector3(network_node_a_origin.x + path_offset, network_node_a_origin.y, network_node_a_origin.z)
+		var point_b = Vector3(network_node_b_origin.x + path_offset, network_node_b_origin.y, network_node_b_origin.z)
+		
 		var new_network_way_lane = network_way_lane_scene.instance()
-
-		new_network_way_lane.point_a = network_node_a_origin
-		new_network_way_lane.point_b = network_node_b_origin
-		new_network_way_lane.offset = width
-		new_network_way_lane.type = lane["type"]
-		new_network_way_lane.width = lane["width"]
-		new_network_way_lane.height = lane["height"]
-		new_network_way_lane.mesh.material = lane["material"]
-		new_network_way_lane._update()
+		new_network_way_lane.set_lane(point_a, point_b, lane)
 
 		# Increase offset counter by the lane's width
-		width = width + new_network_way_lane.width
+		width = width + lane["width"]
 
 		$Lanes.add_child(new_network_way_lane)
 
 	# Center lanes in relation to the NetworkWay
-	for lane in $Lanes.get_children():
-		lane.center_lane_in_network_way(width)
+	# for lane in $Lanes.get_children():
+	# 	lane.center_lane_in_network_way(width)
 
 	# Orient all lanes between `network_node_a_origin` and `network_node_b_origin`
 	var current_position = lerp_network_nodes(HALF)
-	$Lanes.look_at_from_position(current_position, network_node_a_origin, network_node_b_origin)
+	# $Lanes.look_at_from_position(current_position, network_node_a_origin, network_node_b_origin)
