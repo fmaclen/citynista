@@ -8,6 +8,16 @@
 
 config_version=4
 
+_global_script_classes=[ {
+"base": "Reference",
+"class": "Lane",
+"language": "GDScript",
+"path": "res://scripts/Lane.gd"
+} ]
+_global_script_class_icons={
+"Lane": ""
+}
+
 [application]
 
 config/name="Citynista"

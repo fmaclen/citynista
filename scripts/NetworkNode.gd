@@ -5,6 +5,8 @@ signal network_node_updated
 signal network_node_snap_to
 signal network_node_snapped_to
 
+const gizmo_draw_path_scene: PackedScene = preload("res://scenes/GizmoDrawPath.tscn")
+
 const material_default: SpatialMaterial = preload("res://assets/theme/ColorDefault.tres")
 const material_selected: SpatialMaterial = preload("res://assets/theme/ColorSelected.tres")
 const material_staged: SpatialMaterial = preload("res://assets/theme/ColorStaged.tres")
@@ -32,6 +34,7 @@ func _update():
 	$CollisionShape.disabled = is_staged
 	update_material()
 	emit_signal("network_node_updated")
+	get_lanes_from_network_ways()
 
 
 func _on_NetworkNode_mouse_entered():
@@ -92,3 +95,37 @@ func remove_from_network_way():
 	# If the NetworkNode is not connected to any NetworkWay, remove it completely.
 	if get_signal_connection_list("network_node_updated").empty():
 		queue_free()
+
+
+func get_lanes_from_network_ways():
+	var network_ways = []
+
+	for network_way_connected_to in get_signal_connection_list("network_node_updated"):
+		network_ways.append(network_way_connected_to.target)
+
+	for network_way in network_ways:
+		print(network_way.get_connection_points(transform.origin))
+	# for lane_connections in lanes_connections:
+	# 	for lane_connection in lane_connections:
+			# var new_gizmo_draw_path = gizmo_draw_path_scene.instance()
+			# new_gizmo_draw_path.point_a = point
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

@@ -200,68 +200,44 @@ func remove_network_way():
 
 # NetworkWayLanes
 
-enum lane_types { ROAD, SIDEWALK }
-const material_road: SpatialMaterial = preload("res://assets/theme/ColorRoad.tres")
-const material_sidewalk: SpatialMaterial = preload("res://assets/theme/ColorSidewalk.tres")
+var lane_points_a = []
+var lane_points_b = []
 
 var lanes = [
-	{
-		"type": lane_types.SIDEWALK,
-		"width": 1.5,
-		"height": 0.2,
-		"material": material_sidewalk
-	},
-	{
-		"type": lane_types.ROAD,
-		"width": 3.0,
-		"height": 0.1,
-		"material": material_road
-	},
-	{
-		"type": lane_types.ROAD,
-		"width": 3.0,
-		"height": 0.1,
-		"material": material_road
-	},
-	{
-		"type": lane_types.SIDEWALK,
-		"width": 1.5,
-		"height": 0.2,
-		"material": material_sidewalk
-	},
+	Lane.LaneType.SIDEWALK,
+	Lane.LaneType.ROAD,
+	Lane.LaneType.ROAD,
+	Lane.LaneType.SIDEWALK
 ]
 
-
 func generate_lanes():
+	# FIXME: maybe it doesn't have to create and destroy the lanes every time,
+	# only update `point_a` and `point_b`
+
+
 	if network_node_a_origin == network_node_b_origin:
 		return
 
-	# Reset existing lanes
-	for lane in $Lanes.get_children():
-		lane.queue_free()
+	reset_network_way_lanes()
+	set_network_way_width(lanes)
 
-	# Reset existing NetworkWay width
-	width = 0.0
-
-	# Set NetworkWay width
-	for lane in lanes:
-		width = width + lane["width"]
-
-	# Reset network_way_width
 	var lane_offset = 0.0
-
 	for lane in lanes:
-		var shape_length = (network_nodes_distance * HALF) - (width * HALF)
-		var point_a = Vector3(0.0, lane_offset, -shape_length)
-		var point_b = Vector3(0.0, lane_offset, shape_length)
+		var lane_length = (network_nodes_distance * HALF) - (width * HALF)
+		var point_a = Vector3(0.0, lane_offset, -lane_length)
+		var point_b = Vector3(0.0, lane_offset, lane_length)
+
+		# Gather all lane path points
+		lane_points_a.append(point_a)
+		lane_points_b.append(point_b)
 		
 		# Create NetworkWayLane
 		var new_network_way_lane = network_way_lane_scene.instance()
-		new_network_way_lane.set_lane(point_a, point_b, lane)
+		new_network_way_lane.init(point_a, point_b, lane)
 		$Lanes.add_child(new_network_way_lane)
 
 		# Increase offset counter by the lane's width
-		lane_offset = lane_offset + lane["width"]
+		lane_offset = lane_offset + new_network_way_lane.width
 
 	# Center lanes in relation to the NetworkWay
 	for lane in $Lanes.get_children():
@@ -274,3 +250,69 @@ func generate_lanes():
 	# Force `$Lanes.rotation.z to always be negative, otherwise the lanes will be
 	# generated upside down.
 	$Lanes.rotation.z = -abs($Lanes.rotation.z)
+
+
+func reset_network_way_lanes():
+	# Reset existing lanes
+	for lane in $Lanes.get_children():
+		lane.queue_free()
+
+	# Reset existing NetworkWay width
+	width = 0.0
+
+	# Clear existing lane points
+	lane_points_a.clear()
+	lane_points_b.clear()
+
+
+func set_network_way_width(lane_types: Array):
+	for lane_type in lane_types:
+		width = width + Lane.atlas[lane_type]["width"]
+
+# NOT GOOD
+# func get_closest_lane_points(network_node_position: Vector3) -> Array:
+# 	if network_node_position == network_node_a_origin:
+# 		return lane_points_a
+# 	else:
+# 		return lane_points_b.invert() # MAYBE
+
+
+# func get_lane_points_by_type(network_node_position: Vector3, lane_type: int) -> Array:
+# 	var lane_points = []
+
+# 	for lane in $Lanes.get_children():
+# 		if lane.type == lane_type:
+# 			if network_node_position == network_node_a_origin:
+# 				lane_points.append(lane.point_a)
+# 			else:
+# 				lane_points.append(lane.point_b)
+
+# 	return lane_points
+
+
+func get_connection_points(network_node_position: Vector3) -> Array:
+	var connection_points = []
+	var unique_lane_types = []
+
+	for lane_type in lanes:
+		if !unique_lane_types.has(lane_type):
+			unique_lane_types.append(lane_type)
+
+	for lane_type in unique_lane_types:
+		var lane_connections = []
+
+		for lane in $Lanes.get_children():
+			if lane.type == lane_type:
+				if network_node_position == network_node_a_origin:
+					lane_connections.append(lane.point_a)
+				else:
+					lane_connections.append(lane.point_b)
+
+		connection_points.append({
+			"lane_type": lane_type,
+			"connections": lane_connections
+		})
+
+	print("children", $Lanes.get_children().size())
+	print("........")
+	return connection_points # FIXME: this is returning more connnection points than it should
