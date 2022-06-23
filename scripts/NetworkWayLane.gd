@@ -9,17 +9,18 @@ var point_a: Vector3
 var point_b: Vector3
 
 
-func init(set_point_a: Vector3, set_point_b: Vector3, lane_type: int):
-	var lane = Lane.atlas[lane_type]
+func init(lane_index: int):
+	$Path.curve = Curve3D.new()
+
+	var lane = Lane.atlas[lane_index]
 	type = lane["type"]
 	width = lane["width"]
 	height = lane["height"]
 	material = lane["material"]
 
-	point_a = set_point_a
-	point_b = set_point_b
 
-	$Path.curve = Curve3D.new()
+func _update():
+	$Path.curve.clear_points()
 	$Path.curve.add_point(point_a)
 	$Path.curve.add_point(point_b)
 
@@ -32,4 +33,3 @@ func init(set_point_a: Vector3, set_point_b: Vector3, lane_type: int):
 
 	$CSGPolygon.polygon = polygon
 	$CSGPolygon.material_override = material
-

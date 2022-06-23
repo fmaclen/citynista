@@ -17,19 +17,42 @@ var network_node_b: Area
 var network_node_b_origin: Vector3
 var network_nodes_distance: float
 
-var width: float
 var is_staged: bool = true
 var is_snappable: bool = false
 var is_hovering: bool = false
 var is_removable: bool = false
+
+var width: float
+var length: float
+var middle_point: Vector3
 var snap_points: PoolVector3Array = []
 var snapped_point: Vector3
-var collided_point: Vector3
 
 const HALF: float = 0.5
 const MAX_SNAPPING_DISTANCE: float = 5.0
 const MAX_SNAPPING_LENGTH: int = 5
 const COLLISION_SHAPE_HEIGHT: float = 0.5
+
+# NOTE: these will eventually be dynamically generated
+const LANES = [
+	Lane.LaneType.SIDEWALK,
+	Lane.LaneType.ROAD,
+	Lane.LaneType.ROAD,
+	Lane.LaneType.SIDEWALK
+]
+
+
+func _ready():
+	$CollisionShape.shape = BoxShape.new()
+
+	# Generate the lanes
+	for lane in LANES:
+		var new_network_way_lane = network_way_lane_scene.instance()
+		new_network_way_lane.init(lane)
+		$Lanes.add_child(new_network_way_lane)
+
+		# Set the NetworkWay's width by the sum of all the lanes' widths
+		width = width + Lane.atlas[lane]["width"]
 
 
 func _on_NetworkWay_mouse_entered():
@@ -72,6 +95,8 @@ func _update():
 	network_node_a_origin = network_node_a.transform.origin
 	network_node_b_origin = network_node_b.transform.origin
 	network_nodes_distance = network_node_a_origin.distance_to(network_node_b_origin)
+	length = (network_nodes_distance * HALF) - (width * HALF)
+	middle_point = lerp_network_nodes(HALF)
 
 	# Connect to signals (if not's not already connected)
 	if !network_node_a.is_connected("network_node_updated", self, "_update"):
@@ -80,10 +105,9 @@ func _update():
 	if !network_node_b.is_connected("network_node_updated", self, "_update"):
 		network_node_b.connect("network_node_updated", self, "_update")
 
-	# draw_line()
-	# update_material()
-	generate_lanes()
-	generate_collision_shape()
+	if network_node_a_origin != network_node_b_origin:
+		update_lanes()
+		update_collision_shape()
 
 	if is_snappable:
 		add_snap_points()
@@ -124,15 +148,9 @@ func _update():
 # 		$Draw3D.material_override = material_default
 
 
-func generate_collision_shape():
-	if network_node_a_origin != network_node_b_origin:
-		var shape_width = width * HALF
-		var shape_length = (network_nodes_distance * HALF) - shape_width
-		var middle_point = lerp_network_nodes(HALF)
-
-		$CollisionShape.shape = BoxShape.new()
-		$CollisionShape.shape.extents = Vector3(COLLISION_SHAPE_HEIGHT, shape_width, shape_length)
-		$CollisionShape.look_at_from_position(middle_point, network_node_a_origin, network_node_b_origin)
+func update_collision_shape():
+	$CollisionShape.shape.extents = Vector3(COLLISION_SHAPE_HEIGHT, width * HALF, length)
+	$CollisionShape.look_at_from_position(middle_point, network_node_a_origin, network_node_b_origin)
 
 
 func get_intersecting_network_ways() -> Array:
@@ -200,51 +218,19 @@ func remove_network_way():
 
 # NetworkWayLanes
 
-var lane_points_a = []
-var lane_points_b = []
 
-var lanes = [
-	Lane.LaneType.SIDEWALK,
-	Lane.LaneType.ROAD,
-	Lane.LaneType.ROAD,
-	Lane.LaneType.SIDEWALK
-]
-
-func generate_lanes():
-	# FIXME: maybe it doesn't have to create and destroy the lanes every time,
-	# only update `point_a` and `point_b`
-
-
-	if network_node_a_origin == network_node_b_origin:
-		return
-
-	reset_network_way_lanes()
-	set_network_way_width(lanes)
-
+func update_lanes():
 	var lane_offset = 0.0
-	for lane in lanes:
-		var lane_length = (network_nodes_distance * HALF) - (width * HALF)
-		var point_a = Vector3(0.0, lane_offset, -lane_length)
-		var point_b = Vector3(0.0, lane_offset, lane_length)
-
-		# Gather all lane path points
-		lane_points_a.append(point_a)
-		lane_points_b.append(point_b)
-		
-		# Create NetworkWayLane
-		var new_network_way_lane = network_way_lane_scene.instance()
-		new_network_way_lane.init(point_a, point_b, lane)
-		$Lanes.add_child(new_network_way_lane)
-
-		# Increase offset counter by the lane's width
-		lane_offset = lane_offset + new_network_way_lane.width
-
-	# Center lanes in relation to the NetworkWay
 	for lane in $Lanes.get_children():
-		lane.translation.y = -lane_offset * HALF
+		lane.point_a = Vector3(0.0, lane_offset, -length)
+		lane.point_b = Vector3(0.0, lane_offset, length)
+		lane.translation.y = -width * HALF # Center lanes in relation to the NetworkWay
+		lane._update()
+
+		# Update the loop's offset
+		lane_offset = lane_offset + lane.width
 
 	# Orient all lanes between `network_node_a_origin` and `network_node_b_origin`
-	var middle_point = lerp_network_nodes(HALF)
 	$Lanes.look_at_from_position(middle_point, network_node_a_origin, network_node_b_origin)
 
 	# Force `$Lanes.rotation.z to always be negative, otherwise the lanes will be
@@ -252,51 +238,13 @@ func generate_lanes():
 	$Lanes.rotation.z = -abs($Lanes.rotation.z)
 
 
-func reset_network_way_lanes():
-	# Reset existing lanes
-	for lane in $Lanes.get_children():
-		lane.queue_free()
-
-	# Reset existing NetworkWay width
-	width = 0.0
-
-	# Clear existing lane points
-	lane_points_a.clear()
-	lane_points_b.clear()
-
-
-func set_network_way_width(lane_types: Array):
-	for lane_type in lane_types:
-		width = width + Lane.atlas[lane_type]["width"]
-
-# NOT GOOD
-# func get_closest_lane_points(network_node_position: Vector3) -> Array:
-# 	if network_node_position == network_node_a_origin:
-# 		return lane_points_a
-# 	else:
-# 		return lane_points_b.invert() # MAYBE
-
-
-# func get_lane_points_by_type(network_node_position: Vector3, lane_type: int) -> Array:
-# 	var lane_points = []
-
-# 	for lane in $Lanes.get_children():
-# 		if lane.type == lane_type:
-# 			if network_node_position == network_node_a_origin:
-# 				lane_points.append(lane.point_a)
-# 			else:
-# 				lane_points.append(lane.point_b)
-
-# 	return lane_points
-
-
 func get_connection_points(network_node_position: Vector3) -> Array:
 	var connection_points = []
 	var unique_lane_types = []
 
-	for lane_type in lanes:
-		if !unique_lane_types.has(lane_type):
-			unique_lane_types.append(lane_type)
+	for lane in LANES:
+		if !unique_lane_types.has(lane):
+			unique_lane_types.append(lane)
 
 	for lane_type in unique_lane_types:
 		var lane_connections = []
@@ -313,6 +261,4 @@ func get_connection_points(network_node_position: Vector3) -> Array:
 			"connections": lane_connections
 		})
 
-	print("children", $Lanes.get_children().size())
-	print("........")
-	return connection_points # FIXME: this is returning more connnection points than it should
+	return connection_points
