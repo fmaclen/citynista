@@ -7,10 +7,6 @@ signal network_way_snapped_to(collision_point)
 const gizmo_snap_to: PackedScene = preload("res://scenes/GizmoSnapTo.tscn")
 const network_way_lane_scene: PackedScene = preload("res://scenes/NetworkWayLane.tscn")
 
-const material_default: SpatialMaterial = preload("res://assets/theme/ColorDefault.tres")
-const material_staged: SpatialMaterial = preload("res://assets/theme/ColorStaged.tres")
-const material_removable: SpatialMaterial = preload("res://assets/theme/ColorRemovable.tres")
-
 var network_node_a: Area
 var network_node_a_origin: Vector3
 var network_node_b: Area
@@ -114,40 +110,6 @@ func _update():
 		$Gizmos.visible = is_hovering
 
 
-# NOTE: the line is rendered underneath the lanes so it's not visible.
-# If we don't use it in the next few feature implementations we should remove it.
-#
-# func draw_line():
-# 	# Draw line between nodes
-# 	var debug_line = $Draw3D
-# 	debug_line.material_override = material_staged
-# 	debug_line.clear()
-# 	debug_line.begin(Mesh.PRIMITIVE_LINE_STRIP)
-#
-# 	var network_node_a_position = network_node_a_origin
-# 	var network_node_b_position = network_node_b_origin
-#
-# 	debug_line.add_vertex(network_node_a_position)
-# 	debug_line.add_vertex(network_node_b_position)
-#
-# 	$Path.curve.add_point(network_node_a_position)
-# 	$Path.curve.add_point(network_node_b_position)
-#
-# 	debug_line.end()
-
-
-# FIXME: instead of changing the material of the Draw3D we might want to change
-# the material of all the `$Lanes`.
-#
-# func update_material():
-# 	if is_staged:
-# 		$Draw3D.material_override = material_staged
-# 	elif is_hovering and is_removable:
-# 		$Draw3D.material_override = material_removable
-# 	else:
-# 		$Draw3D.material_override = material_default
-
-
 func update_collision_shape():
 	$CollisionShape.shape.extents = Vector3(COLLISION_SHAPE_HEIGHT, width * HALF, length)
 	$CollisionShape.look_at_from_position(middle_point, network_node_a_origin, network_node_b_origin)
@@ -225,6 +187,7 @@ func update_lanes():
 		lane.point_a = Vector3(0.0, lane_offset, -length)
 		lane.point_b = Vector3(0.0, lane_offset, length)
 		lane.translation.y = -width * HALF # Center lanes in relation to the NetworkWay
+		lane.is_removable = is_hovering && is_removable
 		lane._update()
 
 		# Update the loop's offset

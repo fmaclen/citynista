@@ -1,6 +1,10 @@
 extends MeshInstance
 
 
+const material_removable: SpatialMaterial = preload("res://assets/theme/ColorRemovable.tres")
+
+var is_removable: bool
+
 var type: int
 var width: float
 var height: float
@@ -32,4 +36,8 @@ func _update():
 	polygon.append(Vector2(height, 0))
 
 	$CSGPolygon.polygon = polygon
-	$CSGPolygon.material_override = material
+
+	if is_removable:
+		$CSGPolygon.material_override = material_removable
+	else:
+		$CSGPolygon.material_override = material
