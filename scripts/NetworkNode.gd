@@ -33,8 +33,11 @@ func _ready():
 func _update():
 	$CollisionShape.disabled = is_staged
 	update_material()
-	emit_signal("network_node_updated")
 	get_lanes_from_network_ways()
+	# new_gizmo_draw_path(Vector3.ZERO, Vector3(10,0,0))
+	# new_gizmo_draw_path(Vector3(10,0,0), Vector3(10,0,10))
+	# new_gizmo_draw_path(Vector3(10,0,10),Vector3(0,0,10))
+	emit_signal("network_node_updated")
 
 
 func _on_NetworkNode_mouse_entered():
@@ -103,18 +106,43 @@ func get_lanes_from_network_ways():
 	for network_way_connected_to in get_signal_connection_list("network_node_updated"):
 		network_ways.append(network_way_connected_to.target)
 
+	# No need to connect NetworkWays when there is only one
+	if network_ways.size() < 2:
+		return
+
+	# Clear existing paths
+	for gizmo in $PathConnections.get_children():
+		gizmo.queue_free()
+
+	var lane_connections_type_1 = []
+	var lane_connections_type_2 = []
+
 	for network_way in network_ways:
-		print(network_way.get_connection_points(transform.origin))
-	# for lane_connections in lanes_connections:
-	# 	for lane_connection in lane_connections:
-			# var new_gizmo_draw_path = gizmo_draw_path_scene.instance()
-			# new_gizmo_draw_path.point_a = point
+		var network_way_lane_connections = network_way.get_connection_points(transform.origin)
+		for network_way_lane_connection in network_way_lane_connections:
+
+			if network_way_lane_connection["lane_type"] == 0:
+				for connection in network_way_lane_connection["connections"]:
+					lane_connections_type_1.append(connection)
+			elif network_way_lane_connection["lane_type"] == 1:
+				for connection in network_way_lane_connection["connections"]:
+					lane_connections_type_2.append(connection)
+
+	var index: int = 0
+	for connection_a in lane_connections_type_1:
+		index = index + 1
+
+		if index <= lane_connections_type_1.size() - 1:
+			for connection_b in lane_connections_type_1.slice(index,lane_connections_type_1.size()):
+				new_gizmo_draw_path(connection_a, connection_b)
 
 
-
-
-
-
+func new_gizmo_draw_path(point_a: Vector3, point_b: Vector3):
+	var gizmo_draw_path = gizmo_draw_path_scene.instance()
+	gizmo_draw_path.point_a = point_a
+	gizmo_draw_path.point_b = point_b
+	gizmo_draw_path._update()
+	$PathConnections.add_child(gizmo_draw_path)
 
 
 

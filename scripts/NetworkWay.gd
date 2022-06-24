@@ -205,15 +205,19 @@ func get_connection_points(network_node_position: Vector3) -> Array:
 	var connection_points = []
 	var unique_lane_types = []
 
+	# Get the unique lane types
 	for lane in LANES:
 		if !unique_lane_types.has(lane):
 			unique_lane_types.append(lane)
 
+	# Get the lane connections grouped by lane type
 	for lane_type in unique_lane_types:
 		var lane_connections = []
 
 		for lane in $Lanes.get_children():
 			if lane.type == lane_type:
+
+				# FIXME: these positions should be global, not local to the lane
 				if network_node_position == network_node_a_origin:
 					lane_connections.append(lane.point_a)
 				else:
