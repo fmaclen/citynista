@@ -11,7 +11,6 @@ var height: float
 var material: Material
 var point_a: Vector3
 var point_b: Vector3
-# var network_way_width: float
 
 
 func init(lane_index: int):
@@ -28,9 +27,12 @@ func init(lane_index: int):
 
 
 func _update():
+	# Add points the first time the Lane is added
 	if $Path.curve.get_point_count() == 0:
 		$Path.curve.add_point(point_a)
 		$Path.curve.add_point(point_b)
+
+	# Update the points if they already exist
 	else:
 		$Path.curve.set_point_position(0, point_a)
 		$Path.curve.set_point_position(1, point_b)
