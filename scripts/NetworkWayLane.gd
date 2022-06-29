@@ -28,9 +28,12 @@ func init(lane_index: int):
 
 
 func _update():
-	$Path.curve.clear_points()
-	$Path.curve.add_point(point_a)
-	$Path.curve.add_point(point_b)
+	if $Path.curve.get_point_count() == 0:
+		$Path.curve.add_point(point_a)
+		$Path.curve.add_point(point_b)
+	else:
+		$Path.curve.set_point_position(0, point_a)
+		$Path.curve.set_point_position(1, point_b)
 
 	var polygon_width: float = width * Globals.HALF
 	var polygon_height: float = height * Globals.HALF
