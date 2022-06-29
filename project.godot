@@ -25,6 +25,10 @@ run/main_scene="res://scenes/Main.tscn"
 run/low_processor_mode=true
 config/icon="res://assets/icon.png"
 
+[autoload]
+
+Globals="*res://scripts/Globals.gd"
+
 [debug]
 
 gdscript/warnings/return_value_discarded=false
