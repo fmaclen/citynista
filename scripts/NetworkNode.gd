@@ -6,6 +6,7 @@ signal network_node_snap_to
 signal network_node_snapped_to
 
 const gizmo_draw_path_scene: PackedScene = preload("res://scenes/GizmoDrawPath.tscn")
+const gizmo_snap_to: PackedScene = preload("res://scenes/GizmoSnapTo.tscn")
 
 const material_default: SpatialMaterial = preload("res://assets/theme/ColorDefault.tres")
 const material_selected: SpatialMaterial = preload("res://assets/theme/ColorSelected.tres")
@@ -106,13 +107,13 @@ func get_lanes_from_network_ways():
 	for network_way_connected_to in get_signal_connection_list("network_node_updated"):
 		network_ways.append(network_way_connected_to.target)
 
-	# No need to connect NetworkWays when there is only one
-	if network_ways.size() < 2:
-		return
-
 	# Clear existing paths
 	for gizmo in $PathConnections.get_children():
 		gizmo.queue_free()
+
+	# No need to connect NetworkWays when there is only one
+	if network_ways.size() < 2:
+		return
 
 	var lane_connections_type_1 = []
 	var lane_connections_type_2 = []
@@ -128,6 +129,8 @@ func get_lanes_from_network_ways():
 				for connection in network_way_lane_connection["connections"]:
 					lane_connections_type_2.append(connection)
 
+	# Connect all the lanes with a gizmo Path
+
 	var index: int = 0
 	for connection_a in lane_connections_type_1:
 		index = index + 1
@@ -136,24 +139,26 @@ func get_lanes_from_network_ways():
 			for connection_b in lane_connections_type_1.slice(index,lane_connections_type_1.size()):
 				new_gizmo_draw_path(connection_a, connection_b)
 
+	index = 0
+	for connection_a in lane_connections_type_2:
+		index = index + 1
+
+		if index <= lane_connections_type_2.size() - 1:
+			for connection_b in lane_connections_type_2.slice(index,lane_connections_type_2.size()):
+				new_gizmo_draw_path(connection_a, connection_b)
+
 
 func new_gizmo_draw_path(point_a: Vector3, point_b: Vector3):
+	var gizmo = gizmo_snap_to.instance()
+	gizmo.transform.origin = to_local(point_a)
+	$PathConnections.add_child(gizmo)
+
+	gizmo.transform.origin = to_local(point_b)
+	gizmo = gizmo_snap_to.instance()
+	$PathConnections.add_child(gizmo)
+
 	var gizmo_draw_path = gizmo_draw_path_scene.instance()
-	gizmo_draw_path.point_a = point_a
-	gizmo_draw_path.point_b = point_b
+	gizmo_draw_path.point_a = to_local(point_a)
+	gizmo_draw_path.point_b = to_local(point_b)
 	gizmo_draw_path._update()
 	$PathConnections.add_child(gizmo_draw_path)
-
-
-
-
-
-
-
-
-
-
-
-
-
-

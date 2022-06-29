@@ -7,11 +7,14 @@ signal network_way_snapped_to(collision_point)
 const gizmo_snap_to: PackedScene = preload("res://scenes/GizmoSnapTo.tscn")
 const network_way_lane_scene: PackedScene = preload("res://scenes/NetworkWayLane.tscn")
 
+onready var lanes = $LanesContainer.get_node("Lanes")
+
 var network_node_a: Area
 var network_node_a_origin: Vector3
 var network_node_b: Area
 var network_node_b_origin: Vector3
 var network_nodes_distance: float
+var middle_point: Vector3
 
 var is_staged: bool = true
 var is_snappable: bool = false
@@ -20,11 +23,9 @@ var is_removable: bool = false
 
 var width: float
 var length: float
-var middle_point: Vector3
 var snap_points: PoolVector3Array = []
 var snapped_point: Vector3
 
-const HALF: float = 0.5
 const MAX_SNAPPING_DISTANCE: float = 5.0
 const MAX_SNAPPING_LENGTH: int = 5
 const COLLISION_SHAPE_HEIGHT: float = 0.5
@@ -45,7 +46,7 @@ func _ready():
 	for lane in LANES:
 		var new_network_way_lane = network_way_lane_scene.instance()
 		new_network_way_lane.init(lane)
-		$Lanes.add_child(new_network_way_lane)
+		lanes.add_child(new_network_way_lane)
 
 		# Set the NetworkWay's width by the sum of all the lanes' widths
 		width = width + Lane.atlas[lane]["width"]
@@ -91,8 +92,8 @@ func _update():
 	network_node_a_origin = network_node_a.transform.origin
 	network_node_b_origin = network_node_b.transform.origin
 	network_nodes_distance = network_node_a_origin.distance_to(network_node_b_origin)
-	length = (network_nodes_distance * HALF) - (width * HALF)
-	middle_point = lerp_network_nodes(HALF)
+	length = (network_nodes_distance * Globals.HALF) - (width * Globals.HALF)
+	middle_point = lerp_network_nodes(Globals.HALF)
 
 	# Connect to signals (if not's not already connected)
 	if !network_node_a.is_connected("network_node_updated", self, "_update"):
@@ -111,7 +112,7 @@ func _update():
 
 
 func update_collision_shape():
-	$CollisionShape.shape.extents = Vector3(COLLISION_SHAPE_HEIGHT, width * HALF, length)
+	$CollisionShape.shape.extents = Vector3(COLLISION_SHAPE_HEIGHT, width * Globals.HALF, length)
 	$CollisionShape.look_at_from_position(middle_point, network_node_a_origin, network_node_b_origin)
 
 
@@ -182,23 +183,24 @@ func remove_network_way():
 
 
 func update_lanes():
+	if length < 0:
+		return
+
 	var lane_offset = 0.0
-	for lane in $Lanes.get_children():
+
+	for lane in lanes.get_children():
+		lane_offset = lane_offset + (lane.width) # Update the loop's offset
+
 		lane.point_a = Vector3(0.0, lane_offset, -length)
 		lane.point_b = Vector3(0.0, lane_offset, length)
-		lane.translation.y = -width * HALF # Center lanes in relation to the NetworkWay
 		lane.is_removable = is_hovering && is_removable
 		lane._update()
 
-		# Update the loop's offset
-		lane_offset = lane_offset + lane.width
+	# Center all lanes in relation to `$LanesContainer`
+	lanes.translation.y = -width * Globals.HALF
 
-	# Orient all lanes between `network_node_a_origin` and `network_node_b_origin`
-	$Lanes.look_at_from_position(middle_point, network_node_a_origin, network_node_b_origin)
-
-	# Force `$Lanes.rotation.z to always be negative, otherwise the lanes will be
-	# generated upside down.
-	$Lanes.rotation.z = -abs($Lanes.rotation.z)
+	# Orient lanes
+	$LanesContainer.look_at_from_position(middle_point, network_node_a_origin, network_node_b_origin)
 
 
 func get_connection_points(network_node_position: Vector3) -> Array:
@@ -214,14 +216,13 @@ func get_connection_points(network_node_position: Vector3) -> Array:
 	for lane_type in unique_lane_types:
 		var lane_connections = []
 
-		for lane in $Lanes.get_children():
+		for lane in lanes.get_children():
 			if lane.type == lane_type:
 
-				# FIXME: these positions should be global, not local to the lane
 				if network_node_position == network_node_a_origin:
-					lane_connections.append(lane.point_a)
+					lane_connections.append(lane.to_global(lane.point_a))
 				else:
-					lane_connections.append(lane.point_b)
+					lane_connections.append(lane.to_global(lane.point_b))
 
 		connection_points.append({
 			"lane_type": lane_type,

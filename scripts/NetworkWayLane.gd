@@ -11,6 +11,7 @@ var height: float
 var material: Material
 var point_a: Vector3
 var point_b: Vector3
+# var network_way_width: float
 
 
 func init(lane_index: int):
@@ -22,18 +23,25 @@ func init(lane_index: int):
 	height = lane["height"]
 	material = lane["material"]
 
+	# Center lane in relation to the `$Path`
+	translation.y = -width * Globals.HALF
+
 
 func _update():
 	$Path.curve.clear_points()
 	$Path.curve.add_point(point_a)
 	$Path.curve.add_point(point_b)
 
+	var polygon_width: float = width * Globals.HALF
+	var polygon_height: float = height * Globals.HALF
 	var polygon: PoolVector2Array = []
+
 	polygon.empty()
-	polygon.append(Vector2(0, 0))
-	polygon.append(Vector2(0, width))
-	polygon.append(Vector2(height, width))
-	polygon.append(Vector2(height, 0))
+	polygon.append(Vector2(-polygon_height, -polygon_width))
+	polygon.append(Vector2(-polygon_height, polygon_width))
+	polygon.append(Vector2(polygon_height, polygon_width))
+	polygon.append(Vector2(polygon_height, -polygon_width))
+
 
 	$CSGPolygon.polygon = polygon
 
