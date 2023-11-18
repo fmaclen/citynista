@@ -6,6 +6,7 @@ signal network_node_snap_to
 signal network_node_snapped_to
 
 const gizmo_draw_path_scene: PackedScene = preload("res://scenes/GizmoDrawPath.tscn")
+const network_way_lane_scene: PackedScene = preload("res://scenes/NetworkWayLane.tscn")
 const gizmo_snap_to: PackedScene = preload("res://scenes/GizmoSnapTo.tscn")
 
 const material_default: SpatialMaterial = preload("res://assets/theme/ColorDefault.tres")
@@ -34,7 +35,7 @@ func _ready():
 func _update():
 	$CollisionShape.disabled = is_staged
 	update_material()
-	get_lanes_from_network_ways()
+	connect_network_way_paths()
 	# new_gizmo_draw_path(Vector3.ZERO, Vector3(10,0,0))
 	# new_gizmo_draw_path(Vector3(10,0,0), Vector3(10,0,10))
 	# new_gizmo_draw_path(Vector3(10,0,10),Vector3(0,0,10))
@@ -101,7 +102,7 @@ func remove_from_network_way():
 		queue_free()
 
 
-func get_lanes_from_network_ways():
+func connect_network_way_paths():
 	var network_ways = []
 
 	for network_way_connected_to in get_signal_connection_list("network_node_updated"):
@@ -111,12 +112,16 @@ func get_lanes_from_network_ways():
 	for gizmo in $PathConnections.get_children():
 		gizmo.queue_free()
 
+	for lanes in $LanesContainer.get_children():
+		lanes.queue_free()
+
 	# No need to connect NetworkWays when there is only one
 	if network_ways.size() < 2:
 		return
 
-	var lane_connections_type_1 = []
-	var lane_connections_type_2 = []
+	# FIXME: ideally we wouldn't hardcode these arrays
+	var lane_connections_type_sidewalk = []
+	var lane_connections_type_road = []
 
 	for network_way in network_ways:
 		var network_way_lane_connections = network_way.get_connection_points(transform.origin)
@@ -124,28 +129,29 @@ func get_lanes_from_network_ways():
 
 			if network_way_lane_connection["lane_type"] == 0:
 				for connection in network_way_lane_connection["connections"]:
-					lane_connections_type_1.append(connection)
+					lane_connections_type_sidewalk.append(connection)
 			elif network_way_lane_connection["lane_type"] == 1:
 				for connection in network_way_lane_connection["connections"]:
-					lane_connections_type_2.append(connection)
+					lane_connections_type_road.append(connection)
 
 	# Connect all the lanes with a gizmo Path
 
 	var index: int = 0
-	for connection_a in lane_connections_type_1:
+	for connection_a in lane_connections_type_road:
 		index = index + 1
 
-		if index <= lane_connections_type_1.size() - 1:
-			for connection_b in lane_connections_type_1.slice(index,lane_connections_type_1.size()):
+		if index <= lane_connections_type_road.size() - 1:
+			for connection_b in lane_connections_type_road.slice(index,lane_connections_type_road.size()):
+				# connect_lanes(connection_a, connection_b)
 				new_gizmo_draw_path(connection_a, connection_b)
 
-	index = 0
-	for connection_a in lane_connections_type_2:
-		index = index + 1
+	# index = 0
+	# for connection_a in lane_connections_type_sidewalk:
+	# 	index = index + 1
 
-		if index <= lane_connections_type_2.size() - 1:
-			for connection_b in lane_connections_type_2.slice(index,lane_connections_type_2.size()):
-				new_gizmo_draw_path(connection_a, connection_b)
+	# 	if index <= lane_connections_type_sidewalk.size() - 1:
+	# 		for connection_b in lane_connections_type_sidewalk.slice(index,lane_connections_type_sidewalk.size()):
+	# 			new_gizmo_draw_path(connection_a, connection_b)
 
 
 func new_gizmo_draw_path(point_a: Vector3, point_b: Vector3):
@@ -162,3 +168,12 @@ func new_gizmo_draw_path(point_a: Vector3, point_b: Vector3):
 	gizmo_draw_path.point_b = to_local(point_b)
 	gizmo_draw_path._update()
 	$PathConnections.add_child(gizmo_draw_path)
+
+
+func connect_lanes(point_a: Vector3, point_b: Vector3):
+	var new_network_way_lane = network_way_lane_scene.instance()
+	new_network_way_lane.init(Lane.LaneType.ROAD)
+	new_network_way_lane.point_a = point_a
+	new_network_way_lane.point_b = point_b
+	new_network_way_lane._update()
+	$LanesContainer.add_child(new_network_way_lane)
