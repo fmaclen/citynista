@@ -17,6 +17,7 @@ let dragStartPoint: Point | null = null;
 let lineStartPos: { x1: number; y1: number; x2: number; y2: number } | null = null;
 let hoveredLine: Line | null = null;
 let isMovingObject = false;
+let cursorNode: Circle | null = null;
 
 export function setupCanvas(graph: RoadGraph): Canvas {
     const canvas = new Canvas('canvas', {
@@ -34,12 +35,27 @@ export function setupCanvas(graph: RoadGraph): Canvas {
 
         if (currentMode === 'draw') {
             drawBtn?.classList.add('active');
+            if (!cursorNode) {
+                cursorNode = createNode(0, 0, false);
+                cursorNode.set({ opacity: 0.5 });
+                canvas.add(cursorNode);
+            }
         } else {
             drawBtn?.classList.remove('active');
+            if (cursorNode) {
+                canvas.remove(cursorNode);
+                cursorNode = null;
+            }
         }
     }
 
     drawBtn?.addEventListener('click', toggleMode);
+
+    if (currentMode === 'draw') {
+        cursorNode = createNode(0, 0, false);
+        cursorNode.set({ opacity: 0.5 });
+        canvas.add(cursorNode);
+    }
 
     function createNode(x: number, y: number, selectable: boolean = true): Circle {
         return new Circle({
@@ -177,6 +193,10 @@ export function setupCanvas(graph: RoadGraph): Canvas {
         if (currentMode === 'draw') {
             clearNodes();
 
+            if (cursorNode) {
+                cursorNode.set({ opacity: 0 });
+            }
+
             isDrawing = true;
             const pointer = options.viewportPoint ?? new Point(0, 0);
 
@@ -201,6 +221,14 @@ export function setupCanvas(graph: RoadGraph): Canvas {
 
     canvas.on('mouse:move', (options: TPointerEventInfo) => {
         const pointer = options.viewportPoint ?? new Point(0, 0);
+
+        if (currentMode === 'draw' && cursorNode && !isDrawing) {
+            cursorNode.set({
+                left: pointer.x,
+                top: pointer.y
+            });
+            canvas.renderAll();
+        }
 
         if (isDrawing && currentLine && endNode) {
             currentLine.set({
@@ -378,6 +406,10 @@ export function setupCanvas(graph: RoadGraph): Canvas {
         if (endNode) {
             canvas.remove(endNode);
             endNode = null;
+        }
+
+        if (cursorNode) {
+            cursorNode.set({ opacity: 0.5 });
         }
     });
 
