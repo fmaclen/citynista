@@ -274,6 +274,22 @@ canvas.on('mouse:move', (options: TPointerEventInfo) => {
             });
         }
 
+        const segment = Array.from(segments.values()).find(s => s.line === selectedLine);
+        if (segment) {
+            const startNetNode = nodes.get(segment.startNodeId);
+            const endNetNode = nodes.get(segment.endNodeId);
+
+            if (startNetNode) {
+                startNetNode.x = lineStartPos.x1 + dx;
+                startNetNode.y = lineStartPos.y1 + dy;
+            }
+
+            if (endNetNode) {
+                endNetNode.x = lineStartPos.x2 + dx;
+                endNetNode.y = lineStartPos.y2 + dy;
+            }
+        }
+
         canvas.renderAll();
         return;
     }
@@ -415,8 +431,26 @@ canvas.on('object:moving', (options) => {
 
     if (target === startNode) {
         selectedLine.set({ x1: left, y1: top });
+
+        const segment = Array.from(segments.values()).find(s => s.line === selectedLine);
+        if (segment) {
+            const node = nodes.get(segment.startNodeId);
+            if (node) {
+                node.x = left;
+                node.y = top;
+            }
+        }
     } else if (target === endNode) {
         selectedLine.set({ x2: left, y2: top });
+
+        const segment = Array.from(segments.values()).find(s => s.line === selectedLine);
+        if (segment) {
+            const node = nodes.get(segment.endNodeId);
+            if (node) {
+                node.x = left;
+                node.y = top;
+            }
+        }
     }
 
     canvas.renderAll();
