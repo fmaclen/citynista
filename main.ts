@@ -44,6 +44,18 @@ function generateId(): string {
     return Math.random().toString(36).substring(2, 11);
 }
 
+function logGraph(): void {
+    console.log('=== Road Network ===');
+    console.log('Nodes:', nodes.size);
+    nodes.forEach((node, id) => {
+        console.log(`  ${id}: (${node.x.toFixed(1)}, ${node.y.toFixed(1)}) - ${node.connectedSegments.length} segments`);
+    });
+    console.log('Segments:', segments.size);
+    segments.forEach((segment, id) => {
+        console.log(`  ${id}: ${segment.startNodeId} -> ${segment.endNodeId}`);
+    });
+}
+
 const drawBtn = document.getElementById('draw-btn');
 
 function toggleMode(): void {
@@ -348,6 +360,35 @@ canvas.on('mouse:up', () => {
 
         if (length < 50) {
             canvas.remove(currentLine);
+        } else {
+            const startNodeId = generateId();
+            const endNodeId = generateId();
+            const segmentId = generateId();
+
+            const newStartNode: NetworkNode = {
+                id: startNodeId,
+                x: x1,
+                y: y1,
+                connectedSegments: [segmentId]
+            };
+
+            const newEndNode: NetworkNode = {
+                id: endNodeId,
+                x: x2,
+                y: y2,
+                connectedSegments: [segmentId]
+            };
+
+            const newSegment: NetworkSegment = {
+                id: segmentId,
+                startNodeId: startNodeId,
+                endNodeId: endNodeId,
+                line: currentLine
+            };
+
+            nodes.set(startNodeId, newStartNode);
+            nodes.set(endNodeId, newEndNode);
+            segments.set(segmentId, newSegment);
         }
     }
 
@@ -361,6 +402,8 @@ canvas.on('mouse:up', () => {
         canvas.remove(endNode);
         endNode = null;
     }
+
+    logGraph();
 });
 
 canvas.on('object:moving', (options) => {
