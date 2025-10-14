@@ -237,6 +237,22 @@ canvas.on('mouse:up', () => {
     if (!isDrawing) return;
 
     isDrawing = false;
+
+    if (currentLine) {
+        const x1 = currentLine.x1 ?? 0;
+        const y1 = currentLine.y1 ?? 0;
+        const x2 = currentLine.x2 ?? 0;
+        const y2 = currentLine.y2 ?? 0;
+
+        const dx = x2 - x1;
+        const dy = y2 - y1;
+        const length = Math.sqrt(dx * dx + dy * dy);
+
+        if (length < 50) {
+            canvas.remove(currentLine);
+        }
+    }
+
     currentLine = null;
 
     if (startNode) {
