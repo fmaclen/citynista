@@ -4,7 +4,8 @@ import type { TPointerEventInfo } from 'fabric';
 const canvas = new Canvas('canvas', {
     width: window.innerWidth,
     height: window.innerHeight,
-    backgroundColor: '#2a2a2a'
+    backgroundColor: '#2a2a2a',
+    selection: false
 });
 
 let isDrawing: boolean = false;
