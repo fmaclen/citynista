@@ -80,6 +80,18 @@ export class RoadGraph {
         return Array.from(this.segments.values()).find(s => s.line === line);
     }
 
+    findNearbyNode(x: number, y: number, threshold: number = 15): NetworkNode | undefined {
+        for (const node of this.nodes.values()) {
+            const dx = node.x - x;
+            const dy = node.y - y;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+            if (distance <= threshold) {
+                return node;
+            }
+        }
+        return undefined;
+    }
+
     deleteSegment(id: string): void {
         this.segments.delete(id);
         this.scheduleLog();

@@ -200,7 +200,11 @@ export function setupCanvas(graph: RoadGraph): Canvas {
             isDrawing = true;
             const pointer = options.viewportPoint ?? new Point(0, 0);
 
-            currentLine = new Line([pointer.x, pointer.y, pointer.x, pointer.y], {
+            const nearbyNode = graph.findNearbyNode(pointer.x, pointer.y, 15);
+            const startX = nearbyNode ? nearbyNode.x : pointer.x;
+            const startY = nearbyNode ? nearbyNode.y : pointer.y;
+
+            currentLine = new Line([startX, startY, startX, startY], {
                 stroke: '#666666',
                 strokeWidth: ROAD_WIDTH,
                 selectable: false,
@@ -210,8 +214,8 @@ export function setupCanvas(graph: RoadGraph): Canvas {
                 strokeUniform: true
             });
 
-            startNode = createNode(pointer.x, pointer.y, false);
-            endNode = createNode(pointer.x, pointer.y, false);
+            startNode = createNode(startX, startY, false);
+            endNode = createNode(startX, startY, false);
 
             canvas.add(currentLine);
             canvas.add(startNode);
@@ -223,22 +227,37 @@ export function setupCanvas(graph: RoadGraph): Canvas {
         const pointer = options.viewportPoint ?? new Point(0, 0);
 
         if (currentMode === 'draw' && cursorNode && !isDrawing) {
-            cursorNode.set({
-                left: pointer.x,
-                top: pointer.y
-            });
+            const nearbyNode = graph.findNearbyNode(pointer.x, pointer.y, 15);
+            if (nearbyNode) {
+                cursorNode.set({
+                    left: nearbyNode.x,
+                    top: nearbyNode.y,
+                    opacity: 1.0
+                });
+            } else {
+                cursorNode.set({
+                    left: pointer.x,
+                    top: pointer.y,
+                    opacity: 0.5
+                });
+            }
             canvas.renderAll();
         }
 
         if (isDrawing && currentLine && endNode) {
+            const nearbyNode = graph.findNearbyNode(pointer.x, pointer.y, 15);
+            const endX = nearbyNode ? nearbyNode.x : pointer.x;
+            const endY = nearbyNode ? nearbyNode.y : pointer.y;
+
             currentLine.set({
-                x2: pointer.x,
-                y2: pointer.y
+                x2: endX,
+                y2: endY
             });
 
             endNode.set({
-                left: pointer.x,
-                top: pointer.y
+                left: endX,
+                top: endY,
+                opacity: nearbyNode ? 1.0 : 1.0
             });
 
             canvas.renderAll();
@@ -370,23 +389,40 @@ export function setupCanvas(graph: RoadGraph): Canvas {
             if (length < 50) {
                 canvas.remove(currentLine);
             } else {
-                const startNodeId = generateId();
-                const endNodeId = generateId();
                 const segmentId = generateId();
 
-                graph.addNode({
-                    id: startNodeId,
-                    x: x1,
-                    y: y1,
-                    connectedSegments: [segmentId]
-                });
+                const existingStartNode = graph.findNearbyNode(x1, y1, 15);
+                const existingEndNode = graph.findNearbyNode(x2, y2, 15);
 
-                graph.addNode({
-                    id: endNodeId,
-                    x: x2,
-                    y: y2,
-                    connectedSegments: [segmentId]
-                });
+                let startNodeId: string;
+                if (existingStartNode) {
+                    startNodeId = existingStartNode.id;
+                    existingStartNode.connectedSegments.push(segmentId);
+                    graph.updateNode(startNodeId, existingStartNode);
+                } else {
+                    startNodeId = generateId();
+                    graph.addNode({
+                        id: startNodeId,
+                        x: x1,
+                        y: y1,
+                        connectedSegments: [segmentId]
+                    });
+                }
+
+                let endNodeId: string;
+                if (existingEndNode) {
+                    endNodeId = existingEndNode.id;
+                    existingEndNode.connectedSegments.push(segmentId);
+                    graph.updateNode(endNodeId, existingEndNode);
+                } else {
+                    endNodeId = generateId();
+                    graph.addNode({
+                        id: endNodeId,
+                        x: x2,
+                        y: y2,
+                        connectedSegments: [segmentId]
+                    });
+                }
 
                 graph.addSegment({
                     id: segmentId,
@@ -419,31 +455,76 @@ export function setupCanvas(graph: RoadGraph): Canvas {
 
         isMovingObject = true;
 
-        const left = target.left ?? 0;
-        const top = target.top ?? 0;
+        let left = target.left ?? 0;
+        let top = target.top ?? 0;
+
+        const segment = graph.findSegmentByLine(selectedLine);
+        if (!segment) return;
+
+        const currentNodeId = target === startNode ? segment.startNodeId : segment.endNodeId;
+        const otherNodeId = target === startNode ? segment.endNodeId : segment.startNodeId;
+        const nearbyNode = graph.findNearbyNode(left, top, 15);
+
+        if (nearbyNode && nearbyNode.id !== currentNodeId && nearbyNode.id !== otherNodeId) {
+            left = nearbyNode.x;
+            top = nearbyNode.y;
+            target.set({ left, top });
+        }
 
         if (target === startNode) {
             selectedLine.set({ x1: left, y1: top });
-
-            const segment = graph.findSegmentByLine(selectedLine);
-            if (segment) {
-                graph.updateNode(segment.startNodeId, { x: left, y: top });
-            }
         } else if (target === endNode) {
             selectedLine.set({ x2: left, y2: top });
-
-            const segment = graph.findSegmentByLine(selectedLine);
-            if (segment) {
-                graph.updateNode(segment.endNodeId, { x: left, y: top });
-            }
         }
 
         canvas.renderAll();
     });
 
-    canvas.on('object:modified', () => {
+    canvas.on('object:modified', (options) => {
         if (isMovingObject) {
             isMovingObject = false;
+
+            const target = options.target;
+            if (!target || !selectedLine) return;
+
+            const segment = graph.findSegmentByLine(selectedLine);
+            if (!segment) return;
+
+            const left = target.left ?? 0;
+            const top = target.top ?? 0;
+
+            const isStartNode = target === startNode;
+            const currentNodeId = isStartNode ? segment.startNodeId : segment.endNodeId;
+            const otherNodeId = isStartNode ? segment.endNodeId : segment.startNodeId;
+            const nearbyNode = graph.findNearbyNode(left, top, 15);
+
+            if (nearbyNode && nearbyNode.id !== currentNodeId && nearbyNode.id !== otherNodeId) {
+                const oldNodeId = currentNodeId;
+                const newNodeId = nearbyNode.id;
+
+                if (isStartNode) {
+                    segment.startNodeId = newNodeId;
+                } else {
+                    segment.endNodeId = newNodeId;
+                }
+
+                const oldNode = graph.getNode(oldNodeId);
+                if (oldNode) {
+                    oldNode.connectedSegments = oldNode.connectedSegments.filter(id => id !== segment.id);
+                    if (oldNode.connectedSegments.length === 0) {
+                        graph.deleteNode(oldNodeId);
+                    }
+                }
+
+                if (!nearbyNode.connectedSegments.includes(segment.id)) {
+                    nearbyNode.connectedSegments.push(segment.id);
+                }
+
+                graph.updateNode(newNodeId, nearbyNode);
+                graph.updateNode(oldNodeId, oldNode);
+            } else {
+                graph.updateNode(currentNodeId, { x: left, y: top });
+            }
         }
     });
 
