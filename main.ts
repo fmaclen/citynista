@@ -15,6 +15,9 @@ let currentLine: Line | null = null;
 let startNode: Circle | null = null;
 let endNode: Circle | null = null;
 let selectedLine: Line | null = null;
+let isDraggingLine: boolean = false;
+let dragStartPoint: Point | null = null;
+let lineStartPos: { x1: number; y1: number; x2: number; y2: number } | null = null;
 
 const ROAD_WIDTH = 8;
 const NODE_RADIUS = ROAD_WIDTH;
@@ -138,6 +141,18 @@ canvas.on('mouse:down', (options: TPointerEventInfo) => {
             return;
         }
 
+        if (selectedLine && isPointNearLine(pointer, selectedLine, 15)) {
+            isDraggingLine = true;
+            dragStartPoint = new Point(pointer.x, pointer.y);
+            lineStartPos = {
+                x1: selectedLine.x1 ?? 0,
+                y1: selectedLine.y1 ?? 0,
+                x2: selectedLine.x2 ?? 0,
+                y2: selectedLine.y2 ?? 0
+            };
+            return;
+        }
+
         if (target && target instanceof Line) {
             showNodesForLine(target);
             return;
@@ -200,7 +215,43 @@ canvas.on('mouse:move', (options: TPointerEventInfo) => {
         return;
     }
 
+    if (isDraggingLine && selectedLine && dragStartPoint && lineStartPos) {
+        const dx = pointer.x - dragStartPoint.x;
+        const dy = pointer.y - dragStartPoint.y;
+
+        selectedLine.set({
+            x1: lineStartPos.x1 + dx,
+            y1: lineStartPos.y1 + dy,
+            x2: lineStartPos.x2 + dx,
+            y2: lineStartPos.y2 + dy
+        });
+
+        if (startNode) {
+            startNode.set({
+                left: lineStartPos.x1 + dx,
+                top: lineStartPos.y1 + dy
+            });
+        }
+
+        if (endNode) {
+            endNode.set({
+                left: lineStartPos.x2 + dx,
+                top: lineStartPos.y2 + dy
+            });
+        }
+
+        canvas.renderAll();
+        return;
+    }
+
     if (currentMode === 'edit') {
+        const target = options.target;
+
+        if (target && (target === startNode || target === endNode)) {
+            canvas.defaultCursor = 'move';
+            return;
+        }
+
         const allObjects = canvas.getObjects();
         let foundLine: Line | null = null;
 
@@ -223,6 +274,15 @@ canvas.on('mouse:move', (options: TPointerEventInfo) => {
             hoveredLine = foundLine;
             canvas.renderAll();
         }
+
+        if (selectedLine && isPointNearLine(pointer, selectedLine, 15)) {
+            canvas.defaultCursor = 'move';
+        } else if (foundLine) {
+            canvas.defaultCursor = 'pointer';
+        } else {
+            canvas.defaultCursor = 'default';
+        }
+
         return;
     }
 
@@ -234,6 +294,22 @@ canvas.on('mouse:move', (options: TPointerEventInfo) => {
 });
 
 canvas.on('mouse:up', () => {
+    if (isDraggingLine) {
+        isDraggingLine = false;
+        dragStartPoint = null;
+        lineStartPos = null;
+
+        if (startNode) {
+            startNode.setCoords();
+        }
+        if (endNode) {
+            endNode.setCoords();
+        }
+
+        canvas.renderAll();
+        return;
+    }
+
     if (!isDrawing) return;
 
     isDrawing = false;
