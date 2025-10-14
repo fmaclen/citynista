@@ -8,72 +8,234 @@ const canvas = new Canvas('canvas', {
     selection: false
 });
 
+type Mode = 'draw' | 'edit';
+let currentMode: Mode = 'draw';
 let isDrawing: boolean = false;
 let currentLine: Line | null = null;
 let startNode: Circle | null = null;
 let endNode: Circle | null = null;
+let selectedLine: Line | null = null;
 
 const ROAD_WIDTH = 8;
 const NODE_RADIUS = ROAD_WIDTH;
 
-canvas.on('mouse:down', (options: TPointerEventInfo) => {
-    isDrawing = true;
-    const pointer = options.viewportPoint ?? new Point(0, 0);
+const drawBtn = document.getElementById('draw-btn');
 
-    currentLine = new Line([pointer.x, pointer.y, pointer.x, pointer.y], {
-        stroke: '#666666',
-        strokeWidth: ROAD_WIDTH,
-        selectable: false,
-        evented: false,
-        strokeLineCap: 'round'
-    });
+function toggleMode(): void {
+    currentMode = currentMode === 'draw' ? 'edit' : 'draw';
+    clearNodes();
 
-    startNode = new Circle({
-        left: pointer.x,
-        top: pointer.y,
+    if (currentMode === 'draw') {
+        drawBtn?.classList.add('active');
+    } else {
+        drawBtn?.classList.remove('active');
+    }
+}
+
+drawBtn?.addEventListener('click', toggleMode);
+
+function createNode(x: number, y: number, selectable: boolean = true): Circle {
+    return new Circle({
+        left: x,
+        top: y,
         radius: NODE_RADIUS,
         fill: 'white',
         originX: 'center',
         originY: 'center',
-        selectable: false,
-        evented: false
+        selectable: selectable,
+        evented: selectable,
+        hasControls: false,
+        hasBorders: false
     });
+}
 
-    endNode = new Circle({
-        left: pointer.x,
-        top: pointer.y,
-        radius: NODE_RADIUS,
-        fill: 'white',
-        originX: 'center',
-        originY: 'center',
-        selectable: false,
-        evented: false
-    });
+function clearNodes(): void {
+    if (startNode) {
+        canvas.remove(startNode);
+        startNode = null;
+    }
+    if (endNode) {
+        canvas.remove(endNode);
+        endNode = null;
+    }
+    if (selectedLine) {
+        selectedLine.set({ stroke: '#666666' });
+    }
+    selectedLine = null;
+}
 
-    canvas.add(currentLine);
+function showNodesForLine(line: Line): void {
+    if (selectedLine === line && startNode && endNode) {
+        return;
+    }
+
+    if (selectedLine) {
+        selectedLine.set({ stroke: '#666666' });
+    }
+
+    clearNodes();
+    selectedLine = line;
+    line.set({ stroke: '#999999' });
+
+    const x1 = line.x1 ?? 0;
+    const y1 = line.y1 ?? 0;
+    const x2 = line.x2 ?? 0;
+    const y2 = line.y2 ?? 0;
+
+    startNode = createNode(x1, y1, true);
+    endNode = createNode(x2, y2, true);
+
     canvas.add(startNode);
     canvas.add(endNode);
-});
+    canvas.renderAll();
+}
 
-canvas.on('mouse:move', (options: TPointerEventInfo) => {
-    if (!isDrawing || !currentLine || !endNode) return;
+function isPointNearLine(pointer: Point, line: Line, threshold: number = 10): boolean {
+    const x1 = line.x1 ?? 0;
+    const y1 = line.y1 ?? 0;
+    const x2 = line.x2 ?? 0;
+    const y2 = line.y2 ?? 0;
 
+    const A = pointer.x - x1;
+    const B = pointer.y - y1;
+    const C = x2 - x1;
+    const D = y2 - y1;
+
+    const dot = A * C + B * D;
+    const lenSq = C * C + D * D;
+    let param = -1;
+
+    if (lenSq !== 0) {
+        param = dot / lenSq;
+    }
+
+    let xx: number, yy: number;
+
+    if (param < 0) {
+        xx = x1;
+        yy = y1;
+    } else if (param > 1) {
+        xx = x2;
+        yy = y2;
+    } else {
+        xx = x1 + param * C;
+        yy = y1 + param * D;
+    }
+
+    const dx = pointer.x - xx;
+    const dy = pointer.y - yy;
+    const distance = Math.sqrt(dx * dx + dy * dy);
+
+    return distance <= threshold;
+}
+
+canvas.on('mouse:down', (options: TPointerEventInfo) => {
+    const target = options.target;
     const pointer = options.viewportPoint ?? new Point(0, 0);
 
-    currentLine.set({
-        x2: pointer.x,
-        y2: pointer.y
-    });
+    if (currentMode === 'edit') {
+        if (target && (target === startNode || target === endNode)) {
+            return;
+        }
 
-    endNode.set({
-        left: pointer.x,
-        top: pointer.y
-    });
+        if (target && target instanceof Line) {
+            showNodesForLine(target);
+            return;
+        }
 
-    canvas.renderAll();
+        const allObjects = canvas.getObjects();
+        for (const obj of allObjects) {
+            if (obj instanceof Line && isPointNearLine(pointer, obj, 15)) {
+                showNodesForLine(obj);
+                return;
+            }
+        }
+
+        clearNodes();
+        return;
+    }
+
+    if (currentMode === 'draw') {
+        clearNodes();
+
+        isDrawing = true;
+        const pointer = options.viewportPoint ?? new Point(0, 0);
+
+        currentLine = new Line([pointer.x, pointer.y, pointer.x, pointer.y], {
+            stroke: '#666666',
+            strokeWidth: ROAD_WIDTH,
+            selectable: false,
+            evented: true,
+            strokeLineCap: 'round',
+            hoverCursor: 'default',
+            strokeUniform: true
+        });
+
+        startNode = createNode(pointer.x, pointer.y, false);
+        endNode = createNode(pointer.x, pointer.y, false);
+
+        canvas.add(currentLine);
+        canvas.add(startNode);
+        canvas.add(endNode);
+    }
+});
+
+let hoveredLine: Line | null = null;
+
+canvas.on('mouse:move', (options: TPointerEventInfo) => {
+    const pointer = options.viewportPoint ?? new Point(0, 0);
+
+    if (isDrawing && currentLine && endNode) {
+        currentLine.set({
+            x2: pointer.x,
+            y2: pointer.y
+        });
+
+        endNode.set({
+            left: pointer.x,
+            top: pointer.y
+        });
+
+        canvas.renderAll();
+        return;
+    }
+
+    if (currentMode === 'edit') {
+        const allObjects = canvas.getObjects();
+        let foundLine: Line | null = null;
+
+        for (const obj of allObjects) {
+            if (obj instanceof Line && isPointNearLine(pointer, obj, 15)) {
+                if (obj !== selectedLine) {
+                    foundLine = obj;
+                }
+                break;
+            }
+        }
+
+        if (foundLine !== hoveredLine) {
+            if (hoveredLine && hoveredLine !== selectedLine) {
+                hoveredLine.set({ stroke: '#666666' });
+            }
+            if (foundLine && foundLine !== selectedLine) {
+                foundLine.set({ stroke: '#999999' });
+            }
+            hoveredLine = foundLine;
+            canvas.renderAll();
+        }
+        return;
+    }
+
+    if (hoveredLine) {
+        hoveredLine.set({ stroke: '#666666' });
+        hoveredLine = null;
+        canvas.renderAll();
+    }
 });
 
 canvas.on('mouse:up', () => {
+    if (!isDrawing) return;
+
     isDrawing = false;
     currentLine = null;
 
@@ -85,6 +247,22 @@ canvas.on('mouse:up', () => {
         canvas.remove(endNode);
         endNode = null;
     }
+});
+
+canvas.on('object:moving', (options) => {
+    const target = options.target;
+    if (!target || !selectedLine) return;
+
+    const left = target.left ?? 0;
+    const top = target.top ?? 0;
+
+    if (target === startNode) {
+        selectedLine.set({ x1: left, y1: top });
+    } else if (target === endNode) {
+        selectedLine.set({ x2: left, y2: top });
+    }
+
+    canvas.renderAll();
 });
 
 window.addEventListener('resize', () => {
