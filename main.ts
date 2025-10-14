@@ -22,6 +22,28 @@ let lineStartPos: { x1: number; y1: number; x2: number; y2: number } | null = nu
 const ROAD_WIDTH = 8;
 const NODE_RADIUS = ROAD_WIDTH;
 
+interface NetworkNode {
+    id: string;
+    x: number;
+    y: number;
+    connectedSegments: string[];
+    circle?: Circle;
+}
+
+interface NetworkSegment {
+    id: string;
+    startNodeId: string;
+    endNodeId: string;
+    line?: Line;
+}
+
+const nodes = new Map<string, NetworkNode>();
+const segments = new Map<string, NetworkSegment>();
+
+function generateId(): string {
+    return Math.random().toString(36).substring(2, 11);
+}
+
 const drawBtn = document.getElementById('draw-btn');
 
 function toggleMode(): void {
