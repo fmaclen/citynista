@@ -463,3 +463,35 @@ window.addEventListener('resize', () => {
     });
     canvas.renderAll();
 });
+
+window.addEventListener('keydown', (event) => {
+    if ((event.key === 'Delete' || event.key === 'Backspace') && selectedLine) {
+        const segment = Array.from(segments.values()).find(s => s.line === selectedLine);
+
+        if (segment) {
+            const startNetNode = nodes.get(segment.startNodeId);
+            const endNetNode = nodes.get(segment.endNodeId);
+
+            if (startNetNode) {
+                startNetNode.connectedSegments = startNetNode.connectedSegments.filter(id => id !== segment.id);
+                if (startNetNode.connectedSegments.length === 0) {
+                    nodes.delete(segment.startNodeId);
+                }
+            }
+
+            if (endNetNode) {
+                endNetNode.connectedSegments = endNetNode.connectedSegments.filter(id => id !== segment.id);
+                if (endNetNode.connectedSegments.length === 0) {
+                    nodes.delete(segment.endNodeId);
+                }
+            }
+
+            segments.delete(segment.id);
+        }
+
+        canvas.remove(selectedLine);
+        clearNodes();
+
+        logGraph();
+    }
+});
