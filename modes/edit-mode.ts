@@ -5,7 +5,7 @@ import { findSnappingTarget } from '../geometry/snapping';
 import { updateConnectedSegments } from '../geometry/connections';
 import { splitSegmentAtPoint } from '../geometry/splitting';
 import { createNode, createBezierHandle, isPointNearPath } from '../canvas-utils';
-import { createCurvedPathData, getRelativeControlPoint, applyRelativeControlPoint } from '../geometry/path-utils';
+import { getRelativeControlPoint, applyRelativeControlPoint } from '../geometry/path-utils';
 
 let selectedPath: Path | null = null;
 let startNode: Circle | null = null;
@@ -135,27 +135,13 @@ export function setupEditMode(canvas: Canvas, graph: RoadGraph) {
                 const newCX = pathStartPos.cx + dx;
                 const newCY = pathStartPos.cy + dy;
 
-                // Recreate the path
+                // Update path in-place
                 const segment = graph.findSegmentByPath(selectedPath);
-                canvas.remove(selectedPath);
-
-                const newPathData = createCurvedPathData(newX1, newY1, newX2, newY2, newCX, newCY);
-                const newPath = new Path(newPathData);
-                newPath.set({
-                    stroke: '#999999',
-                    strokeWidth: 8,
-                    fill: '',
-                    selectable: false,
-                    evented: true,
-                    strokeLineCap: 'round',
-                    hoverCursor: 'default',
-                    strokeUniform: true,
-                    objectCaching: false
-                });
-                canvas.add(newPath);
-                selectedPath = newPath;
-                if (segment) {
-                    segment.path = newPath;
+                const pathArray = selectedPath.path as any[];
+                if (Array.isArray(pathArray) && pathArray.length >= 2) {
+                    pathArray[0] = ['M', newX1, newY1];
+                    pathArray[1] = ['Q', newCX, newCY, newX2, newY2];
+                    selectedPath.set({ path: pathArray, dirty: true });
                 }
 
                 if (startNode) {
@@ -321,24 +307,13 @@ export function setupEditMode(canvas: Canvas, graph: RoadGraph) {
                 updateConnectedSegments(graph, currentNodeId, left, top, segment.id);
             }
 
-            // Recreate the path
-            canvas.remove(selectedPath);
-            const newPathData = createCurvedPathData(x1, y1, x2, y2, cx, cy);
-            const newPath = new Path(newPathData);
-            newPath.set({
-                stroke: '#999999',
-                strokeWidth: 8,
-                fill: '',
-                selectable: false,
-                evented: true,
-                strokeLineCap: 'round',
-                hoverCursor: 'default',
-                strokeUniform: true,
-                objectCaching: false
-            });
-            canvas.add(newPath);
-            selectedPath = newPath;
-            segment.path = newPath;
+            // Update path in-place by modifying the path array directly
+            const pathArray = selectedPath.path as any[];
+            if (Array.isArray(pathArray) && pathArray.length >= 2) {
+                pathArray[0] = ['M', x1, y1];
+                pathArray[1] = ['Q', cx, cy, x2, y2];
+                selectedPath.set({ path: pathArray, dirty: true });
+            }
 
             // Update bezier handle position
             if (bezierHandle && target !== bezierHandle) {

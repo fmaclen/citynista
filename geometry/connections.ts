@@ -1,10 +1,8 @@
-import { Path } from 'fabric';
 import type { RoadGraph } from '../graph/graph';
 import { generateId } from '../graph/graph';
 import { findSnappingTarget } from './snapping';
 import { splitSegmentAtPoint } from './splitting';
-import { createCurvedPathData, getRelativeControlPoint, applyRelativeControlPoint } from './path-utils';
-import { ROAD_WIDTH } from '../types';
+import { getRelativeControlPoint, applyRelativeControlPoint } from './path-utils';
 
 export function updateConnectedSegments(
     graph: RoadGraph,
@@ -74,25 +72,13 @@ export function updateConnectedSegments(
         segment.controlX = cx;
         segment.controlY = cy;
 
-        // Remove old path and create new one
-        canvas.remove(segment.path);
-
-        const newPathData = createCurvedPathData(x1, y1, x2, y2, cx, cy);
-        const newPath = new Path(newPathData);
-        newPath.set({
-            stroke: '#666666',
-            strokeWidth: ROAD_WIDTH,
-            fill: '',
-            selectable: false,
-            evented: true,
-            strokeLineCap: 'round',
-            hoverCursor: 'default',
-            strokeUniform: true,
-            objectCaching: false
-        });
-
-        canvas.add(newPath);
-        segment.path = newPath;
+        // Update path in-place by modifying the path array directly
+        const pathArray = segment.path.path as any[];
+        if (Array.isArray(pathArray) && pathArray.length >= 2) {
+            pathArray[0] = ['M', x1, y1];
+            pathArray[1] = ['Q', cx, cy, x2, y2];
+            segment.path.set({ path: pathArray, dirty: true });
+        }
     }
 
     graph.updateNode(nodeId, { x: newX, y: newY });
