@@ -5,7 +5,7 @@ import { findSnappingTarget } from '../geometry/snapping';
 import { updateConnectedSegments } from '../geometry/connections';
 import { splitSegmentAtPoint } from '../geometry/splitting';
 import { createNode, createBezierHandle, isPointNearPath } from '../canvas-utils';
-import { getRelativeControlPoint, applyRelativeControlPoint } from '../geometry/path-utils';
+import { getRelativeControlPoint, applyRelativeControlPoint, parsePathData } from '../geometry/path-utils';
 
 let selectedPath: Path | null = null;
 let startNode: Circle | null = null;
@@ -49,19 +49,10 @@ function showNodesForPath(canvas: Canvas, _graph: RoadGraph, path: Path): void {
     selectedPath = path;
     path.set({ stroke: '#999999' });
 
-    const pathArray = path.path;
-    if (!pathArray || pathArray.length === 0) return;
+    const coords = parsePathData(path.path as any);
+    if (!coords) return;
 
-    const moveCmd = pathArray[0];
-    const quadCmd = pathArray[1];
-    if (!moveCmd || !quadCmd || !Array.isArray(moveCmd) || !Array.isArray(quadCmd)) return;
-
-    const x1 = moveCmd[1] as number;
-    const y1 = moveCmd[2] as number;
-    const cx = quadCmd[1] as number;
-    const cy = quadCmd[2] as number;
-    const x2 = quadCmd[3] as number;
-    const y2 = quadCmd[4] as number;
+    const { x1, y1, cx, cy, x2, y2 } = coords;
 
     startNode = createNode(x1, y1, true);
     endNode = createNode(x2, y2, true);
@@ -245,32 +236,10 @@ export function setupEditMode(canvas: Canvas, graph: RoadGraph) {
             const segment = graph.findSegmentByPath(selectedPath);
             if (!segment) return;
 
-            const pathData: string | any[] = selectedPath.path as any;
-            let x1: number, y1: number, cx: number, cy: number, x2: number, y2: number;
+            const coords = parsePathData(selectedPath.path as any);
+            if (!coords) return;
 
-            // Parse current path
-            if (typeof pathData === 'string') {
-                const match = pathData.match(/M\s+([\d.]+)\s+([\d.]+)\s+Q\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)/);
-                if (!match) return;
-                x1 = parseFloat(match[1]!);
-                y1 = parseFloat(match[2]!);
-                cx = parseFloat(match[3]!);
-                cy = parseFloat(match[4]!);
-                x2 = parseFloat(match[5]!);
-                y2 = parseFloat(match[6]!);
-            } else if (Array.isArray(pathData) && pathData.length >= 2) {
-                const moveCmd = pathData[0];
-                const quadCmd = pathData[1];
-                if (!Array.isArray(moveCmd) || !Array.isArray(quadCmd)) return;
-                x1 = moveCmd[1] as number;
-                y1 = moveCmd[2] as number;
-                cx = quadCmd[1] as number;
-                cy = quadCmd[2] as number;
-                x2 = quadCmd[3] as number;
-                y2 = quadCmd[4] as number;
-            } else {
-                return;
-            }
+            let { x1, y1, cx, cy, x2, y2 } = coords;
 
             if (target === bezierHandle) {
                 cx = left;

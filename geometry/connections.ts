@@ -2,7 +2,7 @@ import type { RoadGraph } from '../graph/graph';
 import { generateId } from '../graph/graph';
 import { findSnappingTarget } from './snapping';
 import { splitSegmentAtPoint } from './splitting';
-import { getRelativeControlPoint, applyRelativeControlPoint } from './path-utils';
+import { getRelativeControlPoint, applyRelativeControlPoint, parsePathData } from './path-utils';
 
 export function updateConnectedSegments(
     graph: RoadGraph,
@@ -25,32 +25,10 @@ export function updateConnectedSegments(
         const canvas = segment.path.canvas;
         if (!canvas) continue;
 
-        const pathData: string | any[] = segment.path.path as any;
-        let x1: number, y1: number, cx: number, cy: number, x2: number, y2: number;
+        const coords = parsePathData(segment.path.path as any);
+        if (!coords) continue;
 
-        // Parse current path
-        if (typeof pathData === 'string') {
-            const match = pathData.match(/M\s+([\d.]+)\s+([\d.]+)\s+Q\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)/);
-            if (!match) continue;
-            x1 = parseFloat(match[1]!);
-            y1 = parseFloat(match[2]!);
-            cx = parseFloat(match[3]!);
-            cy = parseFloat(match[4]!);
-            x2 = parseFloat(match[5]!);
-            y2 = parseFloat(match[6]!);
-        } else if (Array.isArray(pathData) && pathData.length >= 2) {
-            const moveCmd = pathData[0];
-            const quadCmd = pathData[1];
-            if (!Array.isArray(moveCmd) || !Array.isArray(quadCmd)) continue;
-            x1 = moveCmd[1] as number;
-            y1 = moveCmd[2] as number;
-            cx = quadCmd[1] as number;
-            cy = quadCmd[2] as number;
-            x2 = quadCmd[3] as number;
-            y2 = quadCmd[4] as number;
-        } else {
-            continue;
-        }
+        let { x1, y1, cx, cy, x2, y2 } = coords;
 
         // Calculate relative position of control point before moving
         const relativeControl = getRelativeControlPoint(x1, y1, x2, y2, cx, cy);

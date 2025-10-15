@@ -6,7 +6,7 @@ import { findSnappingTarget } from '../geometry/snapping';
 import { finalizeNodeConnection } from '../geometry/connections';
 import { createNode } from '../canvas-utils';
 import { ROAD_WIDTH } from '../types';
-import { createCurvedPathData, getDefaultControlPoint } from '../geometry/path-utils';
+import { createCurvedPathData, getDefaultControlPoint, parsePathData } from '../geometry/path-utils';
 
 let isDrawing: boolean = false;
 let currentPath: Path | null = null;
@@ -115,44 +115,9 @@ export function setupDrawMode(canvas: Canvas, graph: RoadGraph) {
 
             if (currentPath) {
                 const pathData: string | any[] = currentPath.path as any;
+                const coords = parsePathData(pathData);
 
-                let x1: number, y1: number, x2: number, y2: number;
-
-                // Parse the path (can be string or array)
-                if (typeof pathData === 'string') {
-                    const match = pathData.match(/M\s+([\d.]+)\s+([\d.]+)\s+Q\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)/);
-                    if (!match) {
-                        canvas.remove(currentPath);
-                        currentPath = null;
-                        if (startNode) canvas.remove(startNode);
-                        if (endNode) canvas.remove(endNode);
-                        startNode = null;
-                        endNode = null;
-                        if (cursorNode) cursorNode.set({ opacity: 0.5 });
-                        return;
-                    }
-                    x1 = parseFloat(match[1]!);
-                    y1 = parseFloat(match[2]!);
-                    x2 = parseFloat(match[5]!);
-                    y2 = parseFloat(match[6]!);
-                } else if (Array.isArray(pathData) && pathData.length >= 2) {
-                    const moveCmd = pathData[0];
-                    const quadCmd = pathData[1];
-                    if (!Array.isArray(moveCmd) || !Array.isArray(quadCmd)) {
-                        canvas.remove(currentPath);
-                        currentPath = null;
-                        if (startNode) canvas.remove(startNode);
-                        if (endNode) canvas.remove(endNode);
-                        startNode = null;
-                        endNode = null;
-                        if (cursorNode) cursorNode.set({ opacity: 0.5 });
-                        return;
-                    }
-                    x1 = moveCmd[1] as number;
-                    y1 = moveCmd[2] as number;
-                    x2 = quadCmd[3] as number;
-                    y2 = quadCmd[4] as number;
-                } else {
+                if (!coords) {
                     canvas.remove(currentPath);
                     currentPath = null;
                     if (startNode) canvas.remove(startNode);
@@ -162,6 +127,8 @@ export function setupDrawMode(canvas: Canvas, graph: RoadGraph) {
                     if (cursorNode) cursorNode.set({ opacity: 0.5 });
                     return;
                 }
+
+                const { x1, y1, x2, y2 } = coords;
 
                 const dx = x2 - x1;
                 const dy = y2 - y1;

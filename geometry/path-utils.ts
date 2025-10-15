@@ -1,3 +1,40 @@
+export interface PathCoordinates {
+    x1: number;
+    y1: number;
+    cx: number;
+    cy: number;
+    x2: number;
+    y2: number;
+}
+
+export function parsePathData(pathData: string | any[]): PathCoordinates | null {
+    if (typeof pathData === 'string') {
+        const match = pathData.match(/M\s+([\d.]+)\s+([\d.]+)\s+Q\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)/);
+        if (!match) return null;
+        return {
+            x1: parseFloat(match[1]!),
+            y1: parseFloat(match[2]!),
+            cx: parseFloat(match[3]!),
+            cy: parseFloat(match[4]!),
+            x2: parseFloat(match[5]!),
+            y2: parseFloat(match[6]!)
+        };
+    } else if (Array.isArray(pathData) && pathData.length >= 2) {
+        const moveCmd = pathData[0];
+        const quadCmd = pathData[1];
+        if (!Array.isArray(moveCmd) || !Array.isArray(quadCmd)) return null;
+        return {
+            x1: moveCmd[1] as number,
+            y1: moveCmd[2] as number,
+            cx: quadCmd[1] as number,
+            cy: quadCmd[2] as number,
+            x2: quadCmd[3] as number,
+            y2: quadCmd[4] as number
+        };
+    }
+    return null;
+}
+
 export function createCurvedPathData(
     x1: number,
     y1: number,
