@@ -32,6 +32,15 @@ export function setupDraw(editor: Editor) {
 			if (draftEndNode) editor.canvas.remove(draftEndNode);
 			editor.canvas.renderAll();
 		}
+
+		// Remove the start node if it has no segments connected
+		if (currentStartNodeId) {
+			const startNode = editor.graph.nodes.get(currentStartNodeId);
+			if (startNode && startNode.connectedSegments.length === 0) {
+				editor.graph.deleteNode(currentStartNodeId);
+			}
+		}
+
 		isDrawing = false;
 		currentStartNodeId = null;
 		draftPath = null;
