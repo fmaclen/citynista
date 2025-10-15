@@ -259,19 +259,19 @@ export function setupEditMode(canvas: Canvas, graph: RoadGraph) {
             const segment = graph.findSegmentByPath(selectedPath);
             if (!segment) return;
 
-            const pathData = selectedPath.path;
+            const pathData: string | any[] = selectedPath.path as any;
             let x1: number, y1: number, cx: number, cy: number, x2: number, y2: number;
 
             // Parse current path
             if (typeof pathData === 'string') {
                 const match = pathData.match(/M\s+([\d.]+)\s+([\d.]+)\s+Q\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)/);
                 if (!match) return;
-                x1 = parseFloat(match[1]);
-                y1 = parseFloat(match[2]);
-                cx = parseFloat(match[3]);
-                cy = parseFloat(match[4]);
-                x2 = parseFloat(match[5]);
-                y2 = parseFloat(match[6]);
+                x1 = parseFloat(match[1]!);
+                y1 = parseFloat(match[2]!);
+                cx = parseFloat(match[3]!);
+                cy = parseFloat(match[4]!);
+                x2 = parseFloat(match[5]!);
+                y2 = parseFloat(match[6]!);
             } else if (Array.isArray(pathData) && pathData.length >= 2) {
                 const moveCmd = pathData[0];
                 const quadCmd = pathData[1];

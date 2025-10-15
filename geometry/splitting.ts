@@ -2,7 +2,7 @@ import { Path } from 'fabric';
 import type { RoadGraph, NetworkSegment } from '../graph/graph';
 import { generateId } from '../graph/graph';
 import { ROAD_WIDTH } from '../types';
-import { createCurvedPathData, getDefaultControlPoint } from './path-utils';
+import { createCurvedPathData } from './path-utils';
 
 export function findNearestSegment(
     graph: RoadGraph,

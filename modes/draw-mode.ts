@@ -114,7 +114,7 @@ export function setupDrawMode(canvas: Canvas, graph: RoadGraph) {
             isDrawing = false;
 
             if (currentPath) {
-                const pathData = currentPath.path;
+                const pathData: string | any[] = currentPath.path as any;
 
                 let x1: number, y1: number, x2: number, y2: number;
 
@@ -131,10 +131,10 @@ export function setupDrawMode(canvas: Canvas, graph: RoadGraph) {
                         if (cursorNode) cursorNode.set({ opacity: 0.5 });
                         return;
                     }
-                    x1 = parseFloat(match[1]);
-                    y1 = parseFloat(match[2]);
-                    x2 = parseFloat(match[5]);
-                    y2 = parseFloat(match[6]);
+                    x1 = parseFloat(match[1]!);
+                    y1 = parseFloat(match[2]!);
+                    x2 = parseFloat(match[5]!);
+                    y2 = parseFloat(match[6]!);
                 } else if (Array.isArray(pathData) && pathData.length >= 2) {
                     const moveCmd = pathData[0];
                     const quadCmd = pathData[1];
