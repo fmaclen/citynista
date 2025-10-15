@@ -10,13 +10,15 @@ interface SnapResult {
     snappedX: number;
     snappedY: number;
     snappedNode: import('./graph').NetworkNode | null;
+    snappedSegment: import('./graph').NetworkSegment | null;
 }
 
 function findSnappingTarget(
     graph: RoadGraph,
     x: number,
     y: number,
-    excludeNodeIds: string[] = []
+    excludeNodeIds: string[] = [],
+    excludeSegmentIds: string[] = []
 ): SnapResult {
     const nearbyNode = graph.findNearbyNode(x, y, SNAP_THRESHOLD);
 
@@ -24,14 +26,26 @@ function findSnappingTarget(
         return {
             snappedX: nearbyNode.x,
             snappedY: nearbyNode.y,
-            snappedNode: nearbyNode
+            snappedNode: nearbyNode,
+            snappedSegment: null
+        };
+    }
+
+    const nearestSegment = findNearestSegment(graph, x, y, excludeSegmentIds, SNAP_THRESHOLD);
+    if (nearestSegment) {
+        return {
+            snappedX: nearestSegment.splitX,
+            snappedY: nearestSegment.splitY,
+            snappedNode: null,
+            snappedSegment: nearestSegment.segment
         };
     }
 
     return {
         snappedX: x,
         snappedY: y,
-        snappedNode: null
+        snappedNode: null,
+        snappedSegment: null
     };
 }
 
@@ -186,7 +200,7 @@ function finalizeNodeConnection(
     segmentId: string,
     excludeNodeIds: string[] = []
 ): string {
-    const snapResult = findSnappingTarget(graph, x, y, excludeNodeIds);
+    const snapResult = findSnappingTarget(graph, x, y, excludeNodeIds, [segmentId]);
 
     if (snapResult.snappedNode) {
         const existingNode = snapResult.snappedNode;
@@ -195,13 +209,12 @@ function finalizeNodeConnection(
         return existingNode.id;
     }
 
-    const nearestSegment = findNearestSegment(graph, x, y, [segmentId]);
-    if (nearestSegment) {
+    if (snapResult.snappedSegment) {
         const splitNodeId = splitSegmentAtPoint(
             graph,
-            nearestSegment.segment,
-            nearestSegment.splitX,
-            nearestSegment.splitY
+            snapResult.snappedSegment,
+            snapResult.snappedX,
+            snapResult.snappedY
         );
 
         const splitNode = graph.getNode(splitNodeId);
@@ -672,11 +685,12 @@ export function setupCanvas(graph: RoadGraph): Canvas {
             const isStartNode = target === startNode;
             const currentNodeId = isStartNode ? segment.startNodeId : segment.endNodeId;
             const otherNodeId = isStartNode ? segment.endNodeId : segment.startNodeId;
-            const nearbyNode = graph.findNearbyNode(left, top, 15);
 
-            if (nearbyNode && nearbyNode.id !== currentNodeId && nearbyNode.id !== otherNodeId) {
+            const snapResult = findSnappingTarget(graph, left, top, [currentNodeId, otherNodeId], [segment.id]);
+
+            if (snapResult.snappedNode) {
                 const oldNodeId = currentNodeId;
-                const newNodeId = nearbyNode.id;
+                const newNodeId = snapResult.snappedNode.id;
 
                 if (isStartNode) {
                     segment.startNodeId = newNodeId;
@@ -694,11 +708,42 @@ export function setupCanvas(graph: RoadGraph): Canvas {
                     }
                 }
 
-                if (!nearbyNode.connectedSegments.includes(segment.id)) {
-                    nearbyNode.connectedSegments.push(segment.id);
+                if (!snapResult.snappedNode.connectedSegments.includes(segment.id)) {
+                    snapResult.snappedNode.connectedSegments.push(segment.id);
                 }
 
-                graph.updateNode(newNodeId, nearbyNode);
+                graph.updateNode(newNodeId, snapResult.snappedNode);
+            } else if (snapResult.snappedSegment) {
+                const oldNodeId = currentNodeId;
+
+                const splitNodeId = splitSegmentAtPoint(
+                    graph,
+                    snapResult.snappedSegment,
+                    snapResult.snappedX,
+                    snapResult.snappedY
+                );
+
+                if (isStartNode) {
+                    segment.startNodeId = splitNodeId;
+                } else {
+                    segment.endNodeId = splitNodeId;
+                }
+
+                const oldNode = graph.getNode(oldNodeId);
+                if (oldNode) {
+                    oldNode.connectedSegments = oldNode.connectedSegments.filter(id => id !== segment.id);
+                    if (oldNode.connectedSegments.length === 0) {
+                        graph.deleteNode(oldNodeId);
+                    } else {
+                        graph.updateNode(oldNodeId, oldNode);
+                    }
+                }
+
+                const splitNode = graph.getNode(splitNodeId);
+                if (splitNode && !splitNode.connectedSegments.includes(segment.id)) {
+                    splitNode.connectedSegments.push(segment.id);
+                    graph.updateNode(splitNodeId, splitNode);
+                }
             } else {
                 const currentNode = graph.getNode(currentNodeId);
                 if (currentNode) {
