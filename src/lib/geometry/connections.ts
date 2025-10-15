@@ -65,28 +65,9 @@ export function updateConnectedSegments(
 			pathArray[1] = ['Q', cx, cy, x2, y2];
 			segment.path.set({ path: pathArray, dirty: true });
 		}
-
-		// Update debug hit area for this segment's midpoint
-		if (segment.path.debugHitArea) {
-			const t = 0.5;
-			const midX = (1 - t) * (1 - t) * x1 + 2 * (1 - t) * t * cx + t * t * x2;
-			const midY = (1 - t) * (1 - t) * y1 + 2 * (1 - t) * t * cy + t * t * y2;
-			segment.path.debugHitArea.set({
-				left: midX,
-				top: midY
-			});
-		}
 	}
 
 	graph.updateNode(nodeId, { x: newX, y: newY });
-
-	// Update debug hit area for the node
-	if (node.debugHitArea) {
-		node.debugHitArea.set({
-			left: newX,
-			top: newY
-		});
-	}
 }
 
 export function finalizeNodeConnection(
