@@ -1,4 +1,4 @@
-import { RoadGraph } from './graph';
+import { RoadGraph } from './graph/graph';
 import { setupCanvas } from './canvas';
 
 const graph = new RoadGraph();
