@@ -1,4 +1,4 @@
-import { Canvas, Line, Point, Circle } from 'fabric';
+import { Canvas, Path, Point, Circle } from 'fabric';
 import type { TPointerEventInfo } from 'fabric';
 import type { RoadGraph } from '../graph/graph';
 import { generateId } from '../graph/graph';
@@ -6,9 +6,10 @@ import { findSnappingTarget } from '../geometry/snapping';
 import { finalizeNodeConnection } from '../geometry/connections';
 import { createNode } from '../canvas-utils';
 import { ROAD_WIDTH } from '../types';
+import { createCurvedPathData, getDefaultControlPoint } from '../geometry/path-utils';
 
 let isDrawing: boolean = false;
-let currentLine: Line | null = null;
+let currentPath: Path | null = null;
 let startNode: Circle | null = null;
 let endNode: Circle | null = null;
 let cursorNode: Circle | null = null;
@@ -22,33 +23,42 @@ export function setupDrawMode(canvas: Canvas, graph: RoadGraph) {
 
     return {
         onMouseDown: (options: TPointerEventInfo) => {
+            console.log('Draw mode: mouseDown');
             if (cursorNode) {
                 cursorNode.set({ opacity: 0 });
             }
 
             isDrawing = true;
             const pointer = options.viewportPoint ?? new Point(0, 0);
+            console.log('Pointer:', pointer.x, pointer.y);
 
             const snapResult = findSnappingTarget(graph, pointer.x, pointer.y);
             const startX = snapResult.snappedX;
             const startY = snapResult.snappedY;
+            console.log('Start position:', startX, startY);
 
-            currentLine = new Line([startX, startY, startX, startY], {
+            const pathData = createCurvedPathData(startX, startY, startX, startY, startX, startY);
+            console.log('Path data:', pathData);
+            currentPath = new Path(pathData);
+            currentPath.set({
                 stroke: '#666666',
                 strokeWidth: ROAD_WIDTH,
+                fill: '',
                 selectable: false,
                 evented: true,
                 strokeLineCap: 'round',
                 hoverCursor: 'default',
-                strokeUniform: true
+                strokeUniform: true,
+                objectCaching: false
             });
 
             startNode = createNode(startX, startY, false);
             endNode = createNode(startX, startY, false);
 
-            canvas.add(currentLine);
+            canvas.add(currentPath);
             canvas.add(startNode);
             canvas.add(endNode);
+            console.log('Added path and nodes to canvas');
         },
 
         onMouseMove: (options: TPointerEventInfo) => {
@@ -64,13 +74,34 @@ export function setupDrawMode(canvas: Canvas, graph: RoadGraph) {
                 canvas.renderAll();
             }
 
-            if (isDrawing && currentLine && endNode) {
+            if (isDrawing && currentPath && endNode && startNode) {
                 const snapResult = findSnappingTarget(graph, pointer.x, pointer.y);
 
-                currentLine.set({
-                    x2: snapResult.snappedX,
-                    y2: snapResult.snappedY
+                const x1 = startNode.left ?? 0;
+                const y1 = startNode.top ?? 0;
+                const x2 = snapResult.snappedX;
+                const y2 = snapResult.snappedY;
+
+                // Remove old path and create new one
+                canvas.remove(currentPath);
+
+                const control = getDefaultControlPoint(x1, y1, x2, y2);
+                const newPathData = createCurvedPathData(x1, y1, x2, y2, control.x, control.y);
+
+                currentPath = new Path(newPathData);
+                currentPath.set({
+                    stroke: '#666666',
+                    strokeWidth: ROAD_WIDTH,
+                    fill: '',
+                    selectable: false,
+                    evented: true,
+                    strokeLineCap: 'round',
+                    hoverCursor: 'default',
+                    strokeUniform: true,
+                    objectCaching: false
                 });
+
+                canvas.add(currentPath);
 
                 endNode.set({
                     left: snapResult.snappedX,
@@ -83,38 +114,97 @@ export function setupDrawMode(canvas: Canvas, graph: RoadGraph) {
         },
 
         onMouseUp: () => {
+            console.log('Draw mode: mouseUp, isDrawing:', isDrawing);
             if (!isDrawing) return;
 
             isDrawing = false;
 
-            if (currentLine) {
-                const x1 = currentLine.x1 ?? 0;
-                const y1 = currentLine.y1 ?? 0;
-                const x2 = currentLine.x2 ?? 0;
-                const y2 = currentLine.y2 ?? 0;
+            if (currentPath) {
+                console.log('Current path exists');
+                const pathData = currentPath.path;
+                console.log('Path.path type:', typeof pathData);
+                console.log('Path.path value:', pathData);
+
+                let x1: number, y1: number, x2: number, y2: number;
+
+                // Parse the path (can be string or array)
+                if (typeof pathData === 'string') {
+                    const match = pathData.match(/M\s+([\d.]+)\s+([\d.]+)\s+Q\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)/);
+                    if (!match) {
+                        canvas.remove(currentPath);
+                        currentPath = null;
+                        if (startNode) canvas.remove(startNode);
+                        if (endNode) canvas.remove(endNode);
+                        startNode = null;
+                        endNode = null;
+                        if (cursorNode) cursorNode.set({ opacity: 0.5 });
+                        return;
+                    }
+                    x1 = parseFloat(match[1]);
+                    y1 = parseFloat(match[2]);
+                    x2 = parseFloat(match[5]);
+                    y2 = parseFloat(match[6]);
+                } else if (Array.isArray(pathData) && pathData.length >= 2) {
+                    const moveCmd = pathData[0];
+                    const quadCmd = pathData[1];
+                    if (!Array.isArray(moveCmd) || !Array.isArray(quadCmd)) {
+                        canvas.remove(currentPath);
+                        currentPath = null;
+                        if (startNode) canvas.remove(startNode);
+                        if (endNode) canvas.remove(endNode);
+                        startNode = null;
+                        endNode = null;
+                        if (cursorNode) cursorNode.set({ opacity: 0.5 });
+                        return;
+                    }
+                    x1 = moveCmd[1] as number;
+                    y1 = moveCmd[2] as number;
+                    x2 = quadCmd[3] as number;
+                    y2 = quadCmd[4] as number;
+                } else {
+                    canvas.remove(currentPath);
+                    currentPath = null;
+                    if (startNode) canvas.remove(startNode);
+                    if (endNode) canvas.remove(endNode);
+                    startNode = null;
+                    endNode = null;
+                    if (cursorNode) cursorNode.set({ opacity: 0.5 });
+                    return;
+                }
 
                 const dx = x2 - x1;
                 const dy = y2 - y1;
                 const length = Math.sqrt(dx * dx + dy * dy);
+                console.log('Segment length:', length, 'from', x1, y1, 'to', x2, y2);
 
                 if (length < 50) {
-                    canvas.remove(currentLine);
+                    console.log('Segment too short, removing');
+                    canvas.remove(currentPath);
                 } else {
+                    console.log('Creating segment');
                     const segmentId = generateId();
+                    const control = getDefaultControlPoint(x1, y1, x2, y2);
 
                     const startNodeId = finalizeNodeConnection(graph, x1, y1, segmentId);
                     const endNodeId = finalizeNodeConnection(graph, x2, y2, segmentId, [startNodeId]);
+
+                    // Don't reuse currentPath - it will be removed. Keep it on canvas.
+                    console.log('Segment created, path should remain on canvas');
 
                     graph.addSegment({
                         id: segmentId,
                         startNodeId: startNodeId,
                         endNodeId: endNodeId,
-                        line: currentLine
+                        path: currentPath,
+                        controlX: control.x,
+                        controlY: control.y
                     });
                 }
+
+                canvas.renderAll();
             }
 
-            currentLine = null;
+            currentPath = null;
 
             if (startNode) {
                 canvas.remove(startNode);
@@ -143,9 +233,9 @@ export function setupDrawMode(canvas: Canvas, graph: RoadGraph) {
                 canvas.remove(endNode);
                 endNode = null;
             }
-            if (currentLine) {
-                canvas.remove(currentLine);
-                currentLine = null;
+            if (currentPath) {
+                canvas.remove(currentPath);
+                currentPath = null;
             }
             isDrawing = false;
         }

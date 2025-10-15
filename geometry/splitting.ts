@@ -1,7 +1,8 @@
-import { Line } from 'fabric';
+import { Path } from 'fabric';
 import type { RoadGraph, NetworkSegment } from '../graph/graph';
 import { generateId } from '../graph/graph';
 import { ROAD_WIDTH } from '../types';
+import { createCurvedPathData, getDefaultControlPoint } from './path-utils';
 
 export function findNearestSegment(
     graph: RoadGraph,
@@ -16,38 +17,45 @@ export function findNearestSegment(
 
     for (const [segmentId, segment] of Array.from(graph.getAllSegments().entries())) {
         if (excludeSegmentIds.includes(segmentId)) continue;
-        if (!segment.line) continue;
+        if (!segment.path) continue;
 
-        const x1 = segment.line.x1 ?? 0;
-        const y1 = segment.line.y1 ?? 0;
-        const x2 = segment.line.x2 ?? 0;
-        const y2 = segment.line.y2 ?? 0;
+        const pathArray = segment.path.path;
+        if (!pathArray || pathArray.length === 0) continue;
 
-        const A = x - x1;
-        const B = y - y1;
-        const C = x2 - x1;
-        const D = y2 - y1;
+        const moveCmd = pathArray[0];
+        const quadCmd = pathArray[1];
+        if (!moveCmd || !quadCmd || !Array.isArray(moveCmd) || !Array.isArray(quadCmd)) continue;
 
-        const dot = A * C + B * D;
-        const lenSq = C * C + D * D;
+        const x1 = moveCmd[1] as number;
+        const y1 = moveCmd[2] as number;
+        const cx = quadCmd[1] as number;
+        const cy = quadCmd[2] as number;
+        const x2 = quadCmd[3] as number;
+        const y2 = quadCmd[4] as number;
 
-        if (lenSq === 0) continue;
+        let minDist = Infinity;
+        let bestPoint = { x, y };
+        let bestParam = 0;
 
-        const param = dot / lenSq;
+        for (let t = 0.1; t <= 0.9; t += 0.05) {
+            const qx = (1 - t) * (1 - t) * x1 + 2 * (1 - t) * t * cx + t * t * x2;
+            const qy = (1 - t) * (1 - t) * y1 + 2 * (1 - t) * t * cy + t * t * y2;
 
-        if (param < 0.1 || param > 0.9) continue;
+            const dx = x - qx;
+            const dy = y - qy;
+            const dist = Math.sqrt(dx * dx + dy * dy);
 
-        const projX = x1 + param * C;
-        const projY = y1 + param * D;
+            if (dist < minDist) {
+                minDist = dist;
+                bestPoint = { x: qx, y: qy };
+                bestParam = t;
+            }
+        }
 
-        const dx = x - projX;
-        const dy = y - projY;
-        const distance = Math.sqrt(dx * dx + dy * dy);
-
-        if (distance < closestDistance) {
-            closestDistance = distance;
+        if (minDist < closestDistance && bestParam >= 0.1 && bestParam <= 0.9) {
+            closestDistance = minDist;
             closestSegment = segment;
-            closestPoint = { x: projX, y: projY };
+            closestPoint = bestPoint;
         }
     }
 
@@ -91,34 +99,69 @@ export function splitSegmentAtPoint(
         graph.updateNode(originalEndNodeId, originalEndNode);
     }
 
-    if (segment.line) {
-        segment.line.set({ x2: x, y2: y });
+    if (segment.path) {
+        const canvas = segment.path.canvas;
+        const pathArray = segment.path.path;
+        if (pathArray && pathArray.length > 0 && canvas) {
+            const moveCmd = pathArray[0];
+            const quadCmd = pathArray[1];
+            if (moveCmd && quadCmd && Array.isArray(moveCmd) && Array.isArray(quadCmd)) {
+                const x1 = moveCmd[1] as number;
+                const y1 = moveCmd[2] as number;
 
-        const newLine = new Line([x, y, segment.line.x2 ?? 0, segment.line.y2 ?? 0], {
-            stroke: '#666666',
-            strokeWidth: ROAD_WIDTH,
-            selectable: false,
-            evented: true,
-            strokeLineCap: 'round',
-            hoverCursor: 'default',
-            strokeUniform: true
-        });
+                // Update first segment: remove old path and create new one
+                canvas.remove(segment.path);
 
-        const canvas = segment.line.canvas;
-        if (canvas) {
-            canvas.add(newLine);
+                const control1 = getDefaultControlPoint(x1, y1, x, y);
+                const pathData1 = createCurvedPathData(x1, y1, x, y, control1.x, control1.y);
+                const newPath1 = new Path(pathData1);
+                newPath1.set({
+                    stroke: '#666666',
+                    strokeWidth: ROAD_WIDTH,
+                    fill: '',
+                    selectable: false,
+                    evented: true,
+                    strokeLineCap: 'round',
+                    hoverCursor: 'default',
+                    strokeUniform: true,
+                    objectCaching: false
+                });
+                canvas.add(newPath1);
+                segment.path = newPath1;
+                segment.controlX = control1.x;
+                segment.controlY = control1.y;
+
+                // Create second segment
+                const endX = originalEndNode?.x ?? 0;
+                const endY = originalEndNode?.y ?? 0;
+
+                const control2 = getDefaultControlPoint(x, y, endX, endY);
+                const pathData2 = createCurvedPathData(x, y, endX, endY, control2.x, control2.y);
+                const newPath2 = new Path(pathData2);
+                newPath2.set({
+                    stroke: '#666666',
+                    strokeWidth: ROAD_WIDTH,
+                    fill: '',
+                    selectable: false,
+                    evented: true,
+                    strokeLineCap: 'round',
+                    hoverCursor: 'default',
+                    strokeUniform: true,
+                    objectCaching: false
+                });
+
+                canvas.add(newPath2);
+
+                graph.addSegment({
+                    id: newSegmentId,
+                    startNodeId: newNodeId,
+                    endNodeId: originalEndNodeId,
+                    path: newPath2,
+                    controlX: control2.x,
+                    controlY: control2.y
+                });
+            }
         }
-
-        const endX = originalEndNode?.x ?? (segment.line.x2 ?? 0);
-        const endY = originalEndNode?.y ?? (segment.line.y2 ?? 0);
-        newLine.set({ x2: endX, y2: endY });
-
-        graph.addSegment({
-            id: newSegmentId,
-            startNodeId: newNodeId,
-            endNodeId: originalEndNodeId,
-            line: newLine
-        });
     }
 
     return newNodeId;

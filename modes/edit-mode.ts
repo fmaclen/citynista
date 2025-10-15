@@ -1,18 +1,20 @@
-import { Canvas, Line, Point, Circle } from 'fabric';
+import { Canvas, Path, Point, Circle } from 'fabric';
 import type { TPointerEventInfo } from 'fabric';
 import type { RoadGraph } from '../graph/graph';
 import { findSnappingTarget } from '../geometry/snapping';
 import { updateConnectedSegments } from '../geometry/connections';
 import { splitSegmentAtPoint } from '../geometry/splitting';
-import { createNode, isPointNearLine } from '../canvas-utils';
+import { createNode, createBezierHandle, isPointNearPath } from '../canvas-utils';
+import { createCurvedPathData } from '../geometry/path-utils';
 
-let selectedLine: Line | null = null;
+let selectedPath: Path | null = null;
 let startNode: Circle | null = null;
 let endNode: Circle | null = null;
-let isDraggingLine: boolean = false;
+let bezierHandle: Circle | null = null;
+let isDraggingPath: boolean = false;
 let dragStartPoint: Point | null = null;
-let lineStartPos: { x1: number; y1: number; x2: number; y2: number } | null = null;
-let hoveredLine: Line | null = null;
+let pathStartPos: { x1: number; y1: number; x2: number; y2: number; cx: number; cy: number } | null = null;
+let hoveredPath: Path | null = null;
 let isMovingObject = false;
 
 function clearNodes(canvas: Canvas): void {
@@ -24,35 +26,50 @@ function clearNodes(canvas: Canvas): void {
         canvas.remove(endNode);
         endNode = null;
     }
-    if (selectedLine) {
-        selectedLine.set({ stroke: '#666666' });
+    if (bezierHandle) {
+        canvas.remove(bezierHandle);
+        bezierHandle = null;
     }
-    selectedLine = null;
+    if (selectedPath) {
+        selectedPath.set({ stroke: '#666666' });
+    }
+    selectedPath = null;
 }
 
-function showNodesForLine(canvas: Canvas, line: Line): void {
-    if (selectedLine === line && startNode && endNode) {
+function showNodesForPath(canvas: Canvas, _graph: RoadGraph, path: Path): void {
+    if (selectedPath === path && startNode && endNode && bezierHandle) {
         return;
     }
 
-    if (selectedLine) {
-        selectedLine.set({ stroke: '#666666' });
+    if (selectedPath) {
+        selectedPath.set({ stroke: '#666666' });
     }
 
     clearNodes(canvas);
-    selectedLine = line;
-    line.set({ stroke: '#999999' });
+    selectedPath = path;
+    path.set({ stroke: '#999999' });
 
-    const x1 = line.x1 ?? 0;
-    const y1 = line.y1 ?? 0;
-    const x2 = line.x2 ?? 0;
-    const y2 = line.y2 ?? 0;
+    const pathArray = path.path;
+    if (!pathArray || pathArray.length === 0) return;
+
+    const moveCmd = pathArray[0];
+    const quadCmd = pathArray[1];
+    if (!moveCmd || !quadCmd || !Array.isArray(moveCmd) || !Array.isArray(quadCmd)) return;
+
+    const x1 = moveCmd[1] as number;
+    const y1 = moveCmd[2] as number;
+    const cx = quadCmd[1] as number;
+    const cy = quadCmd[2] as number;
+    const x2 = quadCmd[3] as number;
+    const y2 = quadCmd[4] as number;
 
     startNode = createNode(x1, y1, true);
     endNode = createNode(x2, y2, true);
+    bezierHandle = createBezierHandle(cx, cy);
 
     canvas.add(startNode);
     canvas.add(endNode);
+    canvas.add(bezierHandle);
     canvas.renderAll();
 }
 
@@ -62,31 +79,41 @@ export function setupEditMode(canvas: Canvas, graph: RoadGraph) {
             const target = options.target;
             const pointer = options.viewportPoint ?? new Point(0, 0);
 
-            if (target && (target === startNode || target === endNode)) {
+            if (target && (target === startNode || target === endNode || target === bezierHandle)) {
                 return;
             }
 
-            if (selectedLine && isPointNearLine(pointer, selectedLine, 15)) {
-                isDraggingLine = true;
+            if (selectedPath && isPointNearPath(pointer, selectedPath, 15)) {
+                isDraggingPath = true;
                 dragStartPoint = new Point(pointer.x, pointer.y);
-                lineStartPos = {
-                    x1: selectedLine.x1 ?? 0,
-                    y1: selectedLine.y1 ?? 0,
-                    x2: selectedLine.x2 ?? 0,
-                    y2: selectedLine.y2 ?? 0
-                };
+
+                const pathArray = selectedPath.path;
+                if (pathArray && pathArray.length > 0) {
+                    const moveCmd = pathArray[0];
+                    const quadCmd = pathArray[1];
+                    if (moveCmd && quadCmd && Array.isArray(moveCmd) && Array.isArray(quadCmd)) {
+                        pathStartPos = {
+                            x1: moveCmd[1] as number,
+                            y1: moveCmd[2] as number,
+                            cx: quadCmd[1] as number,
+                            cy: quadCmd[2] as number,
+                            x2: quadCmd[3] as number,
+                            y2: quadCmd[4] as number
+                        };
+                    }
+                }
                 return;
             }
 
-            if (target && target instanceof Line) {
-                showNodesForLine(canvas, target);
+            if (target && target instanceof Path) {
+                showNodesForPath(canvas, graph, target);
                 return;
             }
 
             const allObjects = canvas.getObjects();
             for (const obj of allObjects) {
-                if (obj instanceof Line && isPointNearLine(pointer, obj, 15)) {
-                    showNodesForLine(canvas, obj);
+                if (obj instanceof Path && isPointNearPath(pointer, obj, 15)) {
+                    showNodesForPath(canvas, graph, obj);
                     return;
                 }
             }
@@ -97,40 +124,64 @@ export function setupEditMode(canvas: Canvas, graph: RoadGraph) {
         onMouseMove: (options: TPointerEventInfo) => {
             const pointer = options.viewportPoint ?? new Point(0, 0);
 
-            if (isDraggingLine && selectedLine && dragStartPoint && lineStartPos) {
+            if (isDraggingPath && selectedPath && dragStartPoint && pathStartPos) {
                 const dx = pointer.x - dragStartPoint.x;
                 const dy = pointer.y - dragStartPoint.y;
 
-                selectedLine.set({
-                    x1: lineStartPos.x1 + dx,
-                    y1: lineStartPos.y1 + dy,
-                    x2: lineStartPos.x2 + dx,
-                    y2: lineStartPos.y2 + dy
+                const newX1 = pathStartPos.x1 + dx;
+                const newY1 = pathStartPos.y1 + dy;
+                const newX2 = pathStartPos.x2 + dx;
+                const newY2 = pathStartPos.y2 + dy;
+                const newCX = pathStartPos.cx + dx;
+                const newCY = pathStartPos.cy + dy;
+
+                // Recreate the path
+                const segment = graph.findSegmentByPath(selectedPath);
+                canvas.remove(selectedPath);
+
+                const newPathData = createCurvedPathData(newX1, newY1, newX2, newY2, newCX, newCY);
+                const newPath = new Path(newPathData);
+                newPath.set({
+                    stroke: '#999999',
+                    strokeWidth: 8,
+                    fill: '',
+                    selectable: false,
+                    evented: true,
+                    strokeLineCap: 'round',
+                    hoverCursor: 'default',
+                    strokeUniform: true,
+                    objectCaching: false
                 });
+                canvas.add(newPath);
+                selectedPath = newPath;
+                if (segment) {
+                    segment.path = newPath;
+                }
 
                 if (startNode) {
                     startNode.set({
-                        left: lineStartPos.x1 + dx,
-                        top: lineStartPos.y1 + dy
+                        left: newX1,
+                        top: newY1
                     });
                 }
 
                 if (endNode) {
                     endNode.set({
-                        left: lineStartPos.x2 + dx,
-                        top: lineStartPos.y2 + dy
+                        left: newX2,
+                        top: newY2
                     });
                 }
 
-                const segment = graph.findSegmentByLine(selectedLine);
-                if (segment) {
-                    const newStartX = lineStartPos.x1 + dx;
-                    const newStartY = lineStartPos.y1 + dy;
-                    const newEndX = lineStartPos.x2 + dx;
-                    const newEndY = lineStartPos.y2 + dy;
+                if (bezierHandle) {
+                    bezierHandle.set({
+                        left: newCX,
+                        top: newCY
+                    });
+                }
 
-                    updateConnectedSegments(graph, segment.startNodeId, newStartX, newStartY);
-                    updateConnectedSegments(graph, segment.endNodeId, newEndX, newEndY);
+                if (segment) {
+                    updateConnectedSegments(graph, segment.startNodeId, newX1, newY1, segment.id);
+                    updateConnectedSegments(graph, segment.endNodeId, newX2, newY2, segment.id);
                 }
 
                 canvas.renderAll();
@@ -139,37 +190,37 @@ export function setupEditMode(canvas: Canvas, graph: RoadGraph) {
 
             const target = options.target;
 
-            if (target && (target === startNode || target === endNode)) {
+            if (target && (target === startNode || target === endNode || target === bezierHandle)) {
                 canvas.defaultCursor = 'move';
                 return;
             }
 
             const allObjects = canvas.getObjects();
-            let foundLine: Line | null = null;
+            let foundPath: Path | null = null;
 
             for (const obj of allObjects) {
-                if (obj instanceof Line && isPointNearLine(pointer, obj, 15)) {
-                    if (obj !== selectedLine) {
-                        foundLine = obj;
+                if (obj instanceof Path && isPointNearPath(pointer, obj, 15)) {
+                    if (obj !== selectedPath) {
+                        foundPath = obj;
                     }
                     break;
                 }
             }
 
-            if (foundLine !== hoveredLine) {
-                if (hoveredLine && hoveredLine !== selectedLine) {
-                    hoveredLine.set({ stroke: '#666666' });
+            if (foundPath !== hoveredPath) {
+                if (hoveredPath && hoveredPath !== selectedPath) {
+                    hoveredPath.set({ stroke: '#666666' });
                 }
-                if (foundLine && foundLine !== selectedLine) {
-                    foundLine.set({ stroke: '#999999' });
+                if (foundPath && foundPath !== selectedPath) {
+                    foundPath.set({ stroke: '#999999' });
                 }
-                hoveredLine = foundLine;
+                hoveredPath = foundPath;
                 canvas.renderAll();
             }
 
-            if (selectedLine && isPointNearLine(pointer, selectedLine, 15)) {
+            if (selectedPath && isPointNearPath(pointer, selectedPath, 15)) {
                 canvas.defaultCursor = 'move';
-            } else if (foundLine) {
+            } else if (foundPath) {
                 canvas.defaultCursor = 'pointer';
             } else {
                 canvas.defaultCursor = 'default';
@@ -177,16 +228,19 @@ export function setupEditMode(canvas: Canvas, graph: RoadGraph) {
         },
 
         onMouseUp: () => {
-            if (isDraggingLine) {
-                isDraggingLine = false;
+            if (isDraggingPath) {
+                isDraggingPath = false;
                 dragStartPoint = null;
-                lineStartPos = null;
+                pathStartPos = null;
 
                 if (startNode) {
                     startNode.setCoords();
                 }
                 if (endNode) {
                     endNode.setCoords();
+                }
+                if (bezierHandle) {
+                    bezierHandle.setCoords();
                 }
 
                 canvas.renderAll();
@@ -195,31 +249,86 @@ export function setupEditMode(canvas: Canvas, graph: RoadGraph) {
 
         onObjectMoving: (options: any) => {
             const target = options.target;
-            if (!target || !selectedLine) return;
+            if (!target || !selectedPath) return;
 
             isMovingObject = true;
 
             let left = target.left ?? 0;
             let top = target.top ?? 0;
 
-            const segment = graph.findSegmentByLine(selectedLine);
+            const segment = graph.findSegmentByPath(selectedPath);
             if (!segment) return;
 
-            const currentNodeId = target === startNode ? segment.startNodeId : segment.endNodeId;
-            const otherNodeId = target === startNode ? segment.endNodeId : segment.startNodeId;
+            const pathData = selectedPath.path;
+            let x1: number, y1: number, cx: number, cy: number, x2: number, y2: number;
 
-            const snapResult = findSnappingTarget(graph, left, top, [currentNodeId, otherNodeId]);
-            left = snapResult.snappedX;
-            top = snapResult.snappedY;
-            target.set({ left, top });
-
-            if (target === startNode) {
-                selectedLine.set({ x1: left, y1: top });
-            } else if (target === endNode) {
-                selectedLine.set({ x2: left, y2: top });
+            // Parse current path
+            if (typeof pathData === 'string') {
+                const match = pathData.match(/M\s+([\d.]+)\s+([\d.]+)\s+Q\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)/);
+                if (!match) return;
+                x1 = parseFloat(match[1]);
+                y1 = parseFloat(match[2]);
+                cx = parseFloat(match[3]);
+                cy = parseFloat(match[4]);
+                x2 = parseFloat(match[5]);
+                y2 = parseFloat(match[6]);
+            } else if (Array.isArray(pathData) && pathData.length >= 2) {
+                const moveCmd = pathData[0];
+                const quadCmd = pathData[1];
+                if (!Array.isArray(moveCmd) || !Array.isArray(quadCmd)) return;
+                x1 = moveCmd[1] as number;
+                y1 = moveCmd[2] as number;
+                cx = quadCmd[1] as number;
+                cy = quadCmd[2] as number;
+                x2 = quadCmd[3] as number;
+                y2 = quadCmd[4] as number;
+            } else {
+                return;
             }
 
-            updateConnectedSegments(graph, currentNodeId, left, top);
+            if (target === bezierHandle) {
+                cx = left;
+                cy = top;
+                segment.controlX = left;
+                segment.controlY = top;
+            } else {
+                const currentNodeId = target === startNode ? segment.startNodeId : segment.endNodeId;
+                const otherNodeId = target === startNode ? segment.endNodeId : segment.startNodeId;
+
+                const snapResult = findSnappingTarget(graph, left, top, [currentNodeId, otherNodeId]);
+                left = snapResult.snappedX;
+                top = snapResult.snappedY;
+                target.set({ left, top });
+
+                if (target === startNode) {
+                    x1 = left;
+                    y1 = top;
+                } else if (target === endNode) {
+                    x2 = left;
+                    y2 = top;
+                }
+
+                updateConnectedSegments(graph, currentNodeId, left, top, segment.id);
+            }
+
+            // Recreate the path
+            canvas.remove(selectedPath);
+            const newPathData = createCurvedPathData(x1, y1, x2, y2, cx, cy);
+            const newPath = new Path(newPathData);
+            newPath.set({
+                stroke: '#999999',
+                strokeWidth: 8,
+                fill: '',
+                selectable: false,
+                evented: true,
+                strokeLineCap: 'round',
+                hoverCursor: 'default',
+                strokeUniform: true,
+                objectCaching: false
+            });
+            canvas.add(newPath);
+            selectedPath = newPath;
+            segment.path = newPath;
 
             canvas.renderAll();
         },
@@ -229,10 +338,14 @@ export function setupEditMode(canvas: Canvas, graph: RoadGraph) {
                 isMovingObject = false;
 
                 const target = options.target;
-                if (!target || !selectedLine) return;
+                if (!target || !selectedPath) return;
 
-                const segment = graph.findSegmentByLine(selectedLine);
+                const segment = graph.findSegmentByPath(selectedPath);
                 if (!segment) return;
+
+                if (target === bezierHandle) {
+                    return;
+                }
 
                 const left = target.left ?? 0;
                 const top = target.top ?? 0;
@@ -318,8 +431,8 @@ export function setupEditMode(canvas: Canvas, graph: RoadGraph) {
         },
 
         onKeyDown: (event: KeyboardEvent) => {
-            if ((event.key === 'Delete' || event.key === 'Backspace') && selectedLine) {
-                const segment = graph.findSegmentByLine(selectedLine);
+            if ((event.key === 'Delete' || event.key === 'Backspace') && selectedPath) {
+                const segment = graph.findSegmentByPath(selectedPath);
 
                 if (segment) {
                     const startNetNode = graph.getNode(segment.startNodeId);
@@ -342,20 +455,20 @@ export function setupEditMode(canvas: Canvas, graph: RoadGraph) {
                     graph.deleteSegment(segment.id);
                 }
 
-                canvas.remove(selectedLine);
+                canvas.remove(selectedPath);
                 clearNodes(canvas);
             }
         },
 
         cleanup: () => {
             clearNodes(canvas);
-            if (hoveredLine) {
-                hoveredLine.set({ stroke: '#666666' });
-                hoveredLine = null;
+            if (hoveredPath) {
+                hoveredPath.set({ stroke: '#666666' });
+                hoveredPath = null;
             }
-            isDraggingLine = false;
+            isDraggingPath = false;
             dragStartPoint = null;
-            lineStartPos = null;
+            pathStartPos = null;
             isMovingObject = false;
         }
     };

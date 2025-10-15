@@ -1,4 +1,4 @@
-import type { Line, Circle } from 'fabric';
+import type { Path, Circle } from 'fabric';
 
 export interface NetworkNode {
     id: string;
@@ -12,7 +12,9 @@ export interface NetworkSegment {
     id: string;
     startNodeId: string;
     endNodeId: string;
-    line?: Line;
+    path?: Path;
+    controlX: number;
+    controlY: number;
 }
 
 export function generateId(): string {
@@ -89,8 +91,8 @@ export class RoadGraph {
         return this.segments.get(id);
     }
 
-    findSegmentByLine(line: Line): NetworkSegment | undefined {
-        return Array.from(this.segments.values()).find(s => s.line === line);
+    findSegmentByPath(path: Path): NetworkSegment | undefined {
+        return Array.from(this.segments.values()).find(s => s.path === path);
     }
 
     findNearbyNode(x: number, y: number, threshold: number = 15): NetworkNode | undefined {

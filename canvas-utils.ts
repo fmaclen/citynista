@@ -1,4 +1,4 @@
-import { Circle, Line, Point } from 'fabric';
+import { Circle, Path, Point } from 'fabric';
 import { NODE_RADIUS } from './types';
 
 export function createNode(x: number, y: number, selectable: boolean = true): Circle {
@@ -16,41 +16,51 @@ export function createNode(x: number, y: number, selectable: boolean = true): Ci
     });
 }
 
-export function isPointNearLine(pointer: Point, line: Line, threshold: number = 10): boolean {
-    const x1 = line.x1 ?? 0;
-    const y1 = line.y1 ?? 0;
-    const x2 = line.x2 ?? 0;
-    const y2 = line.y2 ?? 0;
+export function createBezierHandle(x: number, y: number): Circle {
+    return new Circle({
+        left: x,
+        top: y,
+        radius: NODE_RADIUS * 0.7,
+        fill: 'transparent',
+        stroke: 'white',
+        strokeWidth: 2,
+        originX: 'center',
+        originY: 'center',
+        selectable: true,
+        evented: true,
+        hasControls: false,
+        hasBorders: false
+    });
+}
 
-    const A = pointer.x - x1;
-    const B = pointer.y - y1;
-    const C = x2 - x1;
-    const D = y2 - y1;
+export function isPointNearPath(pointer: Point, path: Path, threshold: number = 10): boolean {
+    const pathArray = path.path;
+    if (!pathArray || pathArray.length === 0) return false;
 
-    const dot = A * C + B * D;
-    const lenSq = C * C + D * D;
-    let param = -1;
+    const moveCmd = pathArray[0];
+    const quadCmd = pathArray[1];
+    if (!moveCmd || !quadCmd || !Array.isArray(moveCmd) || !Array.isArray(quadCmd)) return false;
 
-    if (lenSq !== 0) {
-        param = dot / lenSq;
+    const x1 = moveCmd[1] as number;
+    const y1 = moveCmd[2] as number;
+    const cx = quadCmd[1] as number;
+    const cy = quadCmd[2] as number;
+    const x2 = quadCmd[3] as number;
+    const y2 = quadCmd[4] as number;
+
+    let minDistance = Infinity;
+    for (let t = 0; t <= 1; t += 0.05) {
+        const x = (1 - t) * (1 - t) * x1 + 2 * (1 - t) * t * cx + t * t * x2;
+        const y = (1 - t) * (1 - t) * y1 + 2 * (1 - t) * t * cy + t * t * y2;
+
+        const dx = pointer.x - x;
+        const dy = pointer.y - y;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+
+        if (distance < minDistance) {
+            minDistance = distance;
+        }
     }
 
-    let xx: number, yy: number;
-
-    if (param < 0) {
-        xx = x1;
-        yy = y1;
-    } else if (param > 1) {
-        xx = x2;
-        yy = y2;
-    } else {
-        xx = x1 + param * C;
-        yy = y1 + param * D;
-    }
-
-    const dx = pointer.x - xx;
-    const dy = pointer.y - yy;
-    const distance = Math.sqrt(dx * dx + dy * dy);
-
-    return distance <= threshold;
+    return minDistance <= threshold;
 }

@@ -1,26 +1,88 @@
+import { Path } from 'fabric';
 import type { RoadGraph } from '../graph/graph';
 import { generateId } from '../graph/graph';
 import { findSnappingTarget } from './snapping';
 import { splitSegmentAtPoint } from './splitting';
+import { createCurvedPathData } from './path-utils';
+import { ROAD_WIDTH } from '../types';
 
 export function updateConnectedSegments(
     graph: RoadGraph,
     nodeId: string,
     newX: number,
-    newY: number
+    newY: number,
+    excludeSegmentId?: string
 ): void {
     const node = graph.getNode(nodeId);
     if (!node) return;
 
     for (const segmentId of node.connectedSegments) {
-        const segment = graph.getSegment(segmentId);
-        if (!segment || !segment.line) continue;
-
-        if (segment.startNodeId === nodeId) {
-            segment.line.set({ x1: newX, y1: newY });
-        } else if (segment.endNodeId === nodeId) {
-            segment.line.set({ x2: newX, y2: newY });
+        if (excludeSegmentId && segmentId === excludeSegmentId) {
+            continue;
         }
+
+        const segment = graph.getSegment(segmentId);
+        if (!segment || !segment.path) continue;
+
+        const canvas = segment.path.canvas;
+        if (!canvas) continue;
+
+        const pathData = segment.path.path;
+        let x1: number, y1: number, cx: number, cy: number, x2: number, y2: number;
+
+        // Parse current path
+        if (typeof pathData === 'string') {
+            const match = pathData.match(/M\s+([\d.]+)\s+([\d.]+)\s+Q\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)/);
+            if (!match) continue;
+            x1 = parseFloat(match[1]);
+            y1 = parseFloat(match[2]);
+            cx = parseFloat(match[3]);
+            cy = parseFloat(match[4]);
+            x2 = parseFloat(match[5]);
+            y2 = parseFloat(match[6]);
+        } else if (Array.isArray(pathData) && pathData.length >= 2) {
+            const moveCmd = pathData[0];
+            const quadCmd = pathData[1];
+            if (!Array.isArray(moveCmd) || !Array.isArray(quadCmd)) continue;
+            x1 = moveCmd[1] as number;
+            y1 = moveCmd[2] as number;
+            cx = quadCmd[1] as number;
+            cy = quadCmd[2] as number;
+            x2 = quadCmd[3] as number;
+            y2 = quadCmd[4] as number;
+        } else {
+            continue;
+        }
+
+        // Update coordinates
+        if (segment.startNodeId === nodeId) {
+            x1 = newX;
+            y1 = newY;
+        }
+        if (segment.endNodeId === nodeId) {
+            x2 = newX;
+            y2 = newY;
+        }
+
+        // Remove old path and create new one
+        canvas.remove(segment.path);
+
+        const newPathData = createCurvedPathData(x1, y1, x2, y2, cx, cy);
+        const newPath = new Path(newPathData);
+        newPath.set({
+            stroke: '#666666',
+            strokeWidth: ROAD_WIDTH,
+            fill: '',
+            selectable: false,
+            evented: true,
+            strokeLineCap: 'round',
+            hoverCursor: 'default',
+            strokeUniform: true,
+            objectCaching: false
+        });
+
+        canvas.add(newPath);
+        segment.path = newPath;
     }
 
     graph.updateNode(nodeId, { x: newX, y: newY });
