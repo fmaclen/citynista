@@ -1,25 +1,27 @@
 <script lang="ts">
 	import SplineIcon from '@lucide/svelte/icons/spline';
-	import { Toggle } from '$lib/components/ui/toggle';
-	import { setMode } from '$lib/canvas';
+	import { Button } from '$lib/components/ui/button';
+	import { getGraphContext } from '$lib/context/graph.svelte';
+	import { cn } from '$lib/utils';
 
-	let drawMode = $state(false);
+	const ctx = getGraphContext();
+	let isActive = $derived(ctx.mode === 'draw');
 
-	$effect(() => {
-		if (drawMode) {
-			setMode('draw');
+	function handleClick() {
+		if (!isActive) {
+			ctx.mode = 'draw';
 		} else {
-			setMode(null);
+			ctx.mode = undefined;
 		}
-	});
+	}
 </script>
 
-<Toggle
+<Button
 	variant="outline"
-	size="lg"
-	bind:pressed={drawMode}
+	size="icon-lg"
+	onclick={handleClick}
 	aria-label="Draw Mode"
-	class="border-muted-foreground"
+	class={cn('border-muted-foreground', isActive && 'bg-accent text-accent-foreground')}
 >
-	<SplineIcon class="size-5 text-muted-foreground" />
-</Toggle>
+	<SplineIcon class="size-5" />
+</Button>

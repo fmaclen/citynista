@@ -1,5 +1,4 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
 	import EditorToolbar from '$lib/components/EditorToolbar.svelte';
 	import { setGraphContext } from '$lib/context/graph.svelte';
 	import { Graph } from '$lib/graph/graph.svelte';
@@ -9,8 +8,10 @@
 	let canvasElement: HTMLCanvasElement;
 	const ctx = setGraphContext();
 
-	onMount(() => {
-		const canvas = setupCanvas(ctx.graph);
+	$effect(() => {
+		if (!canvasElement) return;
+
+		const canvas = setupCanvas(ctx.graph, canvasElement);
 		ctx.setCanvas(canvas);
 
 		const savedData = Graph.load();
@@ -28,11 +29,3 @@
 	<EditorToolbar />
 	<canvas id="canvas" bind:this={canvasElement}></canvas>
 </div>
-
-<style>
-	:global(body) {
-		margin: 0;
-		padding: 0;
-		overflow: hidden;
-	}
-</style>

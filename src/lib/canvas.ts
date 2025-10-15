@@ -10,8 +10,8 @@ let editModeHandlers: ReturnType<typeof setupEditMode> | null = null;
 let canvasInstance: Canvas | null = null;
 let graphInstance: Graph | null = null;
 
-export function setupCanvas(graph: Graph): Canvas {
-	const canvas = new Canvas('canvas', {
+export function setupCanvas(graph: Graph, canvasElement: HTMLCanvasElement): Canvas {
+	const canvas = new Canvas(canvasElement, {
 		width: window.innerWidth,
 		height: window.innerHeight,
 		backgroundColor: '#2a2a2a',
@@ -76,27 +76,7 @@ export function setupCanvas(graph: Graph): Canvas {
 	return canvas;
 }
 
-export function toggleMode(): void {
-	if (!canvasInstance || !graphInstance) return;
-
-	const newMode: Mode = currentMode === 'draw' ? 'edit' : 'draw';
-
-	if (currentMode === 'draw' && drawModeHandlers) {
-		drawModeHandlers.cleanup();
-	} else if (currentMode === 'edit' && editModeHandlers) {
-		editModeHandlers.cleanup();
-	}
-
-	currentMode = newMode;
-
-	if (currentMode === 'draw') {
-		drawModeHandlers = setupDrawMode(canvasInstance, graphInstance);
-	} else {
-		editModeHandlers = setupEditMode(canvasInstance, graphInstance);
-	}
-}
-
-export function setMode(mode: Mode | null): void {
+export function setMode(mode: 'draw' | 'edit' | undefined): void {
 	if (!canvasInstance || !graphInstance) return;
 
 	if (currentMode === 'draw' && drawModeHandlers) {
@@ -113,11 +93,5 @@ export function setMode(mode: Mode | null): void {
 	} else if (mode === 'edit') {
 		currentMode = 'edit';
 		editModeHandlers = setupEditMode(canvasInstance, graphInstance);
-	} else {
-		currentMode = 'edit';
 	}
-}
-
-export function getCurrentMode(): Mode {
-	return currentMode;
 }

@@ -1,5 +1,6 @@
 import { getContext, setContext } from 'svelte';
 import { Graph } from '$lib/graph/graph.svelte';
+import { setMode } from '$lib/canvas';
 import type { Canvas } from 'fabric';
 
 const CONTEXT_KEY = 'graph';
@@ -7,9 +8,14 @@ const CONTEXT_KEY = 'graph';
 export class GraphContext {
 	graph: Graph;
 	canvas: Canvas | null = null;
+	mode = $state<'draw' | 'edit' | undefined>(undefined);
 
 	constructor() {
 		this.graph = new Graph();
+
+		$effect(() => {
+			setMode(this.mode);
+		});
 	}
 
 	setCanvas(canvas: Canvas) {

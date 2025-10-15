@@ -1,25 +1,27 @@
 <script lang="ts">
 	import SquareDashedMousePointerIcon from '@lucide/svelte/icons/square-dashed-mouse-pointer';
-	import { Toggle } from '$lib/components/ui/toggle';
-	import { setMode } from '$lib/canvas';
+	import { Button } from '$lib/components/ui/button';
+	import { getGraphContext } from '$lib/context/graph.svelte';
+	import { cn } from '$lib/utils';
 
-	let selectMode = $state(false);
+	const ctx = getGraphContext();
+	let isActive = $derived(ctx.mode === 'edit');
 
-	$effect(() => {
-		if (selectMode) {
-			setMode('edit');
+	function handleClick() {
+		if (!isActive) {
+			ctx.mode = 'edit';
 		} else {
-			setMode(null);
+			ctx.mode = undefined;
 		}
-	});
+	}
 </script>
 
-<Toggle
+<Button
 	variant="outline"
-	size="lg"
-	bind:pressed={selectMode}
+	size="icon-lg"
+	onclick={handleClick}
 	aria-label="Select Mode"
-	class="border-muted-foreground"
+	class={cn('border-muted-foreground', isActive && 'bg-accent text-accent-foreground')}
 >
-	<SquareDashedMousePointerIcon class="size-5 text-muted-foreground" />
-</Toggle>
+	<SquareDashedMousePointerIcon class="size-5" />
+</Button>
