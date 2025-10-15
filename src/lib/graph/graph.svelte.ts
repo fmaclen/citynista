@@ -1,4 +1,5 @@
 import type { Path, Circle } from 'fabric';
+import { SvelteMap } from 'svelte/reactivity';
 
 export interface NetworkNode {
 	id: string;
@@ -45,15 +46,15 @@ export function generateId(): string {
 export class Graph {
 	private static STORAGE_KEY = 'citynista-graph';
 
-	nodes = $state<Map<string, NetworkNode>>(new Map());
-	segments = $state<Map<string, NetworkSegment>>(new Map());
+	nodes = $state<SvelteMap<string, NetworkNode>>(new SvelteMap());
+	segments = $state<SvelteMap<string, NetworkSegment>>(new SvelteMap());
 
 	constructor() {
 		// Auto-save and log on changes
 		$effect(() => {
 			// Track changes to nodes and segments
-			this.nodes.size;
-			this.segments.size;
+			void this.nodes.size;
+			void this.segments.size;
 
 			// Schedule save and log
 			requestAnimationFrame(() => {
@@ -65,8 +66,6 @@ export class Graph {
 
 	addNode(node: NetworkNode): void {
 		this.nodes.set(node.id, node);
-		// Trigger reactivity
-		this.nodes = new Map(this.nodes);
 	}
 
 	getNode(id: string): NetworkNode | undefined {
@@ -77,21 +76,15 @@ export class Graph {
 		const node = this.nodes.get(id);
 		if (node) {
 			Object.assign(node, updates);
-			// Trigger reactivity
-			this.nodes = new Map(this.nodes);
 		}
 	}
 
 	deleteNode(id: string): void {
 		this.nodes.delete(id);
-		// Trigger reactivity
-		this.nodes = new Map(this.nodes);
 	}
 
 	addSegment(segment: NetworkSegment): void {
 		this.segments.set(segment.id, segment);
-		// Trigger reactivity
-		this.segments = new Map(this.segments);
 	}
 
 	getSegment(id: string): NetworkSegment | undefined {
@@ -102,8 +95,6 @@ export class Graph {
 		const segment = this.segments.get(id);
 		if (segment) {
 			Object.assign(segment, updates);
-			// Trigger reactivity
-			this.segments = new Map(this.segments);
 		}
 	}
 
@@ -132,8 +123,6 @@ export class Graph {
 		}
 
 		this.segments.delete(id);
-		// Trigger reactivity
-		this.segments = new Map(this.segments);
 	}
 
 	findNearbyNode(x: number, y: number, threshold: number = 15): NetworkNode | undefined {
@@ -152,11 +141,11 @@ export class Graph {
 		return Array.from(this.segments.values()).find((s) => s.path === path);
 	}
 
-	getAllSegments(): Map<string, NetworkSegment> {
+	getAllSegments(): SvelteMap<string, NetworkSegment> {
 		return this.segments;
 	}
 
-	getAllNodes(): Map<string, NetworkNode> {
+	getAllNodes(): SvelteMap<string, NetworkNode> {
 		return this.nodes;
 	}
 
@@ -222,9 +211,6 @@ export class Graph {
 	clear(): void {
 		this.nodes.clear();
 		this.segments.clear();
-		// Trigger reactivity
-		this.nodes = new Map(this.nodes);
-		this.segments = new Map(this.segments);
 	}
 
 	log(): void {

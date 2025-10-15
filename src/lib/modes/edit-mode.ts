@@ -10,7 +10,6 @@ import {
 	applyRelativeControlPoint,
 	parsePathData
 } from '../geometry/path-utils';
-import { SNAP_THRESHOLD } from '../types';
 
 let selectedPath: Path | null = null;
 let startNode: Circle | null = null;
