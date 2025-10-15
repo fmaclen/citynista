@@ -3,3 +3,7 @@
 # Citynista
 
 ### A city-building tool protoype
+
+```sh
+bun run dev
+```
