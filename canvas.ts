@@ -291,15 +291,41 @@ export function setupCanvas(graph: RoadGraph): Canvas {
 
             const segment = graph.findSegmentByLine(selectedLine);
             if (segment) {
-                graph.updateNode(segment.startNodeId, {
-                    x: lineStartPos.x1 + dx,
-                    y: lineStartPos.y1 + dy
-                });
+                const newStartX = lineStartPos.x1 + dx;
+                const newStartY = lineStartPos.y1 + dy;
+                const newEndX = lineStartPos.x2 + dx;
+                const newEndY = lineStartPos.y2 + dy;
 
-                graph.updateNode(segment.endNodeId, {
-                    x: lineStartPos.x2 + dx,
-                    y: lineStartPos.y2 + dy
-                });
+                const startNode = graph.getNode(segment.startNodeId);
+                if (startNode) {
+                    for (const segmentId of startNode.connectedSegments) {
+                        const connectedSegment = graph.getSegment(segmentId);
+                        if (!connectedSegment || !connectedSegment.line) continue;
+
+                        if (connectedSegment.startNodeId === segment.startNodeId) {
+                            connectedSegment.line.set({ x1: newStartX, y1: newStartY });
+                        } else if (connectedSegment.endNodeId === segment.startNodeId) {
+                            connectedSegment.line.set({ x2: newStartX, y2: newStartY });
+                        }
+                    }
+                }
+
+                const endNode = graph.getNode(segment.endNodeId);
+                if (endNode) {
+                    for (const segmentId of endNode.connectedSegments) {
+                        const connectedSegment = graph.getSegment(segmentId);
+                        if (!connectedSegment || !connectedSegment.line) continue;
+
+                        if (connectedSegment.startNodeId === segment.endNodeId) {
+                            connectedSegment.line.set({ x1: newEndX, y1: newEndY });
+                        } else if (connectedSegment.endNodeId === segment.endNodeId) {
+                            connectedSegment.line.set({ x2: newEndX, y2: newEndY });
+                        }
+                    }
+                }
+
+                graph.updateNode(segment.startNodeId, { x: newStartX, y: newStartY });
+                graph.updateNode(segment.endNodeId, { x: newEndX, y: newEndY });
             }
 
             canvas.renderAll();
@@ -477,6 +503,20 @@ export function setupCanvas(graph: RoadGraph): Canvas {
             selectedLine.set({ x2: left, y2: top });
         }
 
+        const currentNode = graph.getNode(currentNodeId);
+        if (currentNode) {
+            for (const segmentId of currentNode.connectedSegments) {
+                const connectedSegment = graph.getSegment(segmentId);
+                if (!connectedSegment || !connectedSegment.line) continue;
+
+                if (connectedSegment.startNodeId === currentNodeId) {
+                    connectedSegment.line.set({ x1: left, y1: top });
+                } else if (connectedSegment.endNodeId === currentNodeId) {
+                    connectedSegment.line.set({ x2: left, y2: top });
+                }
+            }
+        }
+
         canvas.renderAll();
     });
 
@@ -513,6 +553,8 @@ export function setupCanvas(graph: RoadGraph): Canvas {
                     oldNode.connectedSegments = oldNode.connectedSegments.filter(id => id !== segment.id);
                     if (oldNode.connectedSegments.length === 0) {
                         graph.deleteNode(oldNodeId);
+                    } else {
+                        graph.updateNode(oldNodeId, oldNode);
                     }
                 }
 
@@ -521,9 +563,20 @@ export function setupCanvas(graph: RoadGraph): Canvas {
                 }
 
                 graph.updateNode(newNodeId, nearbyNode);
-                graph.updateNode(oldNodeId, oldNode);
             } else {
-                graph.updateNode(currentNodeId, { x: left, y: top });
+                const currentNode = graph.getNode(currentNodeId);
+                if (currentNode) {
+                    for (const segmentId of currentNode.connectedSegments) {
+                        const connectedSegment = graph.getSegment(segmentId);
+                        if (!connectedSegment) continue;
+
+                        if (connectedSegment.startNodeId === currentNodeId) {
+                            graph.updateNode(currentNodeId, { x: left, y: top });
+                        } else if (connectedSegment.endNodeId === currentNodeId) {
+                            graph.updateNode(currentNodeId, { x: left, y: top });
+                        }
+                    }
+                }
             }
         }
     });
