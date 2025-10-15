@@ -23,22 +23,18 @@ export function setupDrawMode(canvas: Canvas, graph: RoadGraph) {
 
     return {
         onMouseDown: (options: TPointerEventInfo) => {
-            console.log('Draw mode: mouseDown');
             if (cursorNode) {
                 cursorNode.set({ opacity: 0 });
             }
 
             isDrawing = true;
             const pointer = options.viewportPoint ?? new Point(0, 0);
-            console.log('Pointer:', pointer.x, pointer.y);
 
             const snapResult = findSnappingTarget(graph, pointer.x, pointer.y);
             const startX = snapResult.snappedX;
             const startY = snapResult.snappedY;
-            console.log('Start position:', startX, startY);
 
             const pathData = createCurvedPathData(startX, startY, startX, startY, startX, startY);
-            console.log('Path data:', pathData);
             currentPath = new Path(pathData);
             currentPath.set({
                 stroke: '#666666',
@@ -58,7 +54,6 @@ export function setupDrawMode(canvas: Canvas, graph: RoadGraph) {
             canvas.add(currentPath);
             canvas.add(startNode);
             canvas.add(endNode);
-            console.log('Added path and nodes to canvas');
         },
 
         onMouseMove: (options: TPointerEventInfo) => {
@@ -114,16 +109,12 @@ export function setupDrawMode(canvas: Canvas, graph: RoadGraph) {
         },
 
         onMouseUp: () => {
-            console.log('Draw mode: mouseUp, isDrawing:', isDrawing);
             if (!isDrawing) return;
 
             isDrawing = false;
 
             if (currentPath) {
-                console.log('Current path exists');
                 const pathData = currentPath.path;
-                console.log('Path.path type:', typeof pathData);
-                console.log('Path.path value:', pathData);
 
                 let x1: number, y1: number, x2: number, y2: number;
 
@@ -175,21 +166,15 @@ export function setupDrawMode(canvas: Canvas, graph: RoadGraph) {
                 const dx = x2 - x1;
                 const dy = y2 - y1;
                 const length = Math.sqrt(dx * dx + dy * dy);
-                console.log('Segment length:', length, 'from', x1, y1, 'to', x2, y2);
 
                 if (length < 50) {
-                    console.log('Segment too short, removing');
                     canvas.remove(currentPath);
                 } else {
-                    console.log('Creating segment');
                     const segmentId = generateId();
                     const control = getDefaultControlPoint(x1, y1, x2, y2);
 
                     const startNodeId = finalizeNodeConnection(graph, x1, y1, segmentId);
                     const endNodeId = finalizeNodeConnection(graph, x2, y2, segmentId, [startNodeId]);
-
-                    // Don't reuse currentPath - it will be removed. Keep it on canvas.
-                    console.log('Segment created, path should remain on canvas');
 
                     graph.addSegment({
                         id: segmentId,
