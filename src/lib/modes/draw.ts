@@ -18,6 +18,7 @@ export function setupDraw(editor: Editor) {
 	let draftPath: Path | null = null;
 	let draftStartNode: Circle | null = null;
 	let draftEndNode: Circle | null = null;
+	let snapIndicator: Circle | null = null;
 
 	const handleKeyDown = (e: KeyboardEvent) => {
 		if (e.key === 'Escape') {
@@ -30,6 +31,7 @@ export function setupDraw(editor: Editor) {
 			if (draftPath) editor.canvas.remove(draftPath);
 			if (draftStartNode) editor.canvas.remove(draftStartNode);
 			if (draftEndNode) editor.canvas.remove(draftEndNode);
+			if (snapIndicator) editor.canvas.remove(snapIndicator);
 			editor.canvas.renderAll();
 		}
 
@@ -46,6 +48,7 @@ export function setupDraw(editor: Editor) {
 		draftPath = null;
 		draftStartNode = null;
 		draftEndNode = null;
+		snapIndicator = null;
 	};
 
 	return {
@@ -165,10 +168,43 @@ export function setupDraw(editor: Editor) {
 		},
 
 		onMouseMove(e: TPointerEventInfo) {
-			if (!isDrawing || !draftPath || !draftEndNode || !editor.canvas) return;
-
 			const pointer = e.viewportPoint;
-			if (!pointer) return;
+			if (!pointer || !editor.canvas) return;
+
+			if (!isDrawing) {
+				// Show snap indicator when hovering near nodes
+				const snapTarget = editor.graph.findNearbyNode(pointer.x, pointer.y, 15);
+
+				if (snapTarget) {
+					if (!snapIndicator) {
+						snapIndicator = new Circle({
+							left: snapTarget.x,
+							top: snapTarget.y,
+							radius: 10,
+							fill: '',
+							stroke: '#4299E1',
+							strokeWidth: 2,
+							selectable: false,
+							evented: false,
+							originX: 'center',
+							originY: 'center',
+							opacity: 0.6
+						});
+						editor.canvas.add(snapIndicator);
+					} else {
+						snapIndicator.set({ left: snapTarget.x, top: snapTarget.y });
+						snapIndicator.setCoords();
+					}
+					editor.canvas.renderAll();
+				} else if (snapIndicator) {
+					editor.canvas.remove(snapIndicator);
+					snapIndicator = null;
+					editor.canvas.renderAll();
+				}
+				return;
+			}
+
+			if (!draftPath || !draftEndNode) return;
 
 			const snapTarget = editor.graph.findNearbyNode(pointer.x, pointer.y, 15);
 			const endX = snapTarget ? snapTarget.x : pointer.x;
