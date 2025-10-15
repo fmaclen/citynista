@@ -1,9 +1,9 @@
 import { Canvas } from 'fabric';
-import type { RoadGraph, SerializedGraph } from './graph';
+import type { ReactiveGraph, SerializedGraph } from './graph.svelte';
 import { createCurvedPathData } from '../geometry/path-utils';
 import { createSegmentPath } from '../canvas-utils';
 
-export function restoreGraph(graph: RoadGraph, canvas: Canvas, data: SerializedGraph): void {
+export function restoreGraph(graph: ReactiveGraph, canvas: Canvas, data: SerializedGraph): void {
 	graph.clear();
 	canvas.clear();
 

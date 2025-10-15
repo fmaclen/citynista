@@ -1,14 +1,14 @@
-import { RoadGraph } from './graph/graph';
+import { ReactiveGraph } from './graph/graph.svelte';
 import { setupCanvas } from './canvas';
 import { restoreGraph } from './graph/restore';
 import { fetchOSMData } from './osm/import';
 import { importOSMToGraph } from './osm/import-to-graph';
 
-const graph = new RoadGraph();
+const graph = new ReactiveGraph();
 const canvas = setupCanvas(graph);
 
 // Load saved graph from localStorage
-const savedData = RoadGraph.load();
+const savedData = ReactiveGraph.load();
 if (savedData) {
 	restoreGraph(graph, canvas, savedData);
 }

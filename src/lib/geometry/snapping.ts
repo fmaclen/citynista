@@ -1,10 +1,10 @@
-import type { RoadGraph } from '../graph/graph';
+import type { ReactiveGraph } from '../graph/graph.svelte';
 import type { SnapResult } from '../types';
 import { SNAP_THRESHOLD } from '../types';
 import { findNearestSegment } from './splitting';
 
 export function findSnappingTarget(
-	graph: RoadGraph,
+	graph: ReactiveGraph,
 	x: number,
 	y: number,
 	excludeNodeIds: string[] = [],

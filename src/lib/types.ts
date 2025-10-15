@@ -1,4 +1,4 @@
-import type { NetworkNode, NetworkSegment } from './graph/graph';
+import type { NetworkNode, NetworkSegment } from './graph/graph.svelte';
 
 export type Mode = 'draw' | 'edit';
 

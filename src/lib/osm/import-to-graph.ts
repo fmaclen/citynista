@@ -1,12 +1,12 @@
 import { Canvas } from 'fabric';
-import type { RoadGraph } from '../graph/graph';
-import { generateId } from '../graph/graph';
+import type { ReactiveGraph } from '../graph/graph.svelte';
+import { generateId } from '../graph/graph.svelte';
 import type { OSMData } from './import';
 import { latLonToCanvas } from './import';
 import { createCurvedPathData } from '../geometry/path-utils';
 import { createSegmentPath } from '../canvas-utils';
 
-export function importOSMToGraph(osmData: OSMData, graph: RoadGraph, canvas: Canvas): void {
+export function importOSMToGraph(osmData: OSMData, graph: ReactiveGraph, canvas: Canvas): void {
 	const osmNodeIdToGraphNodeId = new Map<string, string>();
 
 	osmData.ways.forEach((way) => {

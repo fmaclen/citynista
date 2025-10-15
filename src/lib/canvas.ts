@@ -1,5 +1,5 @@
 import { Canvas } from 'fabric';
-import type { RoadGraph } from './graph/graph';
+import type { ReactiveGraph } from './graph/graph.svelte';
 import type { Mode } from './types';
 import { setupDrawMode } from './modes/draw-mode';
 import { setupEditMode } from './modes/edit-mode';
@@ -8,9 +8,9 @@ let currentMode: Mode = 'draw';
 let drawModeHandlers: ReturnType<typeof setupDrawMode> | null = null;
 let editModeHandlers: ReturnType<typeof setupEditMode> | null = null;
 let canvasInstance: Canvas | null = null;
-let graphInstance: RoadGraph | null = null;
+let graphInstance: ReactiveGraph | null = null;
 
-export function setupCanvas(graph: RoadGraph): Canvas {
+export function setupCanvas(graph: ReactiveGraph): Canvas {
 	const canvas = new Canvas('canvas', {
 		width: window.innerWidth,
 		height: window.innerHeight,

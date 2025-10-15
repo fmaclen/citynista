@@ -2,7 +2,7 @@
 	import { onMount } from 'svelte';
 	import Toolbar from '$lib/components/Toolbar.svelte';
 	import OSMLoader from '$lib/components/OSMLoader.svelte';
-	import { RoadGraph } from '$lib/graph/graph';
+	import { ReactiveGraph } from '$lib/graph/graph.svelte';
 	import { setupCanvas, toggleMode } from '$lib/canvas';
 	import { restoreGraph } from '$lib/graph/restore';
 	import { fetchOSMData } from '$lib/osm/import';
@@ -10,14 +10,14 @@
 	import type { Canvas } from 'fabric';
 
 	let canvasElement: HTMLCanvasElement;
-	let graph: RoadGraph;
+	let graph: ReactiveGraph;
 	let canvas: Canvas;
 
 	onMount(() => {
-		graph = new RoadGraph();
+		graph = new ReactiveGraph();
 		canvas = setupCanvas(graph);
 
-		const savedData = RoadGraph.load();
+		const savedData = ReactiveGraph.load();
 		if (savedData) {
 			restoreGraph(graph, canvas, savedData);
 		}

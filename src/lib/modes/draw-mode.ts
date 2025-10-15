@@ -1,7 +1,7 @@
 import { Canvas, Path, Point, Circle } from 'fabric';
 import type { TPointerEventInfo } from 'fabric';
-import type { RoadGraph } from '../graph/graph';
-import { generateId } from '../graph/graph';
+import type { ReactiveGraph } from '../graph/graph.svelte';
+import { generateId } from '../graph/graph.svelte';
 import { findSnappingTarget } from '../geometry/snapping';
 import { finalizeNodeConnection } from '../geometry/connections';
 import { createNode, createSegmentPath } from '../canvas-utils';
@@ -18,7 +18,7 @@ let startNode: Circle | null = null;
 let endNode: Circle | null = null;
 let debugCircles: Circle[] = [];
 
-function showDebugHitAreas(canvas: Canvas, graph: RoadGraph): void {
+function showDebugHitAreas(canvas: Canvas, graph: ReactiveGraph): void {
 	// Clear existing debug visuals
 	debugCircles.forEach((circle) => canvas.remove(circle));
 	debugCircles = [];
@@ -68,7 +68,7 @@ function showDebugHitAreas(canvas: Canvas, graph: RoadGraph): void {
 	canvas.renderAll();
 }
 
-export function setupDrawMode(canvas: Canvas, graph: RoadGraph) {
+export function setupDrawMode(canvas: Canvas, graph: ReactiveGraph) {
 	canvas.defaultCursor = 'crosshair';
 
 	// Show all debug hit areas in draw mode
