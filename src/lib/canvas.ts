@@ -4,7 +4,7 @@ import type { Mode } from './types';
 import { setupDrawMode } from './modes/draw-mode';
 import { setupEditMode } from './modes/edit-mode';
 
-let currentMode: Mode = 'draw';
+let currentMode: Mode = 'edit';
 let drawModeHandlers: ReturnType<typeof setupDrawMode> | null = null;
 let editModeHandlers: ReturnType<typeof setupEditMode> | null = null;
 let canvasInstance: Canvas | null = null;
@@ -21,7 +21,6 @@ export function setupCanvas(graph: Graph): Canvas {
 	canvasInstance = canvas;
 	graphInstance = graph;
 
-	drawModeHandlers = setupDrawMode(canvas, graph);
 	editModeHandlers = setupEditMode(canvas, graph);
 
 	canvas.on('mouse:down', (options) => {
