@@ -7,6 +7,8 @@ import { setupEditMode } from './modes/edit-mode';
 let currentMode: Mode = 'draw';
 let drawModeHandlers: ReturnType<typeof setupDrawMode> | null = null;
 let editModeHandlers: ReturnType<typeof setupEditMode> | null = null;
+let canvasInstance: Canvas | null = null;
+let graphInstance: RoadGraph | null = null;
 
 export function setupCanvas(graph: RoadGraph): Canvas {
     const canvas = new Canvas('canvas', {
@@ -16,42 +18,11 @@ export function setupCanvas(graph: RoadGraph): Canvas {
         selection: false
     });
 
-    const drawBtn = document.getElementById('draw-btn');
-    const clearBtn = document.getElementById('clear-btn');
+    canvasInstance = canvas;
+    graphInstance = graph;
 
     drawModeHandlers = setupDrawMode(canvas, graph);
     editModeHandlers = setupEditMode(canvas, graph);
-
-    function toggleMode(): void {
-        const newMode: Mode = currentMode === 'draw' ? 'edit' : 'draw';
-
-        if (currentMode === 'draw' && drawModeHandlers) {
-            drawModeHandlers.cleanup();
-        } else if (currentMode === 'edit' && editModeHandlers) {
-            editModeHandlers.cleanup();
-        }
-
-        currentMode = newMode;
-
-        if (currentMode === 'draw') {
-            drawBtn?.classList.add('active');
-            drawModeHandlers = setupDrawMode(canvas, graph);
-        } else {
-            drawBtn?.classList.remove('active');
-            editModeHandlers = setupEditMode(canvas, graph);
-        }
-    }
-
-    drawBtn?.addEventListener('click', toggleMode);
-
-    clearBtn?.addEventListener('click', () => {
-        if (confirm('Are you sure you want to clear all segments? This cannot be undone.')) {
-            graph.clear();
-            canvas.clear();
-            canvas.backgroundColor = '#2a2a2a';
-            canvas.renderAll();
-        }
-    });
 
     canvas.on('mouse:down', (options) => {
         if (currentMode === 'draw' && drawModeHandlers) {
@@ -104,4 +75,24 @@ export function setupCanvas(graph: RoadGraph): Canvas {
     });
 
     return canvas;
+}
+
+export function toggleMode(): void {
+    if (!canvasInstance || !graphInstance) return;
+
+    const newMode: Mode = currentMode === 'draw' ? 'edit' : 'draw';
+
+    if (currentMode === 'draw' && drawModeHandlers) {
+        drawModeHandlers.cleanup();
+    } else if (currentMode === 'edit' && editModeHandlers) {
+        editModeHandlers.cleanup();
+    }
+
+    currentMode = newMode;
+
+    if (currentMode === 'draw') {
+        drawModeHandlers = setupDrawMode(canvasInstance, graphInstance);
+    } else {
+        editModeHandlers = setupEditMode(canvasInstance, graphInstance);
+    }
 }
