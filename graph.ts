@@ -96,4 +96,8 @@ export class RoadGraph {
         this.segments.delete(id);
         this.scheduleLog();
     }
+
+    getAllSegments(): Map<string, NetworkSegment> {
+        return this.segments;
+    }
 }
