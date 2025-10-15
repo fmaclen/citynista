@@ -34,14 +34,27 @@ export class RoadGraph {
     }
 
     log(): void {
-        console.log('=== Road Network ===');
-        console.log('Nodes:', this.nodes.size);
+        const nodesData: Record<string, any> = {};
         this.nodes.forEach((node, id) => {
-            console.log(`  ${id}: (${node.x.toFixed(1)}, ${node.y.toFixed(1)}) - ${node.connectedSegments.length} segments`);
+            nodesData[id] = {
+                coords: `(${node.x.toFixed(1)}, ${node.y.toFixed(1)})`,
+                segments: node.connectedSegments
+            };
         });
-        console.log('Segments:', this.segments.size);
+
+        const segmentsData: Record<string, any> = {};
         this.segments.forEach((segment, id) => {
-            console.log(`  ${id}: ${segment.startNodeId} -> ${segment.endNodeId}`);
+            const startNode = this.nodes.get(segment.startNodeId);
+            const endNode = this.nodes.get(segment.endNodeId);
+            segmentsData[id] = {
+                from: startNode ? `${segment.startNodeId}: (${startNode.x.toFixed(1)}, ${startNode.y.toFixed(1)})` : segment.startNodeId,
+                to: endNode ? `${segment.endNodeId}: (${endNode.x.toFixed(1)}, ${endNode.y.toFixed(1)})` : segment.endNodeId
+            };
+        });
+
+        console.log(`Road Network - Nodes: ${this.nodes.size}, Segments: ${this.segments.size}`, {
+            nodes: nodesData,
+            segments: segmentsData
         });
     }
 
