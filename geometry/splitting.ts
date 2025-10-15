@@ -108,12 +108,46 @@ export function splitSegmentAtPoint(
             if (moveCmd && quadCmd && Array.isArray(moveCmd) && Array.isArray(quadCmd)) {
                 const x1 = moveCmd[1] as number;
                 const y1 = moveCmd[2] as number;
+                const cx = quadCmd[1] as number;
+                const cy = quadCmd[2] as number;
+                const x2 = quadCmd[3] as number;
+                const y2 = quadCmd[4] as number;
+
+                // Find the t parameter where we're splitting the curve
+                let bestT = 0.5;
+                let minDist = Infinity;
+                for (let t = 0; t <= 1; t += 0.01) {
+                    const qx = (1 - t) * (1 - t) * x1 + 2 * (1 - t) * t * cx + t * t * x2;
+                    const qy = (1 - t) * (1 - t) * y1 + 2 * (1 - t) * t * cy + t * t * y2;
+                    const dist = Math.sqrt((x - qx) * (x - qx) + (y - qy) * (y - qy));
+                    if (dist < minDist) {
+                        minDist = dist;
+                        bestT = t;
+                    }
+                }
+
+                // Use De Casteljau's algorithm to split the bezier curve at t
+                // This preserves the curve shape perfectly
+                const t = bestT;
+
+                // First subdivision: from 0 to t
+                const q0x = (1 - t) * x1 + t * cx;
+                const q0y = (1 - t) * y1 + t * cy;
+                const q1x = (1 - t) * cx + t * x2;
+                const q1y = (1 - t) * cy + t * y2;
+
+                // Control point for first segment
+                const control1x = q0x;
+                const control1y = q0y;
+
+                // Control point for second segment
+                const control2x = q1x;
+                const control2y = q1y;
 
                 // Update first segment: remove old path and create new one
                 canvas.remove(segment.path);
 
-                const control1 = getDefaultControlPoint(x1, y1, x, y);
-                const pathData1 = createCurvedPathData(x1, y1, x, y, control1.x, control1.y);
+                const pathData1 = createCurvedPathData(x1, y1, x, y, control1x, control1y);
                 const newPath1 = new Path(pathData1);
                 newPath1.set({
                     stroke: '#666666',
@@ -128,15 +162,14 @@ export function splitSegmentAtPoint(
                 });
                 canvas.add(newPath1);
                 segment.path = newPath1;
-                segment.controlX = control1.x;
-                segment.controlY = control1.y;
+                segment.controlX = control1x;
+                segment.controlY = control1y;
 
                 // Create second segment
                 const endX = originalEndNode?.x ?? 0;
                 const endY = originalEndNode?.y ?? 0;
 
-                const control2 = getDefaultControlPoint(x, y, endX, endY);
-                const pathData2 = createCurvedPathData(x, y, endX, endY, control2.x, control2.y);
+                const pathData2 = createCurvedPathData(x, y, endX, endY, control2x, control2y);
                 const newPath2 = new Path(pathData2);
                 newPath2.set({
                     stroke: '#666666',
@@ -157,8 +190,8 @@ export function splitSegmentAtPoint(
                     startNodeId: newNodeId,
                     endNodeId: originalEndNodeId,
                     path: newPath2,
-                    controlX: control2.x,
-                    controlY: control2.y
+                    controlX: control2x,
+                    controlY: control2y
                 });
             }
         }
