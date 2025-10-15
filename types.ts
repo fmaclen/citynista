@@ -9,6 +9,6 @@ export interface SnapResult {
     snappedSegment: NetworkSegment | null;
 }
 
-export const ROAD_WIDTH = 8;
-export const NODE_RADIUS = ROAD_WIDTH;
+export const ROAD_WIDTH = 4;
+export const NODE_RADIUS = 6;
 export const SNAP_THRESHOLD = 15;

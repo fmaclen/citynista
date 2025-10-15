@@ -5,14 +5,15 @@ export function createNode(x: number, y: number, selectable: boolean = true): Ci
     return new Circle({
         left: x,
         top: y,
-        radius: NODE_RADIUS,
+        radius: NODE_RADIUS * 1.2,
         fill: 'white',
         originX: 'center',
         originY: 'center',
         selectable: selectable,
         evented: selectable,
         hasControls: false,
-        hasBorders: false
+        hasBorders: false,
+        strokeUniform: true
     });
 }
 
@@ -20,7 +21,7 @@ export function createBezierHandle(x: number, y: number): Circle {
     return new Circle({
         left: x,
         top: y,
-        radius: NODE_RADIUS * 0.7,
+        radius: NODE_RADIUS * 1.2,
         fill: 'transparent',
         stroke: 'white',
         strokeWidth: 2,
@@ -29,11 +30,12 @@ export function createBezierHandle(x: number, y: number): Circle {
         selectable: true,
         evented: true,
         hasControls: false,
-        hasBorders: false
+        hasBorders: false,
+        strokeUniform: true
     });
 }
 
-export function isPointNearPath(pointer: Point, path: Path, threshold: number = 10): boolean {
+export function isPointNearPath(pointer: Point, path: Path, threshold: number = 24): boolean {
     const pathArray = path.path;
     if (!pathArray || pathArray.length === 0) return false;
 
@@ -85,14 +87,15 @@ export function createSegmentPath(
     const path = new Path(pathData);
     path.set({
         stroke: selected ? '#999999' : stroke,
-        strokeWidth: selected ? 8 : strokeWidth,
+        strokeWidth: selected ? 5 : strokeWidth,
         fill: '',
         selectable: false,
-        evented: true,
+        evented: false,
         strokeLineCap: 'round',
         hoverCursor: 'default',
         strokeUniform: true,
-        objectCaching: false
+        objectCaching: false,
+        perPixelTargetFind: false
     });
     canvas.add(path);
     return path;

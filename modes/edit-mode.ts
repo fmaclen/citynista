@@ -103,7 +103,7 @@ export function setupEditMode(canvas: Canvas, graph: RoadGraph) {
 
             const allObjects = canvas.getObjects();
             for (const obj of allObjects) {
-                if (obj instanceof Path && isPointNearPath(pointer, obj, 15)) {
+                if (obj instanceof Path && isPointNearPath(pointer, obj, 24)) {
                     showNodesForPath(canvas, graph, obj);
                     return;
                 }
@@ -176,7 +176,7 @@ export function setupEditMode(canvas: Canvas, graph: RoadGraph) {
             let foundPath: Path | null = null;
 
             for (const obj of allObjects) {
-                if (obj instanceof Path && isPointNearPath(pointer, obj, 15)) {
+                if (obj instanceof Path && isPointNearPath(pointer, obj, 24)) {
                     if (obj !== selectedPath) {
                         foundPath = obj;
                     }
@@ -195,7 +195,7 @@ export function setupEditMode(canvas: Canvas, graph: RoadGraph) {
                 canvas.renderAll();
             }
 
-            if (selectedPath && isPointNearPath(pointer, selectedPath, 15)) {
+            if (selectedPath && isPointNearPath(pointer, selectedPath, 24)) {
                 canvas.defaultCursor = 'move';
             } else if (foundPath) {
                 canvas.defaultCursor = 'pointer';
