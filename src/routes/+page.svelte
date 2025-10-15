@@ -47,7 +47,7 @@
 	<title>Citynista - Road Drawing</title>
 </svelte:head>
 
-<div class="w-screen h-screen overflow-hidden bg-[#2a2a2a]">
+<div class="h-screen w-screen overflow-hidden bg-[#2a2a2a]">
 	<Toolbar onModeToggle={handleModeToggle} onClear={handleClear} />
 	<OSMLoader onLoad={handleLoadOSM} />
 	<canvas id="canvas" bind:this={canvasElement}></canvas>

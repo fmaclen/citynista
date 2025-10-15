@@ -38,6 +38,7 @@ The application is currently a single-page canvas interface:
 ## TypeScript Configuration
 
 The project uses **strict TypeScript** with all strict flags enabled:
+
 - `strict: true`
 - `noUnusedLocals: true`
 - `noUnusedParameters: true`
@@ -56,6 +57,7 @@ All code must pass strict type checking.
 ## Future Direction
 
 The codebase is designed to eventually support:
+
 - Node-based street editing (moving/bending segments)
 - Zoning definition and area painting between roads
 - 3D rendering (likely without heavy game engines, using web-native 3D tools)

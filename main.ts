@@ -10,20 +10,15 @@ const canvas = setupCanvas(graph);
 // Load saved graph from localStorage
 const savedData = RoadGraph.load();
 if (savedData) {
-    restoreGraph(graph, canvas, savedData);
+	restoreGraph(graph, canvas, savedData);
 }
 
 async function loadOSMSample() {
-    const osmData = await fetchOSMData(
-        25.6180,
-        -80.3465,
-        25.6200,
-        -80.3440
-    );
+	const osmData = await fetchOSMData(25.618, -80.3465, 25.62, -80.344);
 
-    console.log('Loaded OSM data:', osmData);
+	console.log('Loaded OSM data:', osmData);
 
-    importOSMToGraph(osmData, graph, canvas);
+	importOSMToGraph(osmData, graph, canvas);
 }
 
 const loadButton = document.createElement('button');
