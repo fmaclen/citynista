@@ -5,7 +5,7 @@ import { findSnappingTarget } from '../geometry/snapping';
 import { updateConnectedSegments } from '../geometry/connections';
 import { splitSegmentAtPoint } from '../geometry/splitting';
 import { createNode, createBezierHandle, isPointNearPath } from '../canvas-utils';
-import { createCurvedPathData } from '../geometry/path-utils';
+import { createCurvedPathData, getRelativeControlPoint, applyRelativeControlPoint } from '../geometry/path-utils';
 
 let selectedPath: Path | null = null;
 let startNode: Circle | null = null;
@@ -300,6 +300,9 @@ export function setupEditMode(canvas: Canvas, graph: RoadGraph) {
                 top = snapResult.snappedY;
                 target.set({ left, top });
 
+                // Calculate relative position of control point before moving
+                const relativeControl = getRelativeControlPoint(x1, y1, x2, y2, cx, cy);
+
                 if (target === startNode) {
                     x1 = left;
                     y1 = top;
@@ -307,6 +310,13 @@ export function setupEditMode(canvas: Canvas, graph: RoadGraph) {
                     x2 = left;
                     y2 = top;
                 }
+
+                // Recalculate control point to maintain relative position
+                const newControl = applyRelativeControlPoint(x1, y1, x2, y2, relativeControl.t, relativeControl.offset);
+                cx = newControl.x;
+                cy = newControl.y;
+                segment.controlX = cx;
+                segment.controlY = cy;
 
                 updateConnectedSegments(graph, currentNodeId, left, top, segment.id);
             }
@@ -329,6 +339,14 @@ export function setupEditMode(canvas: Canvas, graph: RoadGraph) {
             canvas.add(newPath);
             selectedPath = newPath;
             segment.path = newPath;
+
+            // Update bezier handle position
+            if (bezierHandle && target !== bezierHandle) {
+                bezierHandle.set({
+                    left: cx,
+                    top: cy
+                });
+            }
 
             canvas.renderAll();
         },

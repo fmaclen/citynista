@@ -3,7 +3,7 @@ import type { RoadGraph } from '../graph/graph';
 import { generateId } from '../graph/graph';
 import { findSnappingTarget } from './snapping';
 import { splitSegmentAtPoint } from './splitting';
-import { createCurvedPathData } from './path-utils';
+import { createCurvedPathData, getRelativeControlPoint, applyRelativeControlPoint } from './path-utils';
 import { ROAD_WIDTH } from '../types';
 
 export function updateConnectedSegments(
@@ -54,6 +54,9 @@ export function updateConnectedSegments(
             continue;
         }
 
+        // Calculate relative position of control point before moving
+        const relativeControl = getRelativeControlPoint(x1, y1, x2, y2, cx, cy);
+
         // Update coordinates
         if (segment.startNodeId === nodeId) {
             x1 = newX;
@@ -63,6 +66,13 @@ export function updateConnectedSegments(
             x2 = newX;
             y2 = newY;
         }
+
+        // Recalculate control point to maintain relative position
+        const newControl = applyRelativeControlPoint(x1, y1, x2, y2, relativeControl.t, relativeControl.offset);
+        cx = newControl.x;
+        cy = newControl.y;
+        segment.controlX = cx;
+        segment.controlY = cy;
 
         // Remove old path and create new one
         canvas.remove(segment.path);
