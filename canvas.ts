@@ -17,6 +17,7 @@ export function setupCanvas(graph: RoadGraph): Canvas {
     });
 
     const drawBtn = document.getElementById('draw-btn');
+    const clearBtn = document.getElementById('clear-btn');
 
     drawModeHandlers = setupDrawMode(canvas, graph);
     editModeHandlers = setupEditMode(canvas, graph);
@@ -42,6 +43,15 @@ export function setupCanvas(graph: RoadGraph): Canvas {
     }
 
     drawBtn?.addEventListener('click', toggleMode);
+
+    clearBtn?.addEventListener('click', () => {
+        if (confirm('Are you sure you want to clear all segments? This cannot be undone.')) {
+            graph.clear();
+            canvas.clear();
+            canvas.backgroundColor = '#2a2a2a';
+            canvas.renderAll();
+        }
+    });
 
     canvas.on('mouse:down', (options) => {
         if (currentMode === 'draw' && drawModeHandlers) {

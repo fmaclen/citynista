@@ -69,8 +69,9 @@ export function updateConnectedSegments(
         const newControl = applyRelativeControlPoint(x1, y1, x2, y2, relativeControl.t, relativeControl.offset);
         cx = newControl.x;
         cy = newControl.y;
-        segment.controlX = cx;
-        segment.controlY = cy;
+
+        // Update segment with new control points
+        graph.updateSegment(segmentId, { controlX: cx, controlY: cy });
 
         // Update path in-place by modifying the path array directly
         const pathArray = segment.path.path as any[];

@@ -162,8 +162,7 @@ export function splitSegmentAtPoint(
                 });
                 canvas.add(newPath1);
                 segment.path = newPath1;
-                segment.controlX = control1x;
-                segment.controlY = control1y;
+                graph.updateSegment(segment.id, { controlX: control1x, controlY: control1y });
 
                 // Create second segment
                 const endX = originalEndNode?.x ?? 0;

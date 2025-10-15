@@ -54,11 +54,27 @@
             color: #1a1a1a;
             border-color: white;
         }
+        .clear-btn {
+            padding: 10px 20px;
+            border: 2px solid rgba(255, 100, 100, 0.5);
+            border-radius: 5px;
+            background: rgba(80, 0, 0, 0.7);
+            color: white;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.2s;
+            margin-left: 10px;
+        }
+        .clear-btn:hover {
+            border-color: rgba(255, 100, 100, 0.8);
+            background: rgba(120, 0, 0, 0.85);
+        }
     </style>
 </head>
 <body>
     <div id="toolbar">
         <button class="mode-btn active" id="draw-btn">Draw Mode</button>
+        <button class="clear-btn" id="clear-btn">Clear All</button>
     </div>
     <div id="canvas-container">
         <canvas id="canvas"></canvas>

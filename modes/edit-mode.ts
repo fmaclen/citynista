@@ -275,8 +275,7 @@ export function setupEditMode(canvas: Canvas, graph: RoadGraph) {
             if (target === bezierHandle) {
                 cx = left;
                 cy = top;
-                segment.controlX = left;
-                segment.controlY = top;
+                graph.updateSegment(segment.id, { controlX: left, controlY: top });
             } else {
                 const currentNodeId = target === startNode ? segment.startNodeId : segment.endNodeId;
                 const otherNodeId = target === startNode ? segment.endNodeId : segment.startNodeId;
@@ -301,8 +300,7 @@ export function setupEditMode(canvas: Canvas, graph: RoadGraph) {
                 const newControl = applyRelativeControlPoint(x1, y1, x2, y2, relativeControl.t, relativeControl.offset);
                 cx = newControl.x;
                 cy = newControl.y;
-                segment.controlX = cx;
-                segment.controlY = cy;
+                graph.updateSegment(segment.id, { controlX: cx, controlY: cy });
 
                 updateConnectedSegments(graph, currentNodeId, left, top, segment.id);
             }
