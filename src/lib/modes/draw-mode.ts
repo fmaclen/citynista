@@ -15,21 +15,12 @@ let isDrawing: boolean = false;
 let currentPath: Path | null = null;
 let startNode: Circle | null = null;
 let endNode: Circle | null = null;
-let cursorNode: Circle | null = null;
 
 export function setupDrawMode(canvas: Canvas, graph: RoadGraph) {
-	if (!cursorNode) {
-		cursorNode = createNode(0, 0, false);
-		cursorNode.set({ opacity: 0.5 });
-		canvas.add(cursorNode);
-	}
+	canvas.defaultCursor = 'crosshair';
 
 	return {
 		onMouseDown: (options: TPointerEventInfo) => {
-			if (cursorNode) {
-				cursorNode.set({ opacity: 0 });
-			}
-
 			isDrawing = true;
 			const pointer = options.viewportPoint ?? new Point(0, 0);
 
@@ -49,16 +40,6 @@ export function setupDrawMode(canvas: Canvas, graph: RoadGraph) {
 
 		onMouseMove: (options: TPointerEventInfo) => {
 			const pointer = options.viewportPoint ?? new Point(0, 0);
-
-			if (cursorNode && !isDrawing) {
-				const snapResult = findSnappingTarget(graph, pointer.x, pointer.y);
-				cursorNode.set({
-					left: snapResult.snappedX,
-					top: snapResult.snappedY,
-					opacity: snapResult.snappedNode ? 1.0 : 0.5
-				});
-				canvas.renderAll();
-			}
 
 			if (isDrawing && currentPath && endNode && startNode) {
 				const snapResult = findSnappingTarget(graph, pointer.x, pointer.y);
@@ -102,7 +83,6 @@ export function setupDrawMode(canvas: Canvas, graph: RoadGraph) {
 					if (endNode) canvas.remove(endNode);
 					startNode = null;
 					endNode = null;
-					if (cursorNode) cursorNode.set({ opacity: 0.5 });
 					return;
 				}
 
@@ -144,17 +124,10 @@ export function setupDrawMode(canvas: Canvas, graph: RoadGraph) {
 				canvas.remove(endNode);
 				endNode = null;
 			}
-
-			if (cursorNode) {
-				cursorNode.set({ opacity: 0.5 });
-			}
 		},
 
 		cleanup: () => {
-			if (cursorNode) {
-				canvas.remove(cursorNode);
-				cursorNode = null;
-			}
+			canvas.defaultCursor = 'default';
 			if (startNode) {
 				canvas.remove(startNode);
 				startNode = null;
