@@ -1,8 +1,7 @@
-import { Path } from 'fabric';
 import type { RoadGraph, NetworkSegment } from '../graph/graph';
 import { generateId } from '../graph/graph';
-import { ROAD_WIDTH } from '../types';
 import { createCurvedPathData, parsePathData } from './path-utils';
+import { createSegmentPath } from '../canvas-utils';
 
 export function findNearestSegment(
     graph: RoadGraph,
@@ -132,20 +131,7 @@ export function splitSegmentAtPoint(
             canvas.remove(segment.path);
 
             const pathData1 = createCurvedPathData(x1, y1, x, y, control1x, control1y);
-            const newPath1 = new Path(pathData1);
-            newPath1.set({
-                stroke: '#666666',
-                strokeWidth: ROAD_WIDTH,
-                fill: '',
-                selectable: false,
-                evented: true,
-                strokeLineCap: 'round',
-                hoverCursor: 'default',
-                strokeUniform: true,
-                objectCaching: false
-            });
-            canvas.add(newPath1);
-            segment.path = newPath1;
+            segment.path = createSegmentPath(pathData1, canvas);
             graph.updateSegment(segment.id, { controlX: control1x, controlY: control1y });
 
             // Create second segment
@@ -153,20 +139,7 @@ export function splitSegmentAtPoint(
             const endY = originalEndNode?.y ?? 0;
 
             const pathData2 = createCurvedPathData(x, y, endX, endY, control2x, control2y);
-            const newPath2 = new Path(pathData2);
-            newPath2.set({
-                stroke: '#666666',
-                strokeWidth: ROAD_WIDTH,
-                fill: '',
-                selectable: false,
-                evented: true,
-                strokeLineCap: 'round',
-                hoverCursor: 'default',
-                strokeUniform: true,
-                objectCaching: false
-            });
-
-            canvas.add(newPath2);
+            const newPath2 = createSegmentPath(pathData2, canvas);
 
             graph.addSegment({
                 id: newSegmentId,

@@ -4,8 +4,7 @@ import type { RoadGraph } from '../graph/graph';
 import { generateId } from '../graph/graph';
 import { findSnappingTarget } from '../geometry/snapping';
 import { finalizeNodeConnection } from '../geometry/connections';
-import { createNode } from '../canvas-utils';
-import { ROAD_WIDTH } from '../types';
+import { createNode, createSegmentPath } from '../canvas-utils';
 import { createCurvedPathData, getDefaultControlPoint, parsePathData } from '../geometry/path-utils';
 
 let isDrawing: boolean = false;
@@ -35,23 +34,11 @@ export function setupDrawMode(canvas: Canvas, graph: RoadGraph) {
             const startY = snapResult.snappedY;
 
             const pathData = createCurvedPathData(startX, startY, startX, startY, startX, startY);
-            currentPath = new Path(pathData);
-            currentPath.set({
-                stroke: '#666666',
-                strokeWidth: ROAD_WIDTH,
-                fill: '',
-                selectable: false,
-                evented: true,
-                strokeLineCap: 'round',
-                hoverCursor: 'default',
-                strokeUniform: true,
-                objectCaching: false
-            });
+            currentPath = createSegmentPath(pathData, canvas);
 
             startNode = createNode(startX, startY, false);
             endNode = createNode(startX, startY, false);
 
-            canvas.add(currentPath);
             canvas.add(startNode);
             canvas.add(endNode);
         },
@@ -83,20 +70,7 @@ export function setupDrawMode(canvas: Canvas, graph: RoadGraph) {
                 const control = getDefaultControlPoint(x1, y1, x2, y2);
                 const newPathData = createCurvedPathData(x1, y1, x2, y2, control.x, control.y);
 
-                currentPath = new Path(newPathData);
-                currentPath.set({
-                    stroke: '#666666',
-                    strokeWidth: ROAD_WIDTH,
-                    fill: '',
-                    selectable: false,
-                    evented: true,
-                    strokeLineCap: 'round',
-                    hoverCursor: 'default',
-                    strokeUniform: true,
-                    objectCaching: false
-                });
-
-                canvas.add(currentPath);
+                currentPath = createSegmentPath(newPathData, canvas);
 
                 endNode.set({
                     left: snapResult.snappedX,

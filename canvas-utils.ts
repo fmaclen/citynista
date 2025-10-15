@@ -1,5 +1,5 @@
-import { Circle, Path, Point } from 'fabric';
-import { NODE_RADIUS } from './types';
+import { Circle, Path, Point, Canvas } from 'fabric';
+import { NODE_RADIUS, ROAD_WIDTH } from './types';
 
 export function createNode(x: number, y: number, selectable: boolean = true): Circle {
     return new Circle({
@@ -63,4 +63,37 @@ export function isPointNearPath(pointer: Point, path: Path, threshold: number = 
     }
 
     return minDistance <= threshold;
+}
+
+export interface SegmentPathOptions {
+    selected?: boolean;
+    stroke?: string;
+    strokeWidth?: number;
+}
+
+export function createSegmentPath(
+    pathData: string,
+    canvas: Canvas,
+    options: SegmentPathOptions = {}
+): Path {
+    const {
+        selected = false,
+        stroke = '#666666',
+        strokeWidth = ROAD_WIDTH
+    } = options;
+
+    const path = new Path(pathData);
+    path.set({
+        stroke: selected ? '#999999' : stroke,
+        strokeWidth: selected ? 8 : strokeWidth,
+        fill: '',
+        selectable: false,
+        evented: true,
+        strokeLineCap: 'round',
+        hoverCursor: 'default',
+        strokeUniform: true,
+        objectCaching: false
+    });
+    canvas.add(path);
+    return path;
 }

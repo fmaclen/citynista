@@ -1,7 +1,7 @@
-import { Canvas, Path } from 'fabric';
+import { Canvas } from 'fabric';
 import type { RoadGraph, SerializedGraph } from './graph';
 import { createCurvedPathData } from '../geometry/path-utils';
-import { ROAD_WIDTH } from '../types';
+import { createSegmentPath } from '../canvas-utils';
 
 export function restoreGraph(graph: RoadGraph, canvas: Canvas, data: SerializedGraph): void {
     graph.clear();
@@ -36,20 +36,7 @@ export function restoreGraph(graph: RoadGraph, canvas: Canvas, data: SerializedG
             segmentData.controlY
         );
 
-        const path = new Path(pathData);
-        path.set({
-            stroke: '#666666',
-            strokeWidth: ROAD_WIDTH,
-            fill: '',
-            selectable: false,
-            evented: true,
-            strokeLineCap: 'round',
-            hoverCursor: 'default',
-            strokeUniform: true,
-            objectCaching: false
-        });
-
-        canvas.add(path);
+        const path = createSegmentPath(pathData, canvas);
 
         graph.addSegment({
             id: segmentData.id,
