@@ -1,23 +1,15 @@
 <script lang="ts">
+	import { setEditorContext } from '$lib/editor.svelte';
 	import EditorToolbar from '$lib/components/EditorToolbar.svelte';
-	import { setGraphContext } from '$lib/context/graph.svelte';
-	import { Graph } from '$lib/graph/graph.svelte';
-	import { setupCanvas } from '$lib/canvas';
-	import { restoreGraph } from '$lib/graph/restore';
 
 	let canvasElement: HTMLCanvasElement;
-	const ctx = setGraphContext();
+	const editor = setEditorContext();
 
 	$effect(() => {
 		if (!canvasElement) return;
 
-		const canvas = setupCanvas(ctx.graph, canvasElement);
-		ctx.setCanvas(canvas);
-
-		const savedData = Graph.load();
-		if (savedData) {
-			restoreGraph(ctx.graph, canvas, savedData);
-		}
+		editor.initCanvas(canvasElement);
+		editor.loadSavedData();
 	});
 </script>
 

@@ -1,10 +1,9 @@
 import { Canvas } from 'fabric';
-import type { Graph } from '../graph/graph.svelte';
-import { generateId } from '../graph/graph.svelte';
+import type { Graph } from '../graph.svelte';
+import { generateId } from '../constants';
 import type { OSMData } from './import';
 import { latLonToCanvas } from './import';
-import { createCurvedPathData } from '../geometry/path-utils';
-import { createSegmentPath } from '../canvas-utils';
+import { getDefaultControlPoint } from '../path-utils';
 
 export function importOSMToGraph(osmData: OSMData, graph: Graph, canvas: Canvas): void {
 	const osmNodeIdToGraphNodeId = new Map<string, string>();
@@ -52,37 +51,21 @@ export function importOSMToGraph(osmData: OSMData, graph: Graph, canvas: Canvas)
 
 			if (!startNodeId || !endNodeId) continue;
 
-			const startNode = graph.getNode(startNodeId);
-			const endNode = graph.getNode(endNodeId);
+			const startNode = graph.nodes.get(startNodeId);
+			const endNode = graph.nodes.get(endNodeId);
 
 			if (!startNode || !endNode) continue;
 
-			const controlX = (startNode.x + endNode.x) / 2;
-			const controlY = (startNode.y + endNode.y) / 2;
-
-			const pathData = createCurvedPathData(
-				startNode.x,
-				startNode.y,
-				endNode.x,
-				endNode.y,
-				controlX,
-				controlY
-			);
-
-			const path = createSegmentPath(pathData, canvas);
+			const controlPoint = getDefaultControlPoint(startNode.x, startNode.y, endNode.x, endNode.y);
 
 			const segmentId = generateId();
-
-			startNode.connectedSegments.push(segmentId);
-			endNode.connectedSegments.push(segmentId);
 
 			graph.addSegment({
 				id: segmentId,
 				startNodeId: startNodeId,
 				endNodeId: endNodeId,
-				path: path,
-				controlX: controlX,
-				controlY: controlY
+				controlX: controlPoint.x,
+				controlY: controlPoint.y
 			});
 		}
 	});
