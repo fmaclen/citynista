@@ -19,7 +19,7 @@
 	size="lg"
 	bind:pressed={drawMode}
 	aria-label="Draw Mode"
-	class="bg-background"
+	class="border-muted-foreground"
 >
-	<SplineIcon class="size-5" />
+	<SplineIcon class="size-5 text-muted-foreground" />
 </Toggle>

@@ -19,7 +19,7 @@
 	size="lg"
 	bind:pressed={selectMode}
 	aria-label="Select Mode"
-	class="bg-background"
+	class="border-muted-foreground"
 >
-	<SquareDashedMousePointerIcon class="size-5" />
+	<SquareDashedMousePointerIcon class="size-5 text-muted-foreground" />
 </Toggle>
