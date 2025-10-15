@@ -35,35 +35,53 @@ function clearDebugVisuals(canvas: Canvas): void {
 	debugCircles = [];
 }
 
-function showDebugHitAreas(canvas: Canvas, graph: RoadGraph): void {
+function showDebugHitAreas(canvas: Canvas, graph: RoadGraph, selectedSegmentPath?: Path | null): void {
 	clearDebugVisuals(canvas);
 
-	// Show node hit areas
-	graph.getAllNodes().forEach((node) => {
-		const hitArea = new Circle({
-			left: node.x,
-			top: node.y,
-			radius: SNAP_THRESHOLD,
-			fill: 'rgba(255, 255, 0, 0.25)',
-			originX: 'center',
-			originY: 'center',
-			selectable: false,
-			evented: false
-		});
-		canvas.add(hitArea);
-		debugCircles.push(hitArea);
-		// Store reference on the node for updates
-		node.debugHitArea = hitArea;
-	});
+	// If a segment is selected, only show debug for connected nodes and that segment
+	if (selectedSegmentPath) {
+		const segment = graph.findSegmentByPath(selectedSegmentPath);
+		if (segment) {
+			// Show debug for start node
+			const startNode = graph.getNode(segment.startNodeId);
+			if (startNode) {
+				const hitArea = new Circle({
+					left: startNode.x,
+					top: startNode.y,
+					radius: SNAP_THRESHOLD,
+					fill: 'rgba(255, 255, 0, 0.25)',
+					originX: 'center',
+					originY: 'center',
+					selectable: false,
+					evented: false
+				});
+				canvas.add(hitArea);
+				debugCircles.push(hitArea);
+				startNode.debugHitArea = hitArea;
+			}
 
-	// Show segment hit areas - only midpoint (t=0.5)
-	graph.getAllSegments().forEach((segment) => {
-		if (segment.path) {
-			const coords = parsePathData(segment.path.path);
+			// Show debug for end node
+			const endNode = graph.getNode(segment.endNodeId);
+			if (endNode) {
+				const hitArea = new Circle({
+					left: endNode.x,
+					top: endNode.y,
+					radius: SNAP_THRESHOLD,
+					fill: 'rgba(255, 255, 0, 0.25)',
+					originX: 'center',
+					originY: 'center',
+					selectable: false,
+					evented: false
+				});
+				canvas.add(hitArea);
+				debugCircles.push(hitArea);
+				endNode.debugHitArea = hitArea;
+			}
+
+			// Show debug for selected segment midpoint
+			const coords = parsePathData(selectedSegmentPath.path);
 			if (coords) {
 				const { x1, y1, cx, cy, x2, y2 } = coords;
-
-				// Only show midpoint snap circle
 				const t = 0.5;
 				const x = (1 - t) * (1 - t) * x1 + 2 * (1 - t) * t * cx + t * t * x2;
 				const y = (1 - t) * (1 - t) * y1 + 2 * (1 - t) * t * cy + t * t * y2;
@@ -80,10 +98,58 @@ function showDebugHitAreas(canvas: Canvas, graph: RoadGraph): void {
 				});
 				canvas.add(hitArea);
 				debugCircles.push(hitArea);
-				segment.path.debugHitArea = hitArea;
+				selectedSegmentPath.debugHitArea = hitArea;
 			}
 		}
-	});
+	} else {
+		// No selection - show all debug areas
+		// Show node hit areas
+		graph.getAllNodes().forEach((node) => {
+			const hitArea = new Circle({
+				left: node.x,
+				top: node.y,
+				radius: SNAP_THRESHOLD,
+				fill: 'rgba(255, 255, 0, 0.25)',
+				originX: 'center',
+				originY: 'center',
+				selectable: false,
+				evented: false
+			});
+			canvas.add(hitArea);
+			debugCircles.push(hitArea);
+			// Store reference on the node for updates
+			node.debugHitArea = hitArea;
+		});
+
+		// Show segment hit areas - only midpoint (t=0.5)
+		graph.getAllSegments().forEach((segment) => {
+			if (segment.path) {
+				const coords = parsePathData(segment.path.path);
+				if (coords) {
+					const { x1, y1, cx, cy, x2, y2 } = coords;
+
+					// Only show midpoint snap circle
+					const t = 0.5;
+					const x = (1 - t) * (1 - t) * x1 + 2 * (1 - t) * t * cx + t * t * x2;
+					const y = (1 - t) * (1 - t) * y1 + 2 * (1 - t) * t * cy + t * t * y2;
+
+					const hitArea = new Circle({
+						left: x,
+						top: y,
+						radius: SNAP_THRESHOLD / 2,
+						fill: 'rgba(0, 255, 255, 0.25)',
+						originX: 'center',
+						originY: 'center',
+						selectable: false,
+						evented: false
+					});
+					canvas.add(hitArea);
+					debugCircles.push(hitArea);
+					segment.path.debugHitArea = hitArea;
+				}
+			}
+		});
+	}
 
 	canvas.renderAll();
 }
@@ -107,7 +173,7 @@ function clearNodes(canvas: Canvas): void {
 	selectedPath = null;
 }
 
-function showNodesForPath(canvas: Canvas, _graph: RoadGraph, path: Path): void {
+function showNodesForPath(canvas: Canvas, graph: RoadGraph, path: Path): void {
 	if (selectedPath === path && startNode && endNode && bezierHandle) {
 		return;
 	}
@@ -132,12 +198,15 @@ function showNodesForPath(canvas: Canvas, _graph: RoadGraph, path: Path): void {
 	canvas.add(startNode);
 	canvas.add(endNode);
 	canvas.add(bezierHandle);
+
+	// Update debug areas for selected segment only
+	showDebugHitAreas(canvas, graph, path);
+
 	canvas.renderAll();
 }
 
 export function setupEditMode(canvas: Canvas, graph: RoadGraph) {
-	showDebugHitAreas(canvas, graph);
-
+	// Don't show debug areas initially - only when a segment is selected
 	return {
 		onMouseDown: (options: TPointerEventInfo) => {
 			const target = options.target;
@@ -183,6 +252,8 @@ export function setupEditMode(canvas: Canvas, graph: RoadGraph) {
 			}
 
 			clearNodes(canvas);
+			clearDebugVisuals(canvas);
+			canvas.renderAll();
 		},
 
 		onMouseMove: (options: TPointerEventInfo) => {

@@ -10,14 +10,69 @@ import {
 	getDefaultControlPoint,
 	parsePathData
 } from '../geometry/path-utils';
+import { SNAP_THRESHOLD } from '../types';
 
 let isDrawing: boolean = false;
 let currentPath: Path | null = null;
 let startNode: Circle | null = null;
 let endNode: Circle | null = null;
+let debugCircles: Circle[] = [];
+
+function showDebugHitAreas(canvas: Canvas, graph: RoadGraph): void {
+	// Clear existing debug visuals
+	debugCircles.forEach((circle) => canvas.remove(circle));
+	debugCircles = [];
+
+	// Show all node hit areas
+	graph.getAllNodes().forEach((node) => {
+		const hitArea = new Circle({
+			left: node.x,
+			top: node.y,
+			radius: SNAP_THRESHOLD,
+			fill: 'rgba(255, 255, 0, 0.25)',
+			originX: 'center',
+			originY: 'center',
+			selectable: false,
+			evented: false
+		});
+		canvas.add(hitArea);
+		debugCircles.push(hitArea);
+	});
+
+	// Show all segment midpoint hit areas
+	graph.getAllSegments().forEach((segment) => {
+		if (segment.path) {
+			const coords = parsePathData(segment.path.path);
+			if (coords) {
+				const { x1, y1, cx, cy, x2, y2 } = coords;
+				const t = 0.5;
+				const x = (1 - t) * (1 - t) * x1 + 2 * (1 - t) * t * cx + t * t * x2;
+				const y = (1 - t) * (1 - t) * y1 + 2 * (1 - t) * t * cy + t * t * y2;
+
+				const hitArea = new Circle({
+					left: x,
+					top: y,
+					radius: SNAP_THRESHOLD / 2,
+					fill: 'rgba(0, 255, 255, 0.25)',
+					originX: 'center',
+					originY: 'center',
+					selectable: false,
+					evented: false
+				});
+				canvas.add(hitArea);
+				debugCircles.push(hitArea);
+			}
+		}
+	});
+
+	canvas.renderAll();
+}
 
 export function setupDrawMode(canvas: Canvas, graph: RoadGraph) {
 	canvas.defaultCursor = 'crosshair';
+
+	// Show all debug hit areas in draw mode
+	showDebugHitAreas(canvas, graph);
 
 	return {
 		onMouseDown: (options: TPointerEventInfo) => {
@@ -128,6 +183,11 @@ export function setupDrawMode(canvas: Canvas, graph: RoadGraph) {
 
 		cleanup: () => {
 			canvas.defaultCursor = 'default';
+
+			// Clear debug circles
+			debugCircles.forEach((circle) => canvas.remove(circle));
+			debugCircles = [];
+
 			if (startNode) {
 				canvas.remove(startNode);
 				startNode = null;
