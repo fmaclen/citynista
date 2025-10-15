@@ -95,3 +95,29 @@ export function toggleMode(): void {
 		editModeHandlers = setupEditMode(canvasInstance, graphInstance);
 	}
 }
+
+export function setMode(mode: Mode | null): void {
+	if (!canvasInstance || !graphInstance) return;
+
+	if (currentMode === 'draw' && drawModeHandlers) {
+		drawModeHandlers.cleanup();
+		drawModeHandlers = null;
+	} else if (currentMode === 'edit' && editModeHandlers) {
+		editModeHandlers.cleanup();
+		editModeHandlers = null;
+	}
+
+	if (mode === 'draw') {
+		currentMode = 'draw';
+		drawModeHandlers = setupDrawMode(canvasInstance, graphInstance);
+	} else if (mode === 'edit') {
+		currentMode = 'edit';
+		editModeHandlers = setupEditMode(canvasInstance, graphInstance);
+	} else {
+		currentMode = 'edit';
+	}
+}
+
+export function getCurrentMode(): Mode {
+	return currentMode;
+}

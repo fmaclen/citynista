@@ -1,45 +1,33 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import Toolbar from '$lib/components/Toolbar.svelte';
+	import EditorToolbar from '$lib/components/EditorToolbar.svelte';
 	import OSMLoader from '$lib/components/OSMLoader.svelte';
+	import { setGraphContext } from '$lib/context/graph.svelte';
 	import { Graph } from '$lib/graph/graph.svelte';
-	import { setupCanvas, toggleMode } from '$lib/canvas';
+	import { setupCanvas, setMode } from '$lib/canvas';
 	import { restoreGraph } from '$lib/graph/restore';
 	import { fetchOSMData } from '$lib/osm/import';
 	import { importOSMToGraph } from '$lib/osm/import-to-graph';
-	import type { Canvas } from 'fabric';
 
 	let canvasElement: HTMLCanvasElement;
-	let graph: Graph;
-	let canvas: Canvas;
+	const ctx = setGraphContext();
 
 	onMount(() => {
-		graph = new Graph();
-		canvas = setupCanvas(graph);
+		const canvas = setupCanvas(ctx.graph);
+		ctx.setCanvas(canvas);
 
 		const savedData = Graph.load();
 		if (savedData) {
-			restoreGraph(graph, canvas, savedData);
+			restoreGraph(ctx.graph, canvas, savedData);
 		}
 	});
-
-	function handleModeToggle() {
-		toggleMode();
-	}
-
-	function handleClear() {
-		if (graph && canvas) {
-			graph.clear();
-			canvas.clear();
-			canvas.backgroundColor = '#2a2a2a';
-			canvas.renderAll();
-		}
-	}
 
 	async function handleLoadOSM() {
 		const osmData = await fetchOSMData(25.618, -80.3465, 25.62, -80.344);
 		console.log('Loaded OSM data:', osmData);
-		importOSMToGraph(osmData, graph, canvas);
+		if (ctx.canvas) {
+			importOSMToGraph(osmData, ctx.graph, ctx.canvas);
+		}
 	}
 </script>
 
@@ -48,7 +36,7 @@
 </svelte:head>
 
 <div class="h-screen w-screen overflow-hidden bg-[#2a2a2a]">
-	<Toolbar onModeToggle={handleModeToggle} onClear={handleClear} />
+	<EditorToolbar />
 	<OSMLoader onLoad={handleLoadOSM} />
 	<canvas id="canvas" bind:this={canvasElement}></canvas>
 </div>
