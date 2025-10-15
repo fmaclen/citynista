@@ -1,11 +1,11 @@
-import type { ReactiveGraph } from '../graph/graph.svelte';
+import type { Graph } from '../graph/graph.svelte';
 import { generateId } from '../graph/graph.svelte';
 import { findSnappingTarget } from './snapping';
 import { splitSegmentAtPoint } from './splitting';
 import { getRelativeControlPoint, applyRelativeControlPoint, parsePathData } from './path-utils';
 
 export function updateConnectedSegments(
-	graph: ReactiveGraph,
+	graph: Graph,
 	nodeId: string,
 	newX: number,
 	newY: number,
@@ -90,7 +90,7 @@ export function updateConnectedSegments(
 }
 
 export function finalizeNodeConnection(
-	graph: ReactiveGraph,
+	graph: Graph,
 	x: number,
 	y: number,
 	segmentId: string,

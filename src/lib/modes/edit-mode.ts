@@ -1,6 +1,6 @@
 import { Canvas, Path, Point, Circle, FabricObject } from 'fabric';
 import type { TPointerEventInfo, BasicTransformEvent, ModifiedEvent } from 'fabric';
-import type { ReactiveGraph } from '../graph/graph.svelte';
+import type { Graph } from '../graph/graph.svelte';
 import { findSnappingTarget } from '../geometry/snapping';
 import { updateConnectedSegments } from '../geometry/connections';
 import { splitSegmentAtPoint } from '../geometry/splitting';
@@ -35,7 +35,7 @@ function clearDebugVisuals(canvas: Canvas): void {
 	debugCircles = [];
 }
 
-function showDebugHitAreas(canvas: Canvas, graph: ReactiveGraph, selectedSegmentPath?: Path | null): void {
+function showDebugHitAreas(canvas: Canvas, graph: Graph, selectedSegmentPath?: Path | null): void {
 	clearDebugVisuals(canvas);
 
 	// If a segment is selected, only show debug for connected nodes and that segment
@@ -173,7 +173,7 @@ function clearNodes(canvas: Canvas): void {
 	selectedPath = null;
 }
 
-function showNodesForPath(canvas: Canvas, graph: ReactiveGraph, path: Path): void {
+function showNodesForPath(canvas: Canvas, graph: Graph, path: Path): void {
 	if (selectedPath === path && startNode && endNode && bezierHandle) {
 		return;
 	}
@@ -205,7 +205,7 @@ function showNodesForPath(canvas: Canvas, graph: ReactiveGraph, path: Path): voi
 	canvas.renderAll();
 }
 
-export function setupEditMode(canvas: Canvas, graph: ReactiveGraph) {
+export function setupEditMode(canvas: Canvas, graph: Graph) {
 	// Don't show debug areas initially - only when a segment is selected
 	return {
 		onMouseDown: (options: TPointerEventInfo) => {

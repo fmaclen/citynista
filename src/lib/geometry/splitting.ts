@@ -1,10 +1,10 @@
-import type { ReactiveGraph, NetworkSegment } from '../graph/graph.svelte';
+import type { Graph, NetworkSegment } from '../graph/graph.svelte';
 import { generateId } from '../graph/graph.svelte';
 import { createCurvedPathData, parsePathData } from './path-utils';
 import { createSegmentPath } from '../canvas-utils';
 
 export function findNearestSegment(
-	graph: ReactiveGraph,
+	graph: Graph,
 	x: number,
 	y: number,
 	excludeSegmentIds: string[] = [],
@@ -51,7 +51,7 @@ export function findNearestSegment(
 }
 
 export function splitSegmentAtPoint(
-	graph: ReactiveGraph,
+	graph: Graph,
 	segment: NetworkSegment,
 	x: number,
 	y: number

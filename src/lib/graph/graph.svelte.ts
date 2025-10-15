@@ -42,7 +42,7 @@ export function generateId(): string {
 	return Math.random().toString(36).substring(2, 11);
 }
 
-export class ReactiveGraph {
+export class Graph {
 	private static STORAGE_KEY = 'citynista-graph';
 
 	nodes = $state<Map<string, NetworkNode>>(new Map());
@@ -188,7 +188,7 @@ export class ReactiveGraph {
 	save(): void {
 		try {
 			const data = this.serialize();
-			localStorage.setItem(ReactiveGraph.STORAGE_KEY, JSON.stringify(data));
+			localStorage.setItem(Graph.STORAGE_KEY, JSON.stringify(data));
 		} catch (error) {
 			console.error('Failed to save graph to localStorage:', error);
 		}
@@ -196,7 +196,7 @@ export class ReactiveGraph {
 
 	static load(): SerializedGraph | null {
 		try {
-			const data = localStorage.getItem(ReactiveGraph.STORAGE_KEY);
+			const data = localStorage.getItem(Graph.STORAGE_KEY);
 			if (!data) return null;
 			return JSON.parse(data);
 		} catch (error) {
