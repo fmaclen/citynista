@@ -164,6 +164,9 @@ export function setupDrawMode(canvas: Canvas, graph: RoadGraph) {
 						controlX: control.x,
 						controlY: control.y
 					});
+
+					// Refresh debug hit areas to include the new segment
+					showDebugHitAreas(canvas, graph);
 				}
 
 				canvas.renderAll();
