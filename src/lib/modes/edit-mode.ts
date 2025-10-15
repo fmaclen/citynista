@@ -28,131 +28,6 @@ let pathStartPos: {
 } | null = null;
 let hoveredPath: Path | null = null;
 let isMovingObject = false;
-let debugCircles: Circle[] = [];
-
-function clearDebugVisuals(canvas: Canvas): void {
-	debugCircles.forEach((circle) => canvas.remove(circle));
-	debugCircles = [];
-}
-
-function showDebugHitAreas(canvas: Canvas, graph: Graph, selectedSegmentPath?: Path | null): void {
-	clearDebugVisuals(canvas);
-
-	// If a segment is selected, only show debug for connected nodes and that segment
-	if (selectedSegmentPath) {
-		const segment = graph.findSegmentByPath(selectedSegmentPath);
-		if (segment) {
-			// Show debug for start node
-			const startNode = graph.getNode(segment.startNodeId);
-			if (startNode) {
-				const hitArea = new Circle({
-					left: startNode.x,
-					top: startNode.y,
-					radius: SNAP_THRESHOLD,
-					fill: 'rgba(255, 255, 0, 0.25)',
-					originX: 'center',
-					originY: 'center',
-					selectable: false,
-					evented: false
-				});
-				canvas.add(hitArea);
-				debugCircles.push(hitArea);
-				startNode.debugHitArea = hitArea;
-			}
-
-			// Show debug for end node
-			const endNode = graph.getNode(segment.endNodeId);
-			if (endNode) {
-				const hitArea = new Circle({
-					left: endNode.x,
-					top: endNode.y,
-					radius: SNAP_THRESHOLD,
-					fill: 'rgba(255, 255, 0, 0.25)',
-					originX: 'center',
-					originY: 'center',
-					selectable: false,
-					evented: false
-				});
-				canvas.add(hitArea);
-				debugCircles.push(hitArea);
-				endNode.debugHitArea = hitArea;
-			}
-
-			// Show debug for selected segment midpoint
-			const coords = parsePathData(selectedSegmentPath.path);
-			if (coords) {
-				const { x1, y1, cx, cy, x2, y2 } = coords;
-				const t = 0.5;
-				const x = (1 - t) * (1 - t) * x1 + 2 * (1 - t) * t * cx + t * t * x2;
-				const y = (1 - t) * (1 - t) * y1 + 2 * (1 - t) * t * cy + t * t * y2;
-
-				const hitArea = new Circle({
-					left: x,
-					top: y,
-					radius: SNAP_THRESHOLD / 2,
-					fill: 'rgba(0, 255, 255, 0.25)',
-					originX: 'center',
-					originY: 'center',
-					selectable: false,
-					evented: false
-				});
-				canvas.add(hitArea);
-				debugCircles.push(hitArea);
-				selectedSegmentPath.debugHitArea = hitArea;
-			}
-		}
-	} else {
-		// No selection - show all debug areas
-		// Show node hit areas
-		graph.getAllNodes().forEach((node) => {
-			const hitArea = new Circle({
-				left: node.x,
-				top: node.y,
-				radius: SNAP_THRESHOLD,
-				fill: 'rgba(255, 255, 0, 0.25)',
-				originX: 'center',
-				originY: 'center',
-				selectable: false,
-				evented: false
-			});
-			canvas.add(hitArea);
-			debugCircles.push(hitArea);
-			// Store reference on the node for updates
-			node.debugHitArea = hitArea;
-		});
-
-		// Show segment hit areas - only midpoint (t=0.5)
-		graph.getAllSegments().forEach((segment) => {
-			if (segment.path) {
-				const coords = parsePathData(segment.path.path);
-				if (coords) {
-					const { x1, y1, cx, cy, x2, y2 } = coords;
-
-					// Only show midpoint snap circle
-					const t = 0.5;
-					const x = (1 - t) * (1 - t) * x1 + 2 * (1 - t) * t * cx + t * t * x2;
-					const y = (1 - t) * (1 - t) * y1 + 2 * (1 - t) * t * cy + t * t * y2;
-
-					const hitArea = new Circle({
-						left: x,
-						top: y,
-						radius: SNAP_THRESHOLD / 2,
-						fill: 'rgba(0, 255, 255, 0.25)',
-						originX: 'center',
-						originY: 'center',
-						selectable: false,
-						evented: false
-					});
-					canvas.add(hitArea);
-					debugCircles.push(hitArea);
-					segment.path.debugHitArea = hitArea;
-				}
-			}
-		});
-	}
-
-	canvas.renderAll();
-}
 
 function clearNodes(canvas: Canvas): void {
 	if (startNode) {
@@ -199,14 +74,10 @@ function showNodesForPath(canvas: Canvas, graph: Graph, path: Path): void {
 	canvas.add(endNode);
 	canvas.add(bezierHandle);
 
-	// Update debug areas for selected segment only
-	showDebugHitAreas(canvas, graph, path);
-
 	canvas.renderAll();
 }
 
 export function setupEditMode(canvas: Canvas, graph: Graph) {
-	// Don't show debug areas initially - only when a segment is selected
 	return {
 		onMouseDown: (options: TPointerEventInfo) => {
 			const target = options.target;
@@ -252,7 +123,6 @@ export function setupEditMode(canvas: Canvas, graph: Graph) {
 			}
 
 			clearNodes(canvas);
-			clearDebugVisuals(canvas);
 			canvas.renderAll();
 		},
 
@@ -303,17 +173,6 @@ export function setupEditMode(canvas: Canvas, graph: Graph) {
 				if (segment) {
 					updateConnectedSegments(graph, segment.startNodeId, newX1, newY1, segment.id);
 					updateConnectedSegments(graph, segment.endNodeId, newX2, newY2, segment.id);
-				}
-
-				// Update debug hit area for the segment midpoint
-				if (selectedPath && selectedPath.debugHitArea) {
-					const t = 0.5;
-					const midX = (1 - t) * (1 - t) * newX1 + 2 * (1 - t) * t * newCX + t * t * newX2;
-					const midY = (1 - t) * (1 - t) * newY1 + 2 * (1 - t) * t * newCY + t * t * newY2;
-					selectedPath.debugHitArea.set({
-						left: midX,
-						top: midY
-					});
 				}
 
 				canvas.renderAll();
@@ -462,57 +321,6 @@ export function setupEditMode(canvas: Canvas, graph: Graph) {
 				});
 			}
 
-			// Update debug hit area for the current segment midpoint using updated coordinates
-			if (selectedPath && selectedPath.debugHitArea) {
-				const t = 0.5;
-				const midX = (1 - t) * (1 - t) * x1 + 2 * (1 - t) * t * cx + t * t * x2;
-				const midY = (1 - t) * (1 - t) * y1 + 2 * (1 - t) * t * cy + t * t * y2;
-				selectedPath.debugHitArea.set({
-					left: midX,
-					top: midY
-				});
-			}
-
-			// Only update node debug circles if we're moving a node (not bezier handle)
-			if (target !== bezierHandle) {
-				const currentNode = graph.getNode(
-					target === startNode ? segment.startNodeId : segment.endNodeId
-				);
-				if (currentNode && currentNode.debugHitArea) {
-					currentNode.debugHitArea.set({
-						left: left,
-						top: top
-					});
-				}
-
-				// Update debug hit areas for all OTHER connected segments' midpoints
-				if (currentNode) {
-					currentNode.connectedSegments.forEach((segId) => {
-						if (segId === segment.id) return; // Skip current segment, already updated above
-
-						const seg = graph.getSegment(segId);
-						if (seg && seg.path && seg.path.debugHitArea) {
-							const coords = parsePathData(seg.path.path);
-							if (coords) {
-								const t = 0.5;
-								const midX =
-									(1 - t) * (1 - t) * coords.x1 +
-									2 * (1 - t) * t * coords.cx +
-									t * t * coords.x2;
-								const midY =
-									(1 - t) * (1 - t) * coords.y1 +
-									2 * (1 - t) * t * coords.cy +
-									t * t * coords.y2;
-								seg.path.debugHitArea.set({
-									left: midX,
-									top: midY
-								});
-							}
-						}
-					});
-				}
-			}
-
 			canvas.renderAll();
 		},
 
@@ -650,14 +458,12 @@ export function setupEditMode(canvas: Canvas, graph: Graph) {
 
 				canvas.remove(selectedPath);
 				clearNodes(canvas);
-				clearDebugVisuals(canvas);
 				canvas.renderAll();
 			}
 		},
 
 		cleanup: () => {
 			clearNodes(canvas);
-			clearDebugVisuals(canvas);
 			if (hoveredPath) {
 				hoveredPath.set({ stroke: '#666666' });
 				hoveredPath = null;
