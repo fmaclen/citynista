@@ -23,29 +23,19 @@ export function findNearestSegment(
 
 		const { x1, y1, cx, cy, x2, y2 } = coords;
 
-		let minDist = Infinity;
-		let bestPoint = { x, y };
-		let bestParam = 0;
+		// Only check midpoint (t=0.5)
+		const t = 0.5;
+		const qx = (1 - t) * (1 - t) * x1 + 2 * (1 - t) * t * cx + t * t * x2;
+		const qy = (1 - t) * (1 - t) * y1 + 2 * (1 - t) * t * cy + t * t * y2;
 
-		for (let t = 0.1; t <= 0.9; t += 0.05) {
-			const qx = (1 - t) * (1 - t) * x1 + 2 * (1 - t) * t * cx + t * t * x2;
-			const qy = (1 - t) * (1 - t) * y1 + 2 * (1 - t) * t * cy + t * t * y2;
+		const dx = x - qx;
+		const dy = y - qy;
+		const dist = Math.sqrt(dx * dx + dy * dy);
 
-			const dx = x - qx;
-			const dy = y - qy;
-			const dist = Math.sqrt(dx * dx + dy * dy);
-
-			if (dist < minDist) {
-				minDist = dist;
-				bestPoint = { x: qx, y: qy };
-				bestParam = t;
-			}
-		}
-
-		if (minDist < closestDistance && bestParam >= 0.1 && bestParam <= 0.9) {
-			closestDistance = minDist;
+		if (dist < closestDistance) {
+			closestDistance = dist;
 			closestSegment = segment;
-			closestPoint = bestPoint;
+			closestPoint = { x: qx, y: qy };
 		}
 	}
 

@@ -10,6 +10,7 @@ import {
 	applyRelativeControlPoint,
 	parsePathData
 } from '../geometry/path-utils';
+import { SNAP_THRESHOLD } from '../types';
 
 let selectedPath: Path | null = null;
 let startNode: Circle | null = null;
@@ -27,6 +28,65 @@ let pathStartPos: {
 } | null = null;
 let hoveredPath: Path | null = null;
 let isMovingObject = false;
+let debugCircles: Circle[] = [];
+
+function clearDebugVisuals(canvas: Canvas): void {
+	debugCircles.forEach((circle) => canvas.remove(circle));
+	debugCircles = [];
+}
+
+function showDebugHitAreas(canvas: Canvas, graph: RoadGraph): void {
+	clearDebugVisuals(canvas);
+
+	// Show node hit areas
+	graph.getAllNodes().forEach((node) => {
+		const hitArea = new Circle({
+			left: node.x,
+			top: node.y,
+			radius: SNAP_THRESHOLD,
+			fill: 'rgba(255, 255, 0, 0.25)',
+			originX: 'center',
+			originY: 'center',
+			selectable: false,
+			evented: false
+		});
+		canvas.add(hitArea);
+		debugCircles.push(hitArea);
+		// Store reference on the node for updates
+		node.debugHitArea = hitArea;
+	});
+
+	// Show segment hit areas - only midpoint (t=0.5)
+	graph.getAllSegments().forEach((segment) => {
+		if (segment.path) {
+			const coords = parsePathData(segment.path.path);
+			if (coords) {
+				const { x1, y1, cx, cy, x2, y2 } = coords;
+
+				// Only show midpoint snap circle
+				const t = 0.5;
+				const x = (1 - t) * (1 - t) * x1 + 2 * (1 - t) * t * cx + t * t * x2;
+				const y = (1 - t) * (1 - t) * y1 + 2 * (1 - t) * t * cy + t * t * y2;
+
+				const hitArea = new Circle({
+					left: x,
+					top: y,
+					radius: SNAP_THRESHOLD / 2,
+					fill: 'rgba(0, 255, 255, 0.25)',
+					originX: 'center',
+					originY: 'center',
+					selectable: false,
+					evented: false
+				});
+				canvas.add(hitArea);
+				debugCircles.push(hitArea);
+				segment.path.debugHitArea = hitArea;
+			}
+		}
+	});
+
+	canvas.renderAll();
+}
 
 function clearNodes(canvas: Canvas): void {
 	if (startNode) {
@@ -76,6 +136,8 @@ function showNodesForPath(canvas: Canvas, _graph: RoadGraph, path: Path): void {
 }
 
 export function setupEditMode(canvas: Canvas, graph: RoadGraph) {
+	showDebugHitAreas(canvas, graph);
+
 	return {
 		onMouseDown: (options: TPointerEventInfo) => {
 			const target = options.target;
@@ -172,6 +234,17 @@ export function setupEditMode(canvas: Canvas, graph: RoadGraph) {
 					updateConnectedSegments(graph, segment.endNodeId, newX2, newY2, segment.id);
 				}
 
+				// Update debug hit area for the segment midpoint
+				if (selectedPath && selectedPath.debugHitArea) {
+					const t = 0.5;
+					const midX = (1 - t) * (1 - t) * newX1 + 2 * (1 - t) * t * newCX + t * t * newX2;
+					const midY = (1 - t) * (1 - t) * newY1 + 2 * (1 - t) * t * newCY + t * t * newY2;
+					selectedPath.debugHitArea.set({
+						left: midX,
+						top: midY
+					});
+				}
+
 				canvas.renderAll();
 				return;
 			}
@@ -260,7 +333,17 @@ export function setupEditMode(canvas: Canvas, graph: RoadGraph) {
 				const currentNodeId = target === startNode ? segment.startNodeId : segment.endNodeId;
 				const otherNodeId = target === startNode ? segment.endNodeId : segment.startNodeId;
 
-				const snapResult = findSnappingTarget(graph, left, top, [currentNodeId, otherNodeId]);
+				// Get all segments connected to the current node to exclude them from snapping
+				const currentNode = graph.getNode(currentNodeId);
+				const excludeSegments = currentNode ? currentNode.connectedSegments : [];
+
+				const snapResult = findSnappingTarget(
+					graph,
+					left,
+					top,
+					[currentNodeId, otherNodeId],
+					excludeSegments
+				);
 				left = snapResult.snappedX;
 				top = snapResult.snappedY;
 				target.set({ left, top });
@@ -306,6 +389,57 @@ export function setupEditMode(canvas: Canvas, graph: RoadGraph) {
 					left: cx,
 					top: cy
 				});
+			}
+
+			// Update debug hit area for the current segment midpoint using updated coordinates
+			if (selectedPath && selectedPath.debugHitArea) {
+				const t = 0.5;
+				const midX = (1 - t) * (1 - t) * x1 + 2 * (1 - t) * t * cx + t * t * x2;
+				const midY = (1 - t) * (1 - t) * y1 + 2 * (1 - t) * t * cy + t * t * y2;
+				selectedPath.debugHitArea.set({
+					left: midX,
+					top: midY
+				});
+			}
+
+			// Only update node debug circles if we're moving a node (not bezier handle)
+			if (target !== bezierHandle) {
+				const currentNode = graph.getNode(
+					target === startNode ? segment.startNodeId : segment.endNodeId
+				);
+				if (currentNode && currentNode.debugHitArea) {
+					currentNode.debugHitArea.set({
+						left: left,
+						top: top
+					});
+				}
+
+				// Update debug hit areas for all OTHER connected segments' midpoints
+				if (currentNode) {
+					currentNode.connectedSegments.forEach((segId) => {
+						if (segId === segment.id) return; // Skip current segment, already updated above
+
+						const seg = graph.getSegment(segId);
+						if (seg && seg.path && seg.path.debugHitArea) {
+							const coords = parsePathData(seg.path.path);
+							if (coords) {
+								const t = 0.5;
+								const midX =
+									(1 - t) * (1 - t) * coords.x1 +
+									2 * (1 - t) * t * coords.cx +
+									t * t * coords.x2;
+								const midY =
+									(1 - t) * (1 - t) * coords.y1 +
+									2 * (1 - t) * t * coords.cy +
+									t * t * coords.y2;
+								seg.path.debugHitArea.set({
+									left: midX,
+									top: midY
+								});
+							}
+						}
+					});
+				}
 			}
 
 			canvas.renderAll();
@@ -450,6 +584,7 @@ export function setupEditMode(canvas: Canvas, graph: RoadGraph) {
 
 		cleanup: () => {
 			clearNodes(canvas);
+			clearDebugVisuals(canvas);
 			if (hoveredPath) {
 				hoveredPath.set({ stroke: '#666666' });
 				hoveredPath = null;

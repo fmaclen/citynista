@@ -10,24 +10,53 @@ export function findSnappingTarget(
 	excludeNodeIds: string[] = [],
 	excludeSegmentIds: string[] = []
 ): SnapResult {
-	const nearbyNode = graph.findNearbyNode(x, y, SNAP_THRESHOLD);
+	let closestNode = null;
+	let closestNodeDistance = SNAP_THRESHOLD;
 
-	if (nearbyNode && !excludeNodeIds.includes(nearbyNode.id)) {
+	// Find closest node
+	for (const node of graph.getAllNodes().values()) {
+		if (excludeNodeIds.includes(node.id)) continue;
+
+		const dx = node.x - x;
+		const dy = node.y - y;
+		const distance = Math.sqrt(dx * dx + dy * dy);
+
+		if (distance < closestNodeDistance) {
+			closestNodeDistance = distance;
+			closestNode = node;
+		}
+	}
+
+	let closestSegment = null;
+	let closestSegmentPoint = { x, y };
+	let closestSegmentDistance = SNAP_THRESHOLD;
+
+	// Find closest segment midpoint
+	const nearestSegment = findNearestSegment(graph, x, y, excludeSegmentIds, SNAP_THRESHOLD);
+	if (nearestSegment) {
+		const dx = nearestSegment.splitX - x;
+		const dy = nearestSegment.splitY - y;
+		closestSegmentDistance = Math.sqrt(dx * dx + dy * dy);
+		closestSegment = nearestSegment.segment;
+		closestSegmentPoint = { x: nearestSegment.splitX, y: nearestSegment.splitY };
+	}
+
+	// Return closest target (nodes have priority if distances are equal)
+	if (closestNode && closestNodeDistance <= closestSegmentDistance) {
 		return {
-			snappedX: nearbyNode.x,
-			snappedY: nearbyNode.y,
-			snappedNode: nearbyNode,
+			snappedX: closestNode.x,
+			snappedY: closestNode.y,
+			snappedNode: closestNode,
 			snappedSegment: null
 		};
 	}
 
-	const nearestSegment = findNearestSegment(graph, x, y, excludeSegmentIds, SNAP_THRESHOLD);
-	if (nearestSegment) {
+	if (closestSegment) {
 		return {
-			snappedX: nearestSegment.splitX,
-			snappedY: nearestSegment.splitY,
+			snappedX: closestSegmentPoint.x,
+			snappedY: closestSegmentPoint.y,
 			snappedNode: null,
-			snappedSegment: nearestSegment.segment
+			snappedSegment: closestSegment
 		};
 	}
 
