@@ -5,11 +5,17 @@
 	let canvasElement: HTMLCanvasElement;
 	const editor = setEditorContext();
 
+	// HACK: Prevent $effect from re-running when graph changes (e.g., after clearAll).
+	// Without this, loadSavedData() gets called multiple times, reloading stale data from localStorage.
+	// Unable to reliably test this timing-dependent bug in Playwright.
+	let initialized = false;
+
 	$effect(() => {
-		if (!canvasElement) return;
+		if (!canvasElement || initialized) return;
 
 		editor.initCanvas(canvasElement);
 		editor.loadSavedData();
+		initialized = true;
 	});
 </script>
 
