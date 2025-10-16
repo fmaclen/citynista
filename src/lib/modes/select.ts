@@ -20,7 +20,7 @@ export function setupSelect(editor: Editor) {
 	let dragStartY = 0;
 	let nodeStartX = 0;
 	let nodeStartY = 0;
-	let nodesStartPositions: Map<string, { x: number; y: number }> = new Map();
+	const nodesStartPositions: Map<string, { x: number; y: number }> = new Map();
 
 	// Store the proportional position of control points (t value along the line)
 	type SegmentControlInfo = {
@@ -33,7 +33,7 @@ export function setupSelect(editor: Editor) {
 		controlX: number;
 		controlY: number;
 	};
-	let segmentControlStarts: Map<string, SegmentControlInfo> = new Map();
+	const segmentControlStarts: Map<string, SegmentControlInfo> = new Map();
 
 	const handleKeyDown = (e: KeyboardEvent) => {
 		if (e.key === 'Escape') {

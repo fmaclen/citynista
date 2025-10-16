@@ -1,5 +1,5 @@
 import { Path, Circle, type Canvas } from 'fabric';
-import { createPath, updatePathData } from './path-utils';
+import { createPath } from './path-utils';
 import type { Graph } from './graph.svelte';
 
 export interface SegmentData {
