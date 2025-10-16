@@ -19,7 +19,7 @@ Citynista is a web-based city planning tool prototype focused on drawing street 
 - **Start dev server**: `bun run dev` (runs Vite dev server with HMR)
 - **Build for production**: `bun run build`
 - **Preview production build**: `bun run preview`
-- **Type check**: `bun x tsc --noEmit`
+- **Type check**: `bun run check`
 - **Lint & format**: `bun run quality` (runs format, lint, and check)
 - **Format code**: `bun run format`
 - **Lint code**: `bun run lint`
