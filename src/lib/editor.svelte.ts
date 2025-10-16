@@ -38,6 +38,12 @@ export class Editor {
 				this.setupModeHandlers();
 			}
 		});
+
+		// Control node visibility based on mode
+		$effect(() => {
+			const shouldShowNodes = this.mode === 'draw' || this.mode === 'select';
+			this.graph.setNodesVisible(shouldShowNodes);
+		});
 	}
 
 	initCanvas(canvasElement: HTMLCanvasElement) {

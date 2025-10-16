@@ -15,7 +15,7 @@ export class Node {
 	connectedSegments: string[] = [];
 	isSelected = $state(false);
 
-	private circle: Circle | null = null;
+	circle: Circle | null = null;
 	private debugHitArea: Circle | null = null;
 	private canvas: Canvas;
 

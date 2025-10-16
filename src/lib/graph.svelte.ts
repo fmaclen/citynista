@@ -80,6 +80,17 @@ export class Graph {
 		this.canvas = canvas;
 	}
 
+	setNodesVisible(visible: boolean) {
+		for (const node of this.nodes.values()) {
+			if (node.circle) {
+				node.circle.set({ visible });
+			}
+		}
+		if (this.canvas) {
+			this.canvas.renderAll();
+		}
+	}
+
 	addNode(data: NodeData): Node {
 		if (!this.canvas) throw new Error('Canvas not initialized');
 		const node = new Node(data, this.canvas);
