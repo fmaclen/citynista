@@ -47,6 +47,11 @@ export class Editor {
 	}
 
 	initCanvas(canvasElement: HTMLCanvasElement) {
+		if (this.canvas) {
+			// Canvas already initialized
+			return;
+		}
+
 		this.canvas = new Canvas(canvasElement, {
 			width: window.innerWidth,
 			height: window.innerHeight,
