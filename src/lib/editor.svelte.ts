@@ -119,7 +119,23 @@ export class Editor {
 		this.selectedSegments.clear();
 		this.selectedSegments.add(id);
 		const segment = this.graph.segments.get(id);
-		if (segment) segment.isSelected = true;
+		if (segment) {
+			segment.isSelected = true;
+
+			// Also select both nodes of the segment
+			this.selectedNodes.clear();
+			const startNode = this.graph.nodes.get(segment.startNodeId);
+			const endNode = this.graph.nodes.get(segment.endNodeId);
+
+			if (startNode) {
+				this.selectedNodes.add(startNode.id);
+				startNode.isSelected = true;
+			}
+			if (endNode) {
+				this.selectedNodes.add(endNode.id);
+				endNode.isSelected = true;
+			}
+		}
 	}
 
 	selectNode(id: string) {
