@@ -11,7 +11,7 @@
 		<Button
 			variant={editor.mode === 'draw' ? 'default' : 'ghost'}
 			size="icon"
-			onclick={() => (editor.mode = 'draw')}
+			onclick={() => (editor.mode = editor.mode === 'draw' ? undefined : 'draw')}
 			title="Draw Mode"
 		>
 			<Pencil class="h-4 w-4" />
@@ -20,7 +20,7 @@
 		<Button
 			variant={editor.mode === 'select' ? 'default' : 'ghost'}
 			size="icon"
-			onclick={() => (editor.mode = 'select')}
+			onclick={() => (editor.mode = editor.mode === 'select' ? undefined : 'select')}
 			title="Select Mode"
 		>
 			<MousePointer2 class="h-4 w-4" />
