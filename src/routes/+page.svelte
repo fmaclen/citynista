@@ -14,7 +14,7 @@
 </script>
 
 <svelte:head>
-	<title>Citynista - Road Drawing</title>
+	<title>Citynista</title>
 </svelte:head>
 
 <div class="h-screen w-screen overflow-hidden bg-[#2a2a2a]">
