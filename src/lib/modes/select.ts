@@ -36,7 +36,13 @@ export function setupSelect(editor: Editor) {
 	let segmentControlStarts: Map<string, SegmentControlInfo> = new Map();
 
 	const handleKeyDown = (e: KeyboardEvent) => {
-		if (e.key === 'Delete' || e.key === 'Backspace') {
+		if (e.key === 'Escape') {
+			if (editor.selectedSegments.size > 0 || editor.selectedNodes.size > 0) {
+				editor.clearSelection();
+			} else {
+				editor.mode = undefined;
+			}
+		} else if (e.key === 'Delete' || e.key === 'Backspace') {
 			editor.deleteSelected();
 		}
 	};

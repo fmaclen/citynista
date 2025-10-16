@@ -22,7 +22,11 @@ export function setupDraw(editor: Editor) {
 
 	const handleKeyDown = (e: KeyboardEvent) => {
 		if (e.key === 'Escape') {
-			cleanupDraft();
+			if (isDrawing) {
+				cleanupDraft();
+			} else {
+				editor.mode = undefined;
+			}
 		}
 	};
 

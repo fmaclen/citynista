@@ -143,7 +143,7 @@ export class Graph {
 
 	deleteNode(id: string) {
 		const node = this.nodes.get(id);
-		if (!this.canvas) return;
+		if (!this.canvas || !node) return;
 
 		node.cleanup(this.canvas);
 		this.nodes.delete(id);
