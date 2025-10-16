@@ -178,6 +178,52 @@ export class Graph {
 		this.nodes.delete(id);
 	}
 
+	splitSegment(segmentId: string, newNodeId: string, x: number, y: number): void {
+		const segment = this.segments.get(segmentId);
+		if (!segment) return;
+
+		const startNode = this.nodes.get(segment.startNodeId);
+		const endNode = this.nodes.get(segment.endNodeId);
+		if (!startNode || !endNode) return;
+
+		const startNodeId = segment.startNodeId;
+		const endNodeId = segment.endNodeId;
+
+		this.addNode({
+			id: newNodeId,
+			x,
+			y,
+			connectedSegments: []
+		});
+
+		const controlPoint1 = {
+			x: (startNode.x + x) / 2,
+			y: (startNode.y + y) / 2
+		};
+		const controlPoint2 = {
+			x: (x + endNode.x) / 2,
+			y: (y + endNode.y) / 2
+		};
+
+		this.addSegment({
+			id: `${segmentId}-1`,
+			startNodeId: startNodeId,
+			endNodeId: newNodeId,
+			controlX: controlPoint1.x,
+			controlY: controlPoint1.y
+		});
+
+		this.addSegment({
+			id: `${segmentId}-2`,
+			startNodeId: newNodeId,
+			endNodeId: endNodeId,
+			controlX: controlPoint2.x,
+			controlY: controlPoint2.y
+		});
+
+		this.deleteSegment(segmentId);
+	}
+
 	findNearbyNode(x: number, y: number, threshold: number = 15): Node | undefined {
 		for (const node of this.nodes.values()) {
 			const dx = node.x - x;

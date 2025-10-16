@@ -2,7 +2,7 @@ import type { Editor } from '../editor.svelte';
 import type { TPointerEventInfo } from 'fabric';
 import { Path, Circle } from 'fabric';
 import { generateId } from '../constants';
-import { getDefaultControlPoint } from '../path-utils';
+import { getDefaultControlPoint, findLineSegmentIntersection } from '../path-utils';
 import type { NodeData } from '../node.svelte';
 import type { SegmentData } from '../segment.svelte';
 
@@ -137,21 +137,102 @@ export function setupDraw(editor: Editor) {
 				if (length >= 10) {
 					const snapEnd = editor.graph.findNearbyNode(endX, endY, 15);
 					const endNodeId = snapEnd?.id ?? generateId();
+					const finalEndX = snapEnd ? snapEnd.x : endX;
+					const finalEndY = snapEnd ? snapEnd.y : endY;
+
+					const intersections: Array<{
+						segmentId: string;
+						x: number;
+						y: number;
+						distance: number;
+					}> = [];
+
+					for (const segment of editor.graph.segments.values()) {
+						if (
+							segment.startNodeId === currentStartNodeId ||
+							segment.endNodeId === currentStartNodeId
+						) {
+							continue;
+						}
+
+						const segmentStartNode = editor.graph.nodes.get(segment.startNodeId);
+						const segmentEndNode = editor.graph.nodes.get(segment.endNodeId);
+
+						if (!segmentStartNode || !segmentEndNode) continue;
+
+						const intersection = findLineSegmentIntersection(
+							startX,
+							startY,
+							finalEndX,
+							finalEndY,
+							segmentStartNode.x,
+							segmentStartNode.y,
+							segmentEndNode.x,
+							segmentEndNode.y
+						);
+
+						if (intersection) {
+							const distFromStart = Math.sqrt(
+								(intersection.x - startX) ** 2 + (intersection.y - startY) ** 2
+							);
+							intersections.push({
+								segmentId: segment.id,
+								x: intersection.x,
+								y: intersection.y,
+								distance: distFromStart
+							});
+						}
+					}
+
+					intersections.sort((a, b) => a.distance - b.distance);
+
+					let currentNodeId = currentStartNodeId!;
+					let currentX = startX;
+					let currentY = startY;
+
+					for (const intersection of intersections) {
+						const intersectionNodeId = generateId();
+						editor.graph.splitSegment(
+							intersection.segmentId,
+							intersectionNodeId,
+							intersection.x,
+							intersection.y
+						);
+
+						const controlPoint = getDefaultControlPoint(
+							currentX,
+							currentY,
+							intersection.x,
+							intersection.y
+						);
+						const segmentData: SegmentData = {
+							id: generateId(),
+							startNodeId: currentNodeId,
+							endNodeId: intersectionNodeId,
+							controlX: controlPoint.x,
+							controlY: controlPoint.y
+						};
+						editor.graph.addSegment(segmentData);
+
+						currentNodeId = intersectionNodeId;
+						currentX = intersection.x;
+						currentY = intersection.y;
+					}
 
 					if (!snapEnd) {
 						const nodeData: NodeData = {
 							id: endNodeId,
-							x: endX,
-							y: endY,
+							x: finalEndX,
+							y: finalEndY,
 							connectedSegments: []
 						};
 						editor.graph.addNode(nodeData);
 					}
 
-					const controlPoint = getDefaultControlPoint(startX, startY, endX, endY);
+					const controlPoint = getDefaultControlPoint(currentX, currentY, finalEndX, finalEndY);
 					const segmentData: SegmentData = {
 						id: generateId(),
-						startNodeId: currentStartNodeId!,
+						startNodeId: currentNodeId,
 						endNodeId: endNodeId,
 						controlX: controlPoint.x,
 						controlY: controlPoint.y
@@ -160,8 +241,8 @@ export function setupDraw(editor: Editor) {
 					editor.graph.addSegment(segmentData);
 
 					currentStartNodeId = endNodeId;
-					startX = endX;
-					startY = endY;
+					startX = finalEndX;
+					startY = finalEndY;
 
 					if (draftStartNode) {
 						draftStartNode.set({ left: startX, top: startY });

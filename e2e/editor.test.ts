@@ -292,4 +292,66 @@ test.describe('Editor', () => {
 		expect(data.nodes[0].x).toBeCloseTo(160, 0);
 		expect(data.nodes[0].y).toBeCloseTo(160, 0);
 	});
+
+	test('drawing across existing segment creates intersection node', async ({ page }) => {
+		await page.goto('/');
+
+		const canvas = page.locator('canvas#canvas');
+
+		// Enter draw mode
+		await page.locator('button').first().click();
+
+		// Draw first segment horizontally (100,150) to (300,150)
+		await canvas.click({ position: { x: 100, y: 150 }, force: true });
+		await canvas.click({ position: { x: 300, y: 150 }, force: true });
+
+		// Wait for save
+		await page.waitForTimeout(100);
+
+		// Verify we have 2 nodes and 1 segment
+		let savedData = await page.evaluate(() => {
+			const data = localStorage.getItem('citynista-graph');
+			return data ? JSON.parse(data) : null;
+		});
+
+		expect(savedData.nodes).toHaveLength(2);
+		expect(savedData.segments).toHaveLength(1);
+
+		// Draw second segment vertically crossing the first (200,100) to (200,200)
+		await canvas.click({ position: { x: 200, y: 100 }, force: true });
+		await canvas.click({ position: { x: 200, y: 200 }, force: true });
+
+		// Wait for save
+		await page.waitForTimeout(100);
+
+		// Exit draw mode
+		await page.keyboard.press('Escape');
+
+		// Get final data
+		savedData = await page.evaluate(() => {
+			const data = localStorage.getItem('citynista-graph');
+			return data ? JSON.parse(data) : null;
+		});
+
+		// Should now have 5 nodes:
+		// - 2 endpoints of horizontal segment (100, 150) and (300, 150)
+		// - 2 endpoints of vertical segment (200, 100) and (200, 200)
+		// - 1 intersection node at (200, 150)
+		expect(savedData.nodes).toHaveLength(5);
+
+		// Should have 5 segments:
+		// - 1 segment from first click to second click in draw mode (before intersection)
+		// - 2 segments from split horizontal line
+		// - 2 segments from vertical line (start to intersection, intersection to end)
+		expect(savedData.segments).toHaveLength(5);
+
+		// Verify intersection node exists at approximately (200, 150)
+		const intersectionNode = savedData.nodes.find(
+			(node: { x: number; y: number }) => Math.abs(node.x - 200) < 1 && Math.abs(node.y - 150) < 1
+		);
+		expect(intersectionNode).toBeDefined();
+
+		// Verify the intersection node is connected to 4 segments
+		expect(intersectionNode.connectedSegments).toHaveLength(4);
+	});
 });
