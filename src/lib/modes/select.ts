@@ -259,7 +259,8 @@ export function setupSelect(editor: Editor) {
 						const controlVecY = info.controlY - info.startNodeY;
 
 						// Project control point onto the line to get t (parametric position)
-						const dotProduct = (controlVecX * oldLineX + controlVecY * oldLineY) / (oldLineLen * oldLineLen);
+						const dotProduct =
+							(controlVecX * oldLineX + controlVecY * oldLineY) / (oldLineLen * oldLineLen);
 
 						// Perpendicular offset from the line
 						const perpX = controlVecX - dotProduct * oldLineX;
@@ -311,7 +312,8 @@ export function setupSelect(editor: Editor) {
 						const controlVecY = info.controlY - info.startNodeY;
 
 						// Project control point onto the line to get t (parametric position)
-						const dotProduct = (controlVecX * oldLineX + controlVecY * oldLineY) / (oldLineLen * oldLineLen);
+						const dotProduct =
+							(controlVecX * oldLineX + controlVecY * oldLineY) / (oldLineLen * oldLineLen);
 
 						// Perpendicular offset from the line
 						const perpX = controlVecX - dotProduct * oldLineX;

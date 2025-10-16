@@ -149,7 +149,6 @@ export class Segment {
 			this.bezierHandle.set({ left: this.controlX, top: this.controlY });
 			this.bezierHandle.setCoords();
 		}
-
 	}
 
 	hideHandles() {

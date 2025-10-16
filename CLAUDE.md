@@ -52,6 +52,7 @@ The application uses Svelte 5's reactive primitives (`$state`, `$effect`, `$deri
 ### Mode System
 
 Modes are implemented as separate modules in `src/lib/modes/`:
+
 - **draw.ts**: Click-to-draw road segments with snapping to existing nodes
 - **select.ts**: Select, drag nodes/segments, move bezier control points, delete with Delete/Backspace
 
