@@ -37,11 +37,8 @@ export class Graph {
 
 		$effect(() => {
 			for (const segment of this.segments.values()) {
-				void segment.controlX;
-				void segment.controlY;
-				void segment.startNodeId;
-				void segment.endNodeId;
-				segment.updatePath();
+				// Access version to trigger pathVersion $derived.by
+				void segment.version;
 			}
 		});
 
@@ -113,7 +110,7 @@ export class Graph {
 
 	deleteNode(id: string) {
 		const node = this.nodes.get(id);
-		if (!node || !this.canvas) return;
+		if (!this.canvas) return;
 
 		node.cleanup(this.canvas);
 		this.nodes.delete(id);

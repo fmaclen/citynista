@@ -27,6 +27,31 @@ export class Segment {
 	private canvas: Canvas;
 	private graph: Graph;
 
+	// Derived state that triggers path updates when nodes or control points change
+	private pathVersion = $derived.by(() => {
+		const startNode = this.graph.nodes.get(this.startNodeId);
+		const endNode = this.graph.nodes.get(this.endNodeId);
+
+		// Access reactive properties to create dependencies
+		const startX = startNode?.x ?? 0;
+		const startY = startNode?.y ?? 0;
+		const endX = endNode?.x ?? 0;
+		const endY = endNode?.y ?? 0;
+		const controlX = this.controlX;
+		const controlY = this.controlY;
+
+		// Update the path when any dependency changes
+		this.updatePath();
+
+		// Also update handles if selected
+		if (this.isSelected) {
+			this.showHandles();
+		}
+
+		// Return a version number to track changes
+		return { startX, startY, endX, endY, controlX, controlY };
+	});
+
 	constructor(data: SegmentData, canvas: Canvas, graph: Graph) {
 		this.id = data.id;
 		this.startNodeId = data.startNodeId;
@@ -37,6 +62,11 @@ export class Segment {
 		this.graph = graph;
 
 		this.updatePath();
+	}
+
+	// Trigger reactivity by accessing pathVersion
+	get version() {
+		return this.pathVersion;
 	}
 
 	updatePath() {
@@ -50,12 +80,12 @@ export class Segment {
 		const x2 = endNode.x;
 		const y2 = endNode.y;
 
-		if (!this.path) {
-			this.path = createPath(x1, y1, x2, y2, this.controlX, this.controlY);
-			this.canvas.add(this.path);
-		} else {
-			updatePathData(this.path, x1, y1, x2, y2, this.controlX, this.controlY);
+		// Remove old path and create new one
+		if (this.path) {
+			this.canvas.remove(this.path);
 		}
+		this.path = createPath(x1, y1, x2, y2, this.controlX, this.controlY);
+		this.canvas.add(this.path);
 		this.canvas.renderAll();
 	}
 
@@ -78,6 +108,9 @@ export class Segment {
 				originY: 'center'
 			});
 			this.canvas.add(this.startHandle);
+		} else {
+			this.startHandle.set({ left: startNode.x, top: startNode.y });
+			this.startHandle.setCoords();
 		}
 
 		if (!this.endHandle) {
@@ -94,6 +127,9 @@ export class Segment {
 				originY: 'center'
 			});
 			this.canvas.add(this.endHandle);
+		} else {
+			this.endHandle.set({ left: endNode.x, top: endNode.y });
+			this.endHandle.setCoords();
 		}
 
 		if (!this.bezierHandle) {
@@ -110,6 +146,9 @@ export class Segment {
 				originY: 'center'
 			});
 			this.canvas.add(this.bezierHandle);
+		} else {
+			this.bezierHandle.set({ left: this.controlX, top: this.controlY });
+			this.bezierHandle.setCoords();
 		}
 
 		this.canvas.renderAll();
