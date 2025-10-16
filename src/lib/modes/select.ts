@@ -388,7 +388,7 @@ export function setupSelect(editor: Editor) {
 }
 
 function findSegmentAtPoint(editor: Editor, point: { x: number; y: number }): Segment | undefined {
-	const threshold = 10;
+	const threshold = 10; // Half of the 20px hit area stroke width
 
 	for (const segment of editor.graph.segments.values()) {
 		const startNode = editor.graph.nodes.get(segment.startNodeId);
@@ -396,6 +396,7 @@ function findSegmentAtPoint(editor: Editor, point: { x: number; y: number }): Se
 
 		if (!startNode || !endNode) continue;
 
+		// Calculate minimum distance from point to the bezier curve
 		const distance = distanceToQuadraticBezier(
 			point.x,
 			point.y,
@@ -426,7 +427,7 @@ function distanceToQuadraticBezier(
 	y2: number
 ): number {
 	let minDist = Infinity;
-	const steps = 20;
+	const steps = 100; // Increased from 20 to 100 for better coverage
 
 	for (let i = 0; i <= steps; i++) {
 		const t = i / steps;

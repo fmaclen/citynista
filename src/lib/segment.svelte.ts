@@ -1,6 +1,7 @@
 import { Path, Circle, type Canvas } from 'fabric';
 import { createPath } from './path-utils';
 import type { Graph } from './graph.svelte';
+import type { Editor } from './editor.svelte';
 
 export interface SegmentData {
 	id: string;
@@ -21,11 +22,13 @@ export class Segment {
 	isDraft = $state(false);
 
 	private path: Path | null = null;
+	hitAreaPath: Path | null = null;
 	private startHandle: Circle | null = null;
 	private endHandle: Circle | null = null;
 	private bezierHandle: Circle | null = null;
 	private canvas: Canvas;
 	private graph: Graph;
+	private editor: Editor;
 
 	// Derived state that triggers path updates when nodes or control points change
 	private pathVersion = $derived.by(() => {
@@ -39,6 +42,7 @@ export class Segment {
 		const endY = endNode?.y ?? 0;
 		const controlX = this.controlX;
 		const controlY = this.controlY;
+		const debugMode = this.editor?.debugMode ?? true;
 
 		// Update the path when any dependency changes
 		this.updatePath();
@@ -48,11 +52,16 @@ export class Segment {
 			this.showHandles();
 		}
 
+		// Update hit area visibility based on debug mode
+		if (this.hitAreaPath) {
+			this.hitAreaPath.set({ visible: debugMode });
+		}
+
 		// Return a version number to track changes
-		return { startX, startY, endX, endY, controlX, controlY };
+		return { startX, startY, endX, endY, controlX, controlY, debugMode };
 	});
 
-	constructor(data: SegmentData, canvas: Canvas, graph: Graph) {
+	constructor(data: SegmentData, canvas: Canvas, graph: Graph, editor: Editor) {
 		this.id = data.id;
 		this.startNodeId = data.startNodeId;
 		this.endNodeId = data.endNodeId;
@@ -60,6 +69,7 @@ export class Segment {
 		this.controlY = data.controlY;
 		this.canvas = canvas;
 		this.graph = graph;
+		this.editor = editor;
 
 		this.updatePath();
 	}
@@ -79,6 +89,27 @@ export class Segment {
 		const y1 = startNode.y;
 		const x2 = endNode.x;
 		const y2 = endNode.y;
+
+		const pathData = `M ${x1} ${y1} Q ${this.controlX} ${this.controlY} ${x2} ${y2}`;
+
+		// Remove old hit area path
+		if (this.hitAreaPath) {
+			this.canvas.remove(this.hitAreaPath);
+			this.hitAreaPath = null;
+		}
+
+		// Create hit area path (visible yellow for debugging)
+		this.hitAreaPath = new Path(pathData, {
+			stroke: 'rgba(255, 255, 0, 0.3)',
+			strokeWidth: 20,
+			fill: 'transparent',
+			selectable: false,
+			evented: false,
+			strokeLineCap: 'round',
+			strokeLineJoin: 'round',
+			visible: this.editor?.debugMode ?? true
+		});
+		this.canvas.add(this.hitAreaPath);
 
 		// Remove old path and create new one
 		if (this.path) {
@@ -170,6 +201,10 @@ export class Segment {
 		if (this.path) {
 			canvas.remove(this.path);
 			this.path = null;
+		}
+		if (this.hitAreaPath) {
+			canvas.remove(this.hitAreaPath);
+			this.hitAreaPath = null;
 		}
 		this.hideHandles();
 	}

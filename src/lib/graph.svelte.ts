@@ -2,6 +2,7 @@ import { SvelteMap } from 'svelte/reactivity';
 import type { Canvas } from 'fabric';
 import { Node, type NodeData } from './node.svelte';
 import { Segment, type SegmentData } from './segment.svelte';
+import type { Editor } from './editor.svelte';
 
 export interface SerializedGraph {
 	nodes: NodeData[];
@@ -15,6 +16,7 @@ export class Graph {
 	segments = new SvelteMap<string, Segment>();
 
 	private canvas: Canvas | null = null;
+	private editor: Editor | null = null;
 
 	private saveScheduled = false;
 	private renderScheduled = false;
@@ -102,6 +104,10 @@ export class Graph {
 		this.canvas = canvas;
 	}
 
+	setEditor(editor: Editor) {
+		this.editor = editor;
+	}
+
 	setNodesVisible(visible: boolean) {
 		for (const node of this.nodes.values()) {
 			if (node.circle) {
@@ -122,7 +128,8 @@ export class Graph {
 
 	addSegment(data: SegmentData): Segment {
 		if (!this.canvas) throw new Error('Canvas not initialized');
-		const segment = new Segment(data, this.canvas, this);
+		if (!this.editor) throw new Error('Editor not initialized');
+		const segment = new Segment(data, this.canvas, this, this.editor);
 		this.segments.set(segment.id, segment);
 
 		const startNode = this.nodes.get(data.startNodeId);

@@ -21,6 +21,7 @@ export class Editor {
 	canvas: Canvas | null = null;
 
 	mode = $state<Mode>(undefined);
+	debugMode = $state(false);
 
 	selectedSegments = new SvelteSet<string>();
 	selectedNodes = new SvelteSet<string>();
@@ -32,6 +33,7 @@ export class Editor {
 
 	constructor() {
 		this.graph = new Graph();
+		this.graph.setEditor(this);
 
 		$effect(() => {
 			if (this.mode && this.canvas) {
