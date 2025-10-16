@@ -240,7 +240,7 @@ export class Graph {
 			};
 		});
 
-		console.log(`Road Network - Nodes: ${this.nodes.size}, Segments: ${this.segments.size}`, {
+		console.log(`Graph - Nodes: ${this.nodes.size}, Segments: ${this.segments.size}`, {
 			nodes: nodesData,
 			segments: segmentsData
 		});
