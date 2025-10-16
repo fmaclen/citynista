@@ -90,14 +90,6 @@ test.describe('Editor', () => {
 		// Click on the segment to select it
 		await canvas.click({ position: { x: 150, y: 150 }, force: true });
 
-		// Get initial node positions
-		const initialData = await page.evaluate(() => {
-			const data = localStorage.getItem('citynista-graph');
-			return data ? JSON.parse(data) : null;
-		});
-
-		const initialNode1 = initialData.nodes[0];
-
 		// Get canvas bounding box to calculate absolute positions
 		const canvasBox = await canvas.boundingBox();
 		if (!canvasBox) throw new Error('Canvas not found');
@@ -231,6 +223,7 @@ test.describe('Editor', () => {
 		await page.goto('/');
 
 		const canvas = page.locator('canvas#canvas');
+		const selectButton = page.locator('button').nth(1);
 
 		// Draw a segment
 		await page.locator('button').first().click(); // Enter draw mode
@@ -238,9 +231,25 @@ test.describe('Editor', () => {
 		await canvas.click({ position: { x: 200, y: 200 }, force: true });
 		await page.keyboard.press('Escape'); // Exit draw mode
 
+		const canvasBox = await canvas.boundingBox();
+		if (!canvasBox) throw new Error('Canvas not found');
+
 		// Enter select mode and select segment
-		await page.locator('button').nth(1).click();
+		await selectButton.click();
 		await canvas.click({ position: { x: 150, y: 150 }, force: true });
+
+		// Drag the node to verify we're in select mode
+		await page.mouse.move(canvasBox.x + 100, canvasBox.y + 100);
+		await page.mouse.down();
+		await page.mouse.move(canvasBox.x + 120, canvasBox.y + 120);
+		await page.mouse.up();
+
+		// Verify node moved
+		let data = await page.evaluate(() => {
+			const d = localStorage.getItem('citynista-graph');
+			return d ? JSON.parse(d) : null;
+		});
+		expect(data.nodes[0].x).toBeCloseTo(120, 0);
 
 		// Press Escape to clear selection
 		await page.keyboard.press('Escape');
@@ -249,7 +258,38 @@ test.describe('Editor', () => {
 		await page.keyboard.press('Escape');
 
 		// Select button should no longer be active
-		const selectButton = page.locator('button').nth(1);
 		await expect(selectButton).not.toHaveClass(/bg-primary/);
+
+		// BUG TEST: After exiting select mode, should NOT be able to move nodes
+		await page.mouse.move(canvasBox.x + 120, canvasBox.y + 120);
+		await page.mouse.down();
+		await page.mouse.move(canvasBox.x + 140, canvasBox.y + 140);
+		await page.mouse.up();
+
+		// Verify node did NOT move
+		data = await page.evaluate(() => {
+			const d = localStorage.getItem('citynista-graph');
+			return d ? JSON.parse(d) : null;
+		});
+		expect(data.nodes[0].x).toBeCloseTo(120, 0);
+		expect(data.nodes[0].y).toBeCloseTo(120, 0);
+
+		// BUG TEST: Re-entering select mode should work
+		await selectButton.click();
+		await expect(selectButton).toHaveClass(/bg-primary/);
+
+		// Should be able to move nodes again
+		await page.mouse.move(canvasBox.x + 120, canvasBox.y + 120);
+		await page.mouse.down();
+		await page.mouse.move(canvasBox.x + 160, canvasBox.y + 160);
+		await page.mouse.up();
+
+		// Verify node moved
+		data = await page.evaluate(() => {
+			const d = localStorage.getItem('citynista-graph');
+			return d ? JSON.parse(d) : null;
+		});
+		expect(data.nodes[0].x).toBeCloseTo(160, 0);
+		expect(data.nodes[0].y).toBeCloseTo(160, 0);
 	});
 });

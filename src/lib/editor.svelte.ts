@@ -36,6 +36,8 @@ export class Editor {
 		$effect(() => {
 			if (this.mode && this.canvas) {
 				this.setupModeHandlers();
+			} else {
+				this.cleanupHandlers();
 			}
 		});
 
