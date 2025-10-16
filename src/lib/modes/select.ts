@@ -50,6 +50,10 @@ export function setupSelect(editor: Editor) {
 			// Check if clicking on a node
 			const clickedNode = editor.graph.findNearbyNode(pointer.x, pointer.y, 8);
 			if (clickedNode) {
+				// Select the node
+				editor.clearSelection();
+				editor.selectNode(clickedNode.id);
+
 				isDragging = true;
 				dragTarget = { type: 'node', node: clickedNode };
 				nodeStartX = clickedNode.x;

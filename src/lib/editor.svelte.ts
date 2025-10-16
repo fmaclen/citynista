@@ -116,12 +116,24 @@ export class Editor {
 		if (segment) segment.isSelected = true;
 	}
 
+	selectNode(id: string) {
+		this.selectedNodes.clear();
+		this.selectedNodes.add(id);
+		const node = this.graph.nodes.get(id);
+		if (node) node.isSelected = true;
+	}
+
 	clearSelection() {
 		this.selectedSegments.forEach((id) => {
 			const segment = this.graph.segments.get(id);
 			if (segment) segment.isSelected = false;
 		});
 		this.selectedSegments.clear();
+
+		this.selectedNodes.forEach((id) => {
+			const node = this.graph.nodes.get(id);
+			if (node) node.isSelected = false;
+		});
 		this.selectedNodes.clear();
 	}
 

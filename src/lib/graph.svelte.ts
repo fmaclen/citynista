@@ -17,6 +17,7 @@ export class Graph {
 	private canvas: Canvas | null = null;
 
 	constructor() {
+		// Save when nodes or segments are added/removed
 		$effect(() => {
 			void this.nodes.size;
 			void this.segments.size;
@@ -27,14 +28,34 @@ export class Graph {
 			});
 		});
 
+		// Save and redraw when node positions change
 		$effect(() => {
 			for (const node of this.nodes.values()) {
 				void node.x;
 				void node.y;
+				void node.isSelected;
 				node.draw();
 			}
+
+			requestAnimationFrame(() => {
+				this.save();
+			});
 		});
 
+		// Save when segment control points or selection changes
+		$effect(() => {
+			for (const segment of this.segments.values()) {
+				void segment.controlX;
+				void segment.controlY;
+				void segment.isSelected;
+			}
+
+			requestAnimationFrame(() => {
+				this.save();
+			});
+		});
+
+		// Trigger segment path updates
 		$effect(() => {
 			for (const segment of this.segments.values()) {
 				// Access version to trigger pathVersion $derived.by
@@ -42,6 +63,7 @@ export class Graph {
 			}
 		});
 
+		// Show/hide segment handles based on selection
 		$effect(() => {
 			for (const segment of this.segments.values()) {
 				void segment.isSelected;

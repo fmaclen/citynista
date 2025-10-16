@@ -13,6 +13,7 @@ export class Node {
 	x = $state(0);
 	y = $state(0);
 	connectedSegments: string[] = [];
+	isSelected = $state(false);
 
 	private circle: Circle | null = null;
 	private debugHitArea: Circle | null = null;
@@ -34,7 +35,9 @@ export class Node {
 				left: this.x,
 				top: this.y,
 				radius: NODE_RADIUS,
-				fill: '#ffffff',
+				fill: this.isSelected ? '#4299E1' : '#ffffff',
+				stroke: this.isSelected ? '#ffffff' : undefined,
+				strokeWidth: this.isSelected ? 2 : 0,
 				selectable: false,
 				evented: false,
 				originX: 'center',
@@ -42,7 +45,13 @@ export class Node {
 			});
 			this.canvas.add(this.circle);
 		} else {
-			this.circle.set({ left: this.x, top: this.y });
+			this.circle.set({
+				left: this.x,
+				top: this.y,
+				fill: this.isSelected ? '#4299E1' : '#ffffff',
+				stroke: this.isSelected ? '#ffffff' : undefined,
+				strokeWidth: this.isSelected ? 2 : 0
+			});
 			this.circle.setCoords();
 		}
 		this.canvas.renderAll();
