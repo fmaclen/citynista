@@ -13,8 +13,7 @@
 		"format": "prettier --write .",
 		"lint": "prettier --check . && eslint .",
 		"quality": "bun run format && bun run lint && bun run check",
-		"test:e2e": "playwright test",
-		"test": "npm run test:e2e"
+		"test": "playwright test"
 	},
 	"devDependencies": {
 		"@eslint/compat": "^1.4.0",

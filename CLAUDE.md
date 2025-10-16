@@ -23,7 +23,7 @@ Citynista is a web-based city planning tool prototype focused on drawing street 
 - **Lint & format**: `bun run quality` (runs format, lint, and check)
 - **Format code**: `bun run format`
 - **Lint code**: `bun run lint`
-- **E2E tests**: `bun run test:e2e`
+- **E2E tests**: `bun run test` | `bun run test -- -g 'partial name of test'`
 
 ## Architecture
 
@@ -76,6 +76,12 @@ Each mode returns a `ModeHandlers` object with `onMouseDown`, `onMouseMove`, `on
 - `src/lib/osm/import.ts`: Fetches and parses OpenStreetMap data
 - `src/lib/osm/import-to-graph.ts`: Converts OSM ways to graph nodes/segments
 - Supports loading real street networks from OSM XML data
+
+## Testing Guidelines
+
+- **Never use `waitForTimeout()` in tests** - rely on Playwright's default timeouts and auto-waiting
+- Use positive and negative assertions to wait for things (e.g., `await expect(element).toBeVisible()`, `await expect(element).not.toBeVisible()`)
+- Playwright automatically waits for elements to be actionable before performing actions
 
 ## LLM Instructions
 
