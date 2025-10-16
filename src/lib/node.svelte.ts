@@ -45,6 +45,13 @@ export class Node {
 			});
 			this.canvas.add(this.circle);
 		} else {
+			this.updatePosition();
+		}
+		this.canvas.renderAll();
+	}
+
+	updatePosition() {
+		if (this.circle) {
 			this.circle.set({
 				left: this.x,
 				top: this.y,
@@ -54,7 +61,6 @@ export class Node {
 			});
 			this.circle.setCoords();
 		}
-		this.canvas.renderAll();
 	}
 
 	cleanup(canvas: Canvas) {

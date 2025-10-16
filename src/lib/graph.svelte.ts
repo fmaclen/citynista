@@ -16,30 +16,30 @@ export class Graph {
 
 	private canvas: Canvas | null = null;
 
+	private saveScheduled = false;
+	private renderScheduled = false;
+
 	constructor() {
 		// Save when nodes or segments are added/removed
 		$effect(() => {
 			void this.nodes.size;
 			void this.segments.size;
 
-			requestAnimationFrame(() => {
-				this.save();
-				this.log();
-			});
+			this.scheduleSave();
+			this.log();
 		});
 
-		// Save and redraw when node positions change
+		// Redraw when node positions change
 		$effect(() => {
 			for (const node of this.nodes.values()) {
 				void node.x;
 				void node.y;
 				void node.isSelected;
-				node.draw();
+				node.updatePosition();
 			}
 
-			requestAnimationFrame(() => {
-				this.save();
-			});
+			this.scheduleSave();
+			this.scheduleRender();
 		});
 
 		// Save when segment control points or selection changes
@@ -50,9 +50,7 @@ export class Graph {
 				void segment.isSelected;
 			}
 
-			requestAnimationFrame(() => {
-				this.save();
-			});
+			this.scheduleSave();
 		});
 
 		// Trigger segment path updates
@@ -61,6 +59,7 @@ export class Graph {
 				// Access version to trigger pathVersion $derived.by
 				void segment.version;
 			}
+			this.scheduleRender();
 		});
 
 		// Show/hide segment handles based on selection
@@ -72,6 +71,29 @@ export class Graph {
 				} else {
 					this.hideSegmentHandles(segment);
 				}
+			}
+			this.scheduleRender();
+		});
+	}
+
+	private scheduleSave() {
+		if (this.saveScheduled) return;
+		this.saveScheduled = true;
+
+		requestAnimationFrame(() => {
+			this.saveScheduled = false;
+			this.save();
+		});
+	}
+
+	private scheduleRender() {
+		if (this.renderScheduled || !this.canvas) return;
+		this.renderScheduled = true;
+
+		requestAnimationFrame(() => {
+			this.renderScheduled = false;
+			if (this.canvas) {
+				this.canvas.renderAll();
 			}
 		});
 	}

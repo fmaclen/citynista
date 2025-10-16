@@ -72,6 +72,11 @@ export class Editor {
 		if (saved) {
 			saved.nodes.forEach((nodeData) => this.graph.addNode(nodeData));
 			saved.segments.forEach((segmentData) => this.graph.addSegment(segmentData));
+
+			// Trigger initial render
+			if (this.canvas) {
+				this.canvas.renderAll();
+			}
 		}
 	}
 

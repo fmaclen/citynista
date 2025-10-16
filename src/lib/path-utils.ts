@@ -54,6 +54,6 @@ export function updatePathData(
 	controlY: number
 ): void {
 	const pathData = createCurvedPathData(x1, y1, x2, y2, controlX, controlY);
-	(path as { path: string | (string | number)[][] }).path = pathData;
+	path.set({ path: pathData });
 	path.setCoords();
 }

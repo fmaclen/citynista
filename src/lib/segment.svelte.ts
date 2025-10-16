@@ -86,7 +86,6 @@ export class Segment {
 		}
 		this.path = createPath(x1, y1, x2, y2, this.controlX, this.controlY);
 		this.canvas.add(this.path);
-		this.canvas.renderAll();
 	}
 
 	showHandles() {
@@ -151,7 +150,6 @@ export class Segment {
 			this.bezierHandle.setCoords();
 		}
 
-		this.canvas.renderAll();
 	}
 
 	hideHandles() {
@@ -167,7 +165,6 @@ export class Segment {
 			this.canvas.remove(this.bezierHandle);
 			this.bezierHandle = null;
 		}
-		this.canvas.renderAll();
 	}
 
 	cleanup(canvas: Canvas) {
