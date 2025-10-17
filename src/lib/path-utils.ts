@@ -111,8 +111,14 @@ export function findLineBezierIntersection(
 
 	if (Math.abs(controlX - midX) < tolerance && Math.abs(controlY - midY) < tolerance) {
 		return findLineSegmentIntersection(
-			lineX1, lineY1, lineX2, lineY2,
-			curveX1, curveY1, curveX2, curveY2
+			lineX1,
+			lineY1,
+			lineX2,
+			lineY2,
+			curveX1,
+			curveY1,
+			curveX2,
+			curveY2
 		);
 	}
 
@@ -126,12 +132,15 @@ export function findLineBezierIntersection(
 
 	// Expand bezier and substitute into line equation
 	// This gives us a quadratic equation in t: At² + Bt + C = 0
-	const p0x = curveX1, p0y = curveY1;
-	const p1x = controlX, p1y = controlY;
-	const p2x = curveX2, p2y = curveY2;
+	const p0x = curveX1,
+		p0y = curveY1;
+	const p1x = controlX,
+		p1y = controlY;
+	const p2x = curveX2,
+		p2y = curveY2;
 
 	// Coefficients for the quadratic equation
-	const A = a * (p0x - 2*p1x + p2x) + b * (p0y - 2*p1y + p2y);
+	const A = a * (p0x - 2 * p1x + p2x) + b * (p0y - 2 * p1y + p2y);
 	const B = 2 * (a * (p1x - p0x) + b * (p1y - p0y));
 	const C = a * p0x + b * p0y + c;
 
@@ -160,13 +169,14 @@ export function findLineBezierIntersection(
 	for (const t of solutions) {
 		if (t >= 0 && t <= 1) {
 			// Calculate point on bezier at parameter t
-			const x = (1-t) * (1-t) * p0x + 2 * (1-t) * t * p1x + t * t * p2x;
-			const y = (1-t) * (1-t) * p0y + 2 * (1-t) * t * p1y + t * t * p2y;
+			const x = (1 - t) * (1 - t) * p0x + 2 * (1 - t) * t * p1x + t * t * p2x;
+			const y = (1 - t) * (1 - t) * p0y + 2 * (1 - t) * t * p1y + t * t * p2y;
 
 			// Check if point is on line segment
-			const lineT = Math.abs(lineX2 - lineX1) > Math.abs(lineY2 - lineY1)
-				? (x - lineX1) / (lineX2 - lineX1)
-				: (y - lineY1) / (lineY2 - lineY1);
+			const lineT =
+				Math.abs(lineX2 - lineX1) > Math.abs(lineY2 - lineY1)
+					? (x - lineX1) / (lineX2 - lineX1)
+					: (y - lineY1) / (lineY2 - lineY1);
 
 			if (lineT >= 0.01 && lineT <= 0.99) {
 				return { x, y, t };

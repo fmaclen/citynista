@@ -148,7 +148,6 @@ export function setupDraw(editor: Editor) {
 						distance: number;
 					}> = [];
 
-		
 					for (const segment of editor.graph.segments.values()) {
 						if (
 							segment.startNodeId === currentStartNodeId ||
@@ -186,7 +185,7 @@ export function setupDraw(editor: Editor) {
 								t: intersection.t,
 								distance: distFromStart
 							});
-							}
+						}
 					}
 
 					intersections.sort((a, b) => a.distance - b.distance);
@@ -201,8 +200,9 @@ export function setupDraw(editor: Editor) {
 							intersection.segmentId,
 							intersectionNodeId,
 							intersection.x,
-							intersection.y
-							,intersection.t						);
+							intersection.y,
+							intersection.t
+						);
 
 						const controlPoint = getDefaultControlPoint(
 							currentX,

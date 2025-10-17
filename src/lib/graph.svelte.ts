@@ -187,7 +187,6 @@ export class Graph {
 		const endNode = this.nodes.get(segment.endNodeId);
 		if (!startNode || !endNode) return;
 
-	
 		const startNodeId = segment.startNodeId;
 		const endNodeId = segment.endNodeId;
 
@@ -215,7 +214,6 @@ export class Graph {
 
 			controlPoint1 = splitResult.segment1;
 			controlPoint2 = splitResult.segment2;
-
 		} else {
 			// Fallback to midpoint (shouldn't happen with our new code)
 			controlPoint1 = {
