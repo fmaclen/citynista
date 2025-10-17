@@ -3,6 +3,7 @@ import type { Canvas } from 'fabric';
 import { Node, type NodeData } from './node.svelte';
 import { Segment, type SegmentData } from './segment.svelte';
 import type { Editor } from './editor.svelte';
+import { splitBezierAtT } from './path-utils';
 
 export interface SerializedGraph {
 	nodes: NodeData[];
@@ -178,7 +179,7 @@ export class Graph {
 		this.nodes.delete(id);
 	}
 
-	splitSegment(segmentId: string, newNodeId: string, x: number, y: number): void {
+	splitSegment(segmentId: string, newNodeId: string, x: number, y: number, t?: number): void {
 		const segment = this.segments.get(segmentId);
 		if (!segment) return;
 
@@ -186,9 +187,11 @@ export class Graph {
 		const endNode = this.nodes.get(segment.endNodeId);
 		if (!startNode || !endNode) return;
 
+	
 		const startNodeId = segment.startNodeId;
 		const endNodeId = segment.endNodeId;
 
+		// Use the actual split point coordinates
 		this.addNode({
 			id: newNodeId,
 			x,
@@ -196,29 +199,49 @@ export class Graph {
 			connectedSegments: []
 		});
 
-		const controlPoint1 = {
-			x: (startNode.x + x) / 2,
-			y: (startNode.y + y) / 2
-		};
-		const controlPoint2 = {
-			x: (x + endNode.x) / 2,
-			y: (y + endNode.y) / 2
-		};
+		let controlPoint1, controlPoint2;
+
+		if (t !== undefined && t >= 0 && t <= 1) {
+			// Use proper bezier splitting when we have the t parameter
+			const splitResult = splitBezierAtT(
+				startNode.x,
+				startNode.y,
+				segment.controlX,
+				segment.controlY,
+				endNode.x,
+				endNode.y,
+				t
+			);
+
+			controlPoint1 = splitResult.segment1;
+			controlPoint2 = splitResult.segment2;
+
+		} else {
+			// Fallback to midpoint (shouldn't happen with our new code)
+			controlPoint1 = {
+				controlX: (startNode.x + x) / 2,
+				controlY: (startNode.y + y) / 2
+			};
+			controlPoint2 = {
+				controlX: (x + endNode.x) / 2,
+				controlY: (y + endNode.y) / 2
+			};
+		}
 
 		this.addSegment({
 			id: `${segmentId}-1`,
 			startNodeId: startNodeId,
 			endNodeId: newNodeId,
-			controlX: controlPoint1.x,
-			controlY: controlPoint1.y
+			controlX: controlPoint1.controlX,
+			controlY: controlPoint1.controlY
 		});
 
 		this.addSegment({
 			id: `${segmentId}-2`,
 			startNodeId: newNodeId,
 			endNodeId: endNodeId,
-			controlX: controlPoint2.x,
-			controlY: controlPoint2.y
+			controlX: controlPoint2.controlX,
+			controlY: controlPoint2.controlY
 		});
 
 		this.deleteSegment(segmentId);

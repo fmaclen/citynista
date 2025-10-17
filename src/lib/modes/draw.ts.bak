@@ -144,11 +144,9 @@ export function setupDraw(editor: Editor) {
 						segmentId: string;
 						x: number;
 						y: number;
-						t: number;
 						distance: number;
 					}> = [];
 
-		
 					for (const segment of editor.graph.segments.values()) {
 						if (
 							segment.startNodeId === currentStartNodeId ||
@@ -162,15 +160,13 @@ export function setupDraw(editor: Editor) {
 
 						if (!segmentStartNode || !segmentEndNode) continue;
 
-						const intersection = findLineBezierIntersection(
+						const intersection = findLineSegmentIntersection(
 							startX,
 							startY,
 							finalEndX,
 							finalEndY,
 							segmentStartNode.x,
 							segmentStartNode.y,
-							segment.controlX,
-							segment.controlY,
 							segmentEndNode.x,
 							segmentEndNode.y
 						);
@@ -183,10 +179,9 @@ export function setupDraw(editor: Editor) {
 								segmentId: segment.id,
 								x: intersection.x,
 								y: intersection.y,
-								t: intersection.t,
 								distance: distFromStart
 							});
-							}
+						}
 					}
 
 					intersections.sort((a, b) => a.distance - b.distance);
@@ -202,7 +197,7 @@ export function setupDraw(editor: Editor) {
 							intersectionNodeId,
 							intersection.x,
 							intersection.y
-							,intersection.t						);
+						);
 
 						const controlPoint = getDefaultControlPoint(
 							currentX,
