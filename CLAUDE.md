@@ -71,12 +71,6 @@ Each mode returns a `ModeHandlers` object with `onMouseDown`, `onMouseMove`, `on
 - Graph holds reference to canvas and passes it to nodes/segments on creation
 - Cleanup is managed explicitly (remove Fabric objects before deleting from maps)
 
-### OSM Import
-
-- `src/lib/osm/import.ts`: Fetches and parses OpenStreetMap data
-- `src/lib/osm/import-to-graph.ts`: Converts OSM ways to graph nodes/segments
-- Supports loading real street networks from OSM XML data
-
 ## Testing Guidelines
 
 - **Never use `waitForTimeout()` in tests** - rely on Playwright's default timeouts and auto-waiting
