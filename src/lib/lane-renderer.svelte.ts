@@ -1,4 +1,4 @@
-import { Rect, type Canvas } from 'fabric';
+import { Rect, Path, type Canvas } from 'fabric';
 import { getBezierPoint, getBezierNormal } from './path-utils';
 import type { Lane } from './lane-config.svelte';
 
@@ -90,14 +90,13 @@ export function renderStraightLanes(config: LaneRenderConfig, canvas: Canvas): R
 
 /**
  * Renders lanes along a curved bezier segment
- * Uses multiple small segments to approximate the curve
+ * Uses parallel bezier curves for smooth continuous lanes
  */
 export function renderCurvedLanes(
 	config: LaneRenderConfig,
-	canvas: Canvas,
-	segmentCount: number = 20
-): Rect[] {
-	const rects: Rect[] = [];
+	canvas: Canvas
+): (Rect | Path)[] {
+	const objects: (Rect | Path)[] = [];
 	const { startX, startY, controlX, controlY, endX, endY, lanes } = config;
 
 	// Calculate total width to center the lane group (convert meters to pixels)
@@ -114,56 +113,45 @@ export function renderCurvedLanes(
 		// This lane's center offset from the segment centerline
 		const edgeOffset = lanePosition + laneWidthPx / 2;
 
-		for (let i = 0; i < segmentCount; i++) {
-			const t1 = i / segmentCount;
-			const t2 = (i + 1) / segmentCount;
+		// Calculate offset control point for this lane's parallel curve
+		const startNormal = getBezierNormal(startX, startY, controlX, controlY, endX, endY, 0);
+		const endNormal = getBezierNormal(startX, startY, controlX, controlY, endX, endY, 1);
+		const midNormal = getBezierNormal(startX, startY, controlX, controlY, endX, endY, 0.5);
 
-			// Get points on the curve
-			const p1 = getBezierPoint(startX, startY, controlX, controlY, endX, endY, t1);
-			const p2 = getBezierPoint(startX, startY, controlX, controlY, endX, endY, t2);
+		// Offset start, end, and control points
+		const offsetStartX = startX + startNormal.x * edgeOffset;
+		const offsetStartY = startY + startNormal.y * edgeOffset;
+		const offsetEndX = endX + endNormal.x * edgeOffset;
+		const offsetEndY = endY + endNormal.y * edgeOffset;
+		const offsetControlX = controlX + midNormal.x * edgeOffset;
+		const offsetControlY = controlY + midNormal.y * edgeOffset;
 
-			// Get normal at start of this segment
-			const n1 = getBezierNormal(startX, startY, controlX, controlY, endX, endY, t1);
+		// Create path data for this lane's curve
+		const pathData = `M ${offsetStartX} ${offsetStartY} Q ${offsetControlX} ${offsetControlY} ${offsetEndX} ${offsetEndY}`;
 
-			// Calculate segment length
-			const segDx = p2.x - p1.x;
-			const segDy = p2.y - p1.y;
-			const segLength = Math.sqrt(segDx * segDx + segDy * segDy);
+		// Create a Path with stroke instead of fill
+		const path = new Path(pathData, {
+			stroke: lane.color,
+			strokeWidth: laneWidthPx,
+			fill: '',
+			selectable: false,
+			evented: false,
+			strokeLineCap: 'butt',
+			strokeLineJoin: 'round'
+		});
 
-			if (segLength < 0.1) continue;
-
-			// Position offset for this lane (perpendicular to curve)
-			const offsetX = n1.x * edgeOffset;
-			const offsetY = n1.y * edgeOffset;
-
-			// Create rectangle for this curved segment
-			const rect = new Rect({
-				left: p1.x + offsetX,
-				top: p1.y + offsetY,
-				width: segLength,
-				height: laneWidthPx,
-				fill: lane.color,
-				stroke: 'transparent',
-				selectable: false,
-				evented: false,
-				originX: 'center',
-				originY: 'center',
-				angle: (Math.atan2(segDy, segDx) * 180) / Math.PI
-			});
-
-			rects.push(rect);
-			canvas.add(rect);
-		}
+		objects.push(path);
+		canvas.add(path);
 
 		lanePosition += laneWidthPx;
 	}
 
 	// Send lanes to back so they render below segment lines
-	for (const rect of rects) {
-		canvas.sendObjectToBack(rect);
+	for (const obj of objects) {
+		canvas.sendObjectToBack(obj);
 	}
 
-	return rects;
+	return objects;
 }
 
 /**

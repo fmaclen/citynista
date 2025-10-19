@@ -1,4 +1,4 @@
-import { Rect, type Canvas } from 'fabric';
+import { type Canvas, type FabricObject } from 'fabric';
 import type { Segment } from './segment.svelte';
 import type { LaneConfiguration } from './lane-config.svelte';
 import type { Graph } from './graph.svelte';
@@ -10,7 +10,7 @@ export class LaneGroup {
 	private graph: Graph;
 	private config: LaneConfiguration;
 
-	private laneRects: Rect[] = [];
+	private laneObjects: FabricObject[] = [];
 
 	constructor(segment: Segment, canvas: Canvas, graph: Graph, config: LaneConfiguration) {
 		this.segment = segment;
@@ -23,10 +23,10 @@ export class LaneGroup {
 
 	private createLaneGroup(): void {
 		// Clear existing lanes
-		for (const rect of this.laneRects) {
-			this.canvas.remove(rect);
+		for (const obj of this.laneObjects) {
+			this.canvas.remove(obj);
 		}
-		this.laneRects = [];
+		this.laneObjects = [];
 
 		const startNode = this.graph.nodes.get(this.segment.startNodeId);
 		const endNode = this.graph.nodes.get(this.segment.endNodeId);
@@ -51,9 +51,9 @@ export class LaneGroup {
 		};
 
 		if (isSegmentStraight(x1, y1, this.segment.controlX, this.segment.controlY, x2, y2)) {
-			this.laneRects = renderStraightLanes(renderConfig, this.canvas);
+			this.laneObjects = renderStraightLanes(renderConfig, this.canvas);
 		} else {
-			this.laneRects = renderCurvedLanes(renderConfig, this.canvas);
+			this.laneObjects = renderCurvedLanes(renderConfig, this.canvas);
 		}
 	}
 
@@ -62,9 +62,9 @@ export class LaneGroup {
 	}
 
 	cleanup(): void {
-		for (const rect of this.laneRects) {
-			this.canvas.remove(rect);
+		for (const obj of this.laneObjects) {
+			this.canvas.remove(obj);
 		}
-		this.laneRects = [];
+		this.laneObjects = [];
 	}
 }

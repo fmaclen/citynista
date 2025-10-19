@@ -52,6 +52,11 @@ export class Segment {
 		// Update the path when any dependency changes
 		this.updatePath();
 
+		// Update lanes when segment geometry changes
+		if (this.laneGroup) {
+			this.laneGroup.update();
+		}
+
 		// Also update handles if selected
 		if (this.isSelected) {
 			this.showHandles();
