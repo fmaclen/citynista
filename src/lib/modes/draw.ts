@@ -245,6 +245,7 @@ export function setupDraw(editor: Editor) {
 
 					editor.graph.addSegment(segmentData);
 
+					// Continue from end node for next segment
 					currentStartNodeId = endNodeId;
 					startX = finalEndX;
 					startY = finalEndY;

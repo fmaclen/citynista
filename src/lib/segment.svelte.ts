@@ -2,6 +2,8 @@ import { Path, Circle, type Canvas } from 'fabric';
 import { createPath } from './path-utils';
 import type { Graph } from './graph.svelte';
 import type { Editor } from './editor.svelte';
+import { LaneGroup } from './lane-group.svelte';
+import { LaneConfigManager } from './lane-config.svelte';
 
 export interface SegmentData {
 	id: string;
@@ -9,6 +11,7 @@ export interface SegmentData {
 	endNodeId: string;
 	controlX: number;
 	controlY: number;
+	laneConfigId?: string;
 }
 
 export class Segment {
@@ -20,12 +23,14 @@ export class Segment {
 
 	isSelected = $state(false);
 	isDraft = $state(false);
+	laneConfigId = $state<string>('default');
 
 	private path: Path | null = null;
 	hitAreaPath: Path | null = null;
 	private startHandle: Circle | null = null;
 	private endHandle: Circle | null = null;
 	private bezierHandle: Circle | null = null;
+	private laneGroup: LaneGroup | null = null;
 	private canvas: Canvas;
 	private graph: Graph;
 	private editor: Editor;
@@ -61,22 +66,36 @@ export class Segment {
 		return { startX, startY, endX, endY, controlX, controlY, debugMode };
 	});
 
+	// React to lane config changes
+	private laneEffect = $derived.by(() => {
+		const configId = this.laneConfigId;
+		this.updateLaneGroup();
+		return configId;
+	});
+
 	constructor(data: SegmentData, canvas: Canvas, graph: Graph, editor: Editor) {
 		this.id = data.id;
 		this.startNodeId = data.startNodeId;
 		this.endNodeId = data.endNodeId;
 		this.controlX = data.controlX;
 		this.controlY = data.controlY;
+		this.laneConfigId = data.laneConfigId ?? 'default';
 		this.canvas = canvas;
 		this.graph = graph;
 		this.editor = editor;
 
 		this.updatePath();
+		this.updateLaneGroup();
 	}
 
 	// Trigger reactivity by accessing pathVersion
 	get version() {
 		return this.pathVersion;
+	}
+
+	// Trigger reactivity by accessing laneEffect
+	get laneVersion() {
+		return this.laneEffect;
 	}
 
 	updatePath() {
@@ -197,6 +216,19 @@ export class Segment {
 		}
 	}
 
+	private updateLaneGroup(): void {
+		// Clean up existing lane group
+		if (this.laneGroup) {
+			this.laneGroup.cleanup();
+			this.laneGroup = null;
+		}
+
+		// Create new lane group with current config
+		const configManager = LaneConfigManager.getInstance();
+		const config = configManager.getOrDefault(this.laneConfigId);
+		this.laneGroup = new LaneGroup(this, this.canvas, this.graph, config);
+	}
+
 	cleanup(canvas: Canvas) {
 		if (this.path) {
 			canvas.remove(this.path);
@@ -205,6 +237,10 @@ export class Segment {
 		if (this.hitAreaPath) {
 			canvas.remove(this.hitAreaPath);
 			this.hitAreaPath = null;
+		}
+		if (this.laneGroup) {
+			this.laneGroup.cleanup();
+			this.laneGroup = null;
 		}
 		this.hideHandles();
 	}
@@ -215,7 +251,8 @@ export class Segment {
 			startNodeId: this.startNodeId,
 			endNodeId: this.endNodeId,
 			controlX: this.controlX,
-			controlY: this.controlY
+			controlY: this.controlY,
+			laneConfigId: this.laneConfigId
 		};
 	}
 }

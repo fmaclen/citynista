@@ -39,7 +39,7 @@ export function createPath(
 		fill: '',
 		selectable: false,
 		evented: false,
-		strokeLineCap: 'round',
+		strokeLineCap: 'butt',
 		strokeLineJoin: 'round'
 	});
 }
@@ -110,7 +110,7 @@ export function findLineBezierIntersection(
 	const tolerance = 1;
 
 	if (Math.abs(controlX - midX) < tolerance && Math.abs(controlY - midY) < tolerance) {
-		return findLineSegmentIntersection(
+		const intersection = findLineSegmentIntersection(
 			lineX1,
 			lineY1,
 			lineX2,
@@ -120,6 +120,10 @@ export function findLineBezierIntersection(
 			curveX2,
 			curveY2
 		);
+		if (intersection) {
+			return { ...intersection, t: 0.5 };
+		}
+		return null;
 	}
 
 	// Convert line to implicit form: ax + by + c = 0
@@ -223,4 +227,60 @@ export function splitBezierAtT(
 		splitX,
 		splitY
 	};
+}
+
+/**
+ * Calculate a point on a quadratic bezier curve at parameter t (0 to 1)
+ */
+export function getBezierPoint(
+	startX: number,
+	startY: number,
+	controlX: number,
+	controlY: number,
+	endX: number,
+	endY: number,
+	t: number
+): { x: number; y: number } {
+	const x = (1 - t) * (1 - t) * startX + 2 * (1 - t) * t * controlX + t * t * endX;
+	const y = (1 - t) * (1 - t) * startY + 2 * (1 - t) * t * controlY + t * t * endY;
+	return { x, y };
+}
+
+/**
+ * Calculate the tangent (derivative) of a quadratic bezier curve at parameter t
+ */
+export function getBezierTangent(
+	startX: number,
+	startY: number,
+	controlX: number,
+	controlY: number,
+	endX: number,
+	endY: number,
+	t: number
+): { x: number; y: number } {
+	const dx = 2 * (1 - t) * (controlX - startX) + 2 * t * (endX - controlX);
+	const dy = 2 * (1 - t) * (controlY - startY) + 2 * t * (endY - controlY);
+	const length = Math.sqrt(dx * dx + dy * dy);
+
+	if (length === 0) {
+		return { x: 1, y: 0 };
+	}
+
+	return { x: dx / length, y: dy / length };
+}
+
+/**
+ * Calculate perpendicular direction (normal) at a point on the bezier curve
+ */
+export function getBezierNormal(
+	startX: number,
+	startY: number,
+	controlX: number,
+	controlY: number,
+	endX: number,
+	endY: number,
+	t: number
+): { x: number; y: number } {
+	const tangent = getBezierTangent(startX, startY, controlX, controlY, endX, endY, t);
+	return { x: -tangent.y, y: tangent.x };
 }

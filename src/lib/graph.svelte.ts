@@ -4,10 +4,12 @@ import { Node, type NodeData } from './node.svelte';
 import { Segment, type SegmentData } from './segment.svelte';
 import type { Editor } from './editor.svelte';
 import { splitBezierAtT } from './path-utils';
+import { LaneConfiguration, type LaneConfigData, LaneConfigManager } from './lane-config.svelte';
 
 export interface SerializedGraph {
 	nodes: NodeData[];
 	segments: SegmentData[];
+	laneConfigs?: LaneConfigData[];
 }
 
 export class Graph {
@@ -15,6 +17,7 @@ export class Graph {
 
 	nodes = new SvelteMap<string, Node>();
 	segments = new SvelteMap<string, Segment>();
+	laneConfigs = new SvelteMap<string, LaneConfiguration>();
 
 	private canvas: Canvas | null = null;
 	private editor: Editor | null = null;
@@ -23,10 +26,13 @@ export class Graph {
 	private renderScheduled = false;
 
 	constructor() {
+		this.initializeLaneConfigs();
+
 		// Save when nodes or segments are added/removed
 		$effect(() => {
 			void this.nodes.size;
 			void this.segments.size;
+			void this.laneConfigs.size;
 
 			this.scheduleSave();
 			this.log();
@@ -77,6 +83,13 @@ export class Graph {
 			}
 			this.scheduleRender();
 		});
+	}
+
+	private initializeLaneConfigs(): void {
+		const configManager = LaneConfigManager.getInstance();
+		for (const config of configManager.getAll()) {
+			this.laneConfigs.set(config.id, config);
+		}
 	}
 
 	private scheduleSave() {
@@ -282,7 +295,12 @@ export class Graph {
 			segments.push(segment.toJSON());
 		});
 
-		return { nodes, segments };
+		const laneConfigs: LaneConfigData[] = [];
+		this.laneConfigs.forEach((config) => {
+			laneConfigs.push(config.toJSON());
+		});
+
+		return { nodes, segments, laneConfigs };
 	}
 
 	save(): void {
