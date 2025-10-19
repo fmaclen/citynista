@@ -1,20 +1,6 @@
 {
 	"name": "citynista",
-	"private": true,
 	"version": "0.0.1",
-	"type": "module",
-	"scripts": {
-		"dev": "vite dev",
-		"build": "vite build",
-		"preview": "vite preview",
-		"prepare": "svelte-kit sync || echo ''",
-		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
-		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
-		"format": "prettier --write .",
-		"lint": "prettier --check . && eslint .",
-		"quality": "bun run format && bun run lint && bun run check",
-		"test": "playwright test"
-	},
 	"devDependencies": {
 		"@eslint/compat": "^1.4.0",
 		"@eslint/js": "^9.36.0",
@@ -34,6 +20,7 @@
 		"eslint": "^9.36.0",
 		"eslint-config-prettier": "^10.1.8",
 		"eslint-plugin-svelte": "^3.12.4",
+		"fabric": "^6.7.1",
 		"formsnap": "^2.0.1",
 		"globals": "^16.4.0",
 		"layerchart": "2.0.0-next.27",
@@ -54,5 +41,19 @@
 		"typescript-eslint": "^8.44.1",
 		"vaul-svelte": "^1.0.0-next.7",
 		"vite": "^7.1.7"
-	}
+	},
+	"private": true,
+	"scripts": {
+		"dev": "vite dev",
+		"build": "vite build",
+		"preview": "vite preview",
+		"prepare": "svelte-kit sync || echo ''",
+		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
+		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
+		"format": "prettier --write .",
+		"lint": "prettier --check . && eslint .",
+		"quality": "bun run format && bun run lint && bun run check",
+		"test": "playwright test"
+	},
+	"type": "module"
 }
