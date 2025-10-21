@@ -65,9 +65,6 @@ test.describe('Intersections', () => {
 		});
 
 		expect(beforeIntersection.segments).toHaveLength(1);
-		const originalSegment = beforeIntersection.segments[0];
-		const originalControlX = originalSegment.controlX;
-		const originalControlY = originalSegment.controlY;
 
 		await canvas.click({ position: { x: 300, y: 100 }, force: true });
 		await canvas.click({ position: { x: 300, y: 300 }, force: true });

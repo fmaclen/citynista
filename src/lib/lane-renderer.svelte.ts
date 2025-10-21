@@ -89,19 +89,40 @@ export function renderStraightLanes(config: LaneRenderConfig, canvas: Canvas): R
 }
 
 /**
- * Renders lanes along a curved bezier segment
- * Uses parallel bezier curves for smooth continuous lanes
+ * Calculates the number of sample points needed for smooth curve rendering
  */
-export function renderCurvedLanes(
-	config: LaneRenderConfig,
-	canvas: Canvas
-): (Rect | Path)[] {
+function calculateSamplePoints(
+	startX: number,
+	startY: number,
+	controlX: number,
+	controlY: number,
+	endX: number,
+	endY: number
+): number {
+	// Approximate curve length using control polygon
+	const d1 = Math.sqrt((controlX - startX) ** 2 + (controlY - startY) ** 2);
+	const d2 = Math.sqrt((endX - controlX) ** 2 + (endY - controlY) ** 2);
+	const approxLength = d1 + d2;
+
+	// Use 1 sample point per 5 pixels, minimum 10, maximum 100
+	const samples = Math.floor(approxLength / 5);
+	return Math.max(10, Math.min(100, samples));
+}
+
+/**
+ * Renders lanes along a curved bezier segment
+ * Uses sampled points along parallel curves for accurate lane widths
+ */
+export function renderCurvedLanes(config: LaneRenderConfig, canvas: Canvas): (Rect | Path)[] {
 	const objects: (Rect | Path)[] = [];
 	const { startX, startY, controlX, controlY, endX, endY, lanes } = config;
 
 	// Calculate total width to center the lane group (convert meters to pixels)
 	const totalWidth = lanes.reduce((sum, lane) => sum + lane.width * METERS_TO_PIXELS, 0);
 	const halfWidth = totalWidth / 2;
+
+	// Calculate number of sample points based on curve length
+	const numSamples = calculateSamplePoints(startX, startY, controlX, controlY, endX, endY);
 
 	// Position each lane perpendicular to the curve
 	let lanePosition = -halfWidth; // Start from one side
@@ -113,21 +134,30 @@ export function renderCurvedLanes(
 		// This lane's center offset from the segment centerline
 		const edgeOffset = lanePosition + laneWidthPx / 2;
 
-		// Calculate offset control point for this lane's parallel curve
-		const startNormal = getBezierNormal(startX, startY, controlX, controlY, endX, endY, 0);
-		const endNormal = getBezierNormal(startX, startY, controlX, controlY, endX, endY, 1);
-		const midNormal = getBezierNormal(startX, startY, controlX, controlY, endX, endY, 0.5);
+		// Sample points along the curve and offset them
+		const pathPoints: { x: number; y: number }[] = [];
 
-		// Offset start, end, and control points
-		const offsetStartX = startX + startNormal.x * edgeOffset;
-		const offsetStartY = startY + startNormal.y * edgeOffset;
-		const offsetEndX = endX + endNormal.x * edgeOffset;
-		const offsetEndY = endY + endNormal.y * edgeOffset;
-		const offsetControlX = controlX + midNormal.x * edgeOffset;
-		const offsetControlY = controlY + midNormal.y * edgeOffset;
+		for (let i = 0; i < numSamples; i++) {
+			const t = i / (numSamples - 1);
 
-		// Create path data for this lane's curve
-		const pathData = `M ${offsetStartX} ${offsetStartY} Q ${offsetControlX} ${offsetControlY} ${offsetEndX} ${offsetEndY}`;
+			// Get point on original curve
+			const point = getBezierPoint(startX, startY, controlX, controlY, endX, endY, t);
+
+			// Get normal at this point
+			const normal = getBezierNormal(startX, startY, controlX, controlY, endX, endY, t);
+
+			// Offset the point perpendicular
+			pathPoints.push({
+				x: point.x + normal.x * edgeOffset,
+				y: point.y + normal.y * edgeOffset
+			});
+		}
+
+		// Create path data from sampled points
+		let pathData = `M ${pathPoints[0].x} ${pathPoints[0].y}`;
+		for (let i = 1; i < pathPoints.length; i++) {
+			pathData += ` L ${pathPoints[i].x} ${pathPoints[i].y}`;
+		}
 
 		// Create a Path with stroke instead of fill
 		const path = new Path(pathData, {
