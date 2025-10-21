@@ -2,8 +2,7 @@ import { Path, Circle, type Canvas } from 'fabric';
 import { createPath } from './path-utils';
 import type { Graph } from './graph.svelte';
 import type { Editor } from './editor.svelte';
-import { LaneGroup } from './lane-group.svelte';
-import { LaneConfigManager } from './lane-config.svelte';
+import { SegmentLaneManager } from './segment-lane-manager.svelte';
 
 export interface SegmentData {
 	id: string;
@@ -23,14 +22,13 @@ export class Segment {
 
 	isSelected = $state(false);
 	isDraft = $state(false);
-	laneConfigId = $state<string>('default');
 
 	private path: Path | null = null;
 	hitAreaPath: Path | null = null;
 	private startHandle: Circle | null = null;
 	private endHandle: Circle | null = null;
 	private bezierHandle: Circle | null = null;
-	private laneGroup: LaneGroup | null = null;
+	private laneManager: SegmentLaneManager | null = null;
 	private canvas: Canvas;
 	private graph: Graph;
 	private editor: Editor;
@@ -53,8 +51,8 @@ export class Segment {
 		this.updatePath();
 
 		// Update lanes when segment geometry changes
-		if (this.laneGroup) {
-			this.laneGroup.update();
+		if (this.laneManager) {
+			this.laneManager.update();
 		}
 
 		// Also update handles if selected
@@ -71,36 +69,36 @@ export class Segment {
 		return { startX, startY, endX, endY, controlX, controlY, debugMode };
 	});
 
-	// React to lane config changes
-	private laneEffect = $derived.by(() => {
-		const configId = this.laneConfigId;
-		this.updateLaneGroup();
-		return configId;
-	});
-
 	constructor(data: SegmentData, canvas: Canvas, graph: Graph, editor: Editor) {
 		this.id = data.id;
 		this.startNodeId = data.startNodeId;
 		this.endNodeId = data.endNodeId;
 		this.controlX = data.controlX;
 		this.controlY = data.controlY;
-		this.laneConfigId = data.laneConfigId ?? 'default';
 		this.canvas = canvas;
 		this.graph = graph;
 		this.editor = editor;
 
 		this.updatePath();
-		this.updateLaneGroup();
+
+		this.laneManager = new SegmentLaneManager(this, canvas, graph);
+		if (data.laneConfigId) {
+			this.laneManager.setConfigId(data.laneConfigId);
+		}
 	}
 
-	// Trigger reactivity by accessing pathVersion
 	get version() {
 		return this.pathVersion;
 	}
 
-	// Trigger reactivity by accessing laneEffect
-	get laneVersion() {
-		return this.laneEffect;
+	get laneConfigId(): string {
+		return this.laneManager?.laneConfigId ?? 'default';
+	}
+
+	set laneConfigId(configId: string) {
+		if (this.laneManager) {
+			this.laneManager.setConfigId(configId);
+		}
 	}
 
 	updatePath() {
@@ -221,19 +219,6 @@ export class Segment {
 		}
 	}
 
-	private updateLaneGroup(): void {
-		// Clean up existing lane group
-		if (this.laneGroup) {
-			this.laneGroup.cleanup();
-			this.laneGroup = null;
-		}
-
-		// Create new lane group with current config
-		const configManager = LaneConfigManager.getInstance();
-		const config = configManager.getOrDefault(this.laneConfigId);
-		this.laneGroup = new LaneGroup(this, this.canvas, this.graph, config);
-	}
-
 	cleanup(canvas: Canvas) {
 		if (this.path) {
 			canvas.remove(this.path);
@@ -243,9 +228,9 @@ export class Segment {
 			canvas.remove(this.hitAreaPath);
 			this.hitAreaPath = null;
 		}
-		if (this.laneGroup) {
-			this.laneGroup.cleanup();
-			this.laneGroup = null;
+		if (this.laneManager) {
+			this.laneManager.cleanup();
+			this.laneManager = null;
 		}
 		this.hideHandles();
 	}
