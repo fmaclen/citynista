@@ -5,6 +5,7 @@ import { Segment, type SegmentData } from './segment.svelte';
 import type { Editor } from './editor.svelte';
 import { splitBezierAtT } from './path-utils';
 import { LaneConfiguration, type LaneConfigData, LaneConfigManager } from './lane-config.svelte';
+import { IntersectionConnectionManager } from './intersection-connections.svelte';
 
 export interface SerializedGraph {
 	nodes: NodeData[];
@@ -21,9 +22,11 @@ export class Graph {
 
 	private canvas: Canvas | null = null;
 	private editor: Editor | null = null;
+	private intersectionManager: IntersectionConnectionManager | null = null;
 
 	private saveScheduled = false;
 	private renderScheduled = false;
+	private intersectionUpdateScheduled = false;
 
 	constructor() {
 		this.initializeLaneConfigs();
@@ -71,6 +74,25 @@ export class Graph {
 			this.scheduleRender();
 		});
 
+		// Update intersection connections when segments or nodes change
+		$effect(() => {
+			// Track segment changes
+			void this.segments.size;
+			for (const segment of this.segments.values()) {
+				void segment.version;
+				void segment.controlX;
+				void segment.controlY;
+			}
+
+			// Track node connection changes
+			for (const node of this.nodes.values()) {
+				void node.connectedSegments.length;
+			}
+
+			// Schedule intersection update
+			this.scheduleIntersectionUpdate();
+		});
+
 		// Show/hide segment handles based on selection
 		$effect(() => {
 			for (const segment of this.segments.values()) {
@@ -114,8 +136,33 @@ export class Graph {
 		});
 	}
 
+	private scheduleIntersectionUpdate() {
+		if (this.intersectionUpdateScheduled || !this.intersectionManager) return;
+		this.intersectionUpdateScheduled = true;
+
+		requestAnimationFrame(() => {
+			this.intersectionUpdateScheduled = false;
+			if (this.intersectionManager) {
+				// Clear all existing connections first
+				this.intersectionManager.clearConnections();
+
+				// Update connections for all nodes with 2+ segments
+				for (const node of this.nodes.values()) {
+					if (node.connectedSegments.length >= 2) {
+						this.intersectionManager.generateConnectionsForNode(node.id);
+					}
+				}
+
+				if (this.canvas) {
+					this.canvas.renderAll();
+				}
+			}
+		});
+	}
+
 	setCanvas(canvas: Canvas) {
 		this.canvas = canvas;
+		this.intersectionManager = new IntersectionConnectionManager(canvas, this);
 	}
 
 	setEditor(editor: Editor) {
@@ -272,6 +319,11 @@ export class Graph {
 
 	clear() {
 		if (!this.canvas) return;
+
+		// Clear intersection connections first
+		if (this.intersectionManager) {
+			this.intersectionManager.clearConnections();
+		}
 
 		for (const segment of this.segments.values()) {
 			segment.cleanup(this.canvas);

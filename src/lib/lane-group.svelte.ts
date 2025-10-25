@@ -33,10 +33,40 @@ export class LaneGroup {
 
 		if (!startNode || !endNode) return;
 
-		const x1 = startNode.x;
-		const y1 = startNode.y;
-		const x2 = endNode.x;
-		const y2 = endNode.y;
+		let x1 = startNode.x;
+		let y1 = startNode.y;
+		let x2 = endNode.x;
+		let y2 = endNode.y;
+
+		// Check if nodes are intersections and calculate pull-back if needed
+		const startIsIntersection = startNode.connectedSegments.length >= 2;
+		const endIsIntersection = endNode.connectedSegments.length >= 2;
+
+		if (startIsIntersection || endIsIntersection) {
+			const totalWidth = this.config.getTotalWidth() * 12; // Scale factor
+
+			// Calculate segment direction
+			const dx = x2 - x1;
+			const dy = y2 - y1;
+			const length = Math.sqrt(dx * dx + dy * dy);
+
+			if (length > 0) {
+				const dirX = dx / length;
+				const dirY = dy / length;
+
+				// Pull back from start node if it's an intersection
+				if (startIsIntersection) {
+					x1 = x1 + dirX * totalWidth;
+					y1 = y1 + dirY * totalWidth;
+				}
+
+				// Pull back from end node if it's an intersection
+				if (endIsIntersection) {
+					x2 = x2 - dirX * totalWidth;
+					y2 = y2 - dirY * totalWidth;
+				}
+			}
+		}
 
 		// Render lanes using appropriate renderer
 		const renderConfig = {
