@@ -1,194 +1,205 @@
-import { Canvas, type TPointerEventInfo } from 'fabric';
-import { setContext, getContext } from 'svelte';
+import { getContext, setContext } from 'svelte';
 import { SvelteSet } from 'svelte/reactivity';
-import { Graph } from './graph.svelte';
-import { setupDraw } from './modes/draw';
-import { setupSelect } from './modes/select';
-import type { Segment } from './segment.svelte';
+import { Graph } from './core/graph.svelte';
+import { SceneManager } from './rendering/scene.svelte';
+import { NodeRenderer } from './rendering/node-renderer';
+import { SegmentRenderer } from './rendering/segment-renderer';
+import type { ModeHandlers, Mode } from './modes/types';
+import { setupDrawMode } from './modes/draw';
+import { setupSelectMode } from './modes/select';
 
-type ModeHandlers = {
-	onMouseDown: (e: TPointerEventInfo) => void;
-	onMouseMove: (e: TPointerEventInfo) => void;
-	onMouseUp: (e: TPointerEventInfo) => void;
-	onKeyDown?: (e: KeyboardEvent) => void;
-	cleanup: () => void;
-};
-
-export type Mode = 'draw' | 'select' | undefined;
+const EDITOR_CONTEXT_KEY = Symbol('editor');
 
 export class Editor {
-	graph: Graph;
-	canvas: Canvas | null = null;
+	graph = new Graph();
+	sceneManager!: SceneManager;
+	nodeRenderer!: NodeRenderer;
+	segmentRenderer!: SegmentRenderer;
 
-	mode = $state<Mode>(undefined);
-	debugMode = $state(false);
-
-	selectedSegments = new SvelteSet<string>();
+	mode = $state<Mode | undefined>(undefined);
 	selectedNodes = new SvelteSet<string>();
+	selectedSegments = new SvelteSet<string>();
 
-	isDrafting = $state(false);
-	draftSegment: Segment | null = null;
-
-	private currentHandlers: ModeHandlers | null = null;
+	private modeHandlers: ModeHandlers | null = null;
+	private boundKeyDown: ((e: KeyboardEvent) => void) | null = null;
 
 	constructor() {
-		this.graph = new Graph();
-		this.graph.setEditor(this);
-
 		$effect(() => {
-			if (this.mode && this.canvas) {
-				this.setupModeHandlers();
-			} else {
-				this.cleanupHandlers();
-			}
-		});
-
-		// Control node visibility based on mode
-		$effect(() => {
-			const shouldShowNodes = this.mode === 'draw' || this.mode === 'select';
-			this.graph.setNodesVisible(shouldShowNodes);
+			this.setupMode(this.mode);
 		});
 	}
 
-	initCanvas(canvasElement: HTMLCanvasElement) {
-		if (this.canvas) {
-			// Canvas already initialized
-			return;
-		}
+	private initialized = false;
 
-		this.canvas = new Canvas(canvasElement, {
-			width: window.innerWidth,
-			height: window.innerHeight,
-			backgroundColor: '#2a2a2a',
-			selection: false
-		});
+	init(container: HTMLElement) {
+		if (this.initialized) return;
+		this.initialized = true;
 
-		this.graph.setCanvas(this.canvas);
+		this.sceneManager = new SceneManager(container);
+		this.nodeRenderer = new NodeRenderer(this.sceneManager.scene);
+		this.segmentRenderer = new SegmentRenderer(this.sceneManager.scene);
 
-		window.addEventListener('resize', () => {
-			if (this.canvas) {
-				this.canvas.setDimensions({
-					width: window.innerWidth,
-					height: window.innerHeight
-				});
-				this.canvas.renderAll();
-			}
-		});
+		this.loadSavedData();
+		this.setupCanvasEvents();
 	}
 
-	async loadSavedData() {
-		const saved = Graph.load();
-		if (saved) {
-			saved.nodes.forEach((nodeData) => this.graph.addNode(nodeData));
-			saved.segments.forEach((segmentData) => this.graph.addSegment(segmentData));
-
-			// Trigger initial render
-			if (this.canvas) {
-				this.canvas.renderAll();
+	private loadSavedData() {
+		if (this.graph.load()) {
+			for (const node of this.graph.nodes.values()) {
+				this.nodeRenderer.createNode(node);
+			}
+			for (const segment of this.graph.segments.values()) {
+				const startNode = this.graph.nodes.get(segment.startNodeId);
+				const endNode = this.graph.nodes.get(segment.endNodeId);
+				if (startNode && endNode) {
+					this.segmentRenderer.createSegment(segment, startNode, endNode);
+				}
 			}
 		}
 	}
 
-	private setupModeHandlers() {
-		if (!this.canvas) return;
+	private setupCanvasEvents() {
+		const canvas = this.sceneManager.getCanvas();
 
-		this.cleanupHandlers();
+		canvas.addEventListener('mousedown', (e) => this.modeHandlers?.onMouseDown?.(e));
+		canvas.addEventListener('mousemove', (e) => this.modeHandlers?.onMouseMove?.(e));
+		canvas.addEventListener('mouseup', (e) => this.modeHandlers?.onMouseUp?.(e));
+	}
 
-		if (this.mode === 'draw') {
-			this.currentHandlers = setupDraw(this);
-		} else if (this.mode === 'select') {
-			this.currentHandlers = setupSelect(this);
+	private setupMode(mode: Mode | undefined) {
+		if (!this.sceneManager) return;
+
+		if (this.modeHandlers?.cleanup) {
+			this.modeHandlers.cleanup();
+		}
+		if (this.boundKeyDown) {
+			window.removeEventListener('keydown', this.boundKeyDown);
+			this.boundKeyDown = null;
 		}
 
-		if (this.currentHandlers) {
-			this.canvas.on('mouse:down', this.currentHandlers.onMouseDown);
-			this.canvas.on('mouse:move', this.currentHandlers.onMouseMove);
-			this.canvas.on('mouse:up', this.currentHandlers.onMouseUp);
+		this.clearSelection();
+		this.modeHandlers = null;
 
-			if (this.currentHandlers.onKeyDown) {
-				window.addEventListener('keydown', this.currentHandlers.onKeyDown);
-			}
+		if (mode === 'draw') {
+			this.modeHandlers = setupDrawMode(this);
+		} else if (mode === 'select') {
+			this.modeHandlers = setupSelectMode(this);
+		}
+
+		if (this.modeHandlers?.onKeyDown) {
+			this.boundKeyDown = this.modeHandlers.onKeyDown;
+			window.addEventListener('keydown', this.boundKeyDown);
 		}
 	}
 
-	private cleanupHandlers() {
-		if (this.currentHandlers) {
-			this.currentHandlers.cleanup();
-
-			if (this.canvas) {
-				this.canvas.off('mouse:down');
-				this.canvas.off('mouse:move');
-				this.canvas.off('mouse:up');
-			}
-
-			if (this.currentHandlers.onKeyDown) {
-				window.removeEventListener('keydown', this.currentHandlers.onKeyDown);
-			}
-
-			this.currentHandlers = null;
-		}
+	selectNode(nodeId: string) {
+		this.selectedNodes.add(nodeId);
+		this.nodeRenderer.setSelected(nodeId, true);
 	}
 
-	selectSegment(id: string) {
-		this.selectedSegments.clear();
-		this.selectedSegments.add(id);
-		const segment = this.graph.segments.get(id);
+	deselectNode(nodeId: string) {
+		this.selectedNodes.delete(nodeId);
+		this.nodeRenderer.setSelected(nodeId, false);
+	}
+
+	selectSegment(segmentId: string) {
+		this.selectedSegments.add(segmentId);
+		const segment = this.graph.segments.get(segmentId);
 		if (segment) {
-			segment.isSelected = true;
-
-			// Also select both nodes of the segment
-			this.selectedNodes.clear();
 			const startNode = this.graph.nodes.get(segment.startNodeId);
 			const endNode = this.graph.nodes.get(segment.endNodeId);
-
-			if (startNode) {
-				this.selectedNodes.add(startNode.id);
-				startNode.isSelected = true;
-			}
-			if (endNode) {
-				this.selectedNodes.add(endNode.id);
-				endNode.isSelected = true;
+			if (startNode && endNode) {
+				this.segmentRenderer.setSelected(segmentId, true, segment, startNode, endNode);
 			}
 		}
 	}
 
-	selectNode(id: string) {
-		this.selectedNodes.clear();
-		this.selectedNodes.add(id);
-		const node = this.graph.nodes.get(id);
-		if (node) node.isSelected = true;
+	deselectSegment(segmentId: string) {
+		this.selectedSegments.delete(segmentId);
+		this.segmentRenderer.setSelected(segmentId, false);
 	}
 
 	clearSelection() {
-		this.selectedSegments.forEach((id) => {
-			const segment = this.graph.segments.get(id);
-			if (segment) segment.isSelected = false;
-		});
-		this.selectedSegments.clear();
-
-		this.selectedNodes.forEach((id) => {
-			const node = this.graph.nodes.get(id);
-			if (node) node.isSelected = false;
-		});
+		this.nodeRenderer.clearSelection();
+		this.segmentRenderer.clearSelection();
 		this.selectedNodes.clear();
+		this.selectedSegments.clear();
 	}
 
 	deleteSelected() {
-		this.selectedSegments.forEach((id) => {
-			this.graph.deleteSegment(id);
-		});
-		this.clearSelection();
+		const nodesToCheck = new Set<string>();
+		const deletedSegments = new Set<string>();
+
+		for (const segmentId of this.selectedSegments) {
+			const segment = this.graph.segments.get(segmentId);
+			if (segment) {
+				nodesToCheck.add(segment.startNodeId);
+				nodesToCheck.add(segment.endNodeId);
+			}
+			this.segmentRenderer.removeSegment(segmentId);
+			this.graph.deleteSegment(segmentId);
+			deletedSegments.add(segmentId);
+		}
+
+		for (const nodeId of this.selectedNodes) {
+			if (nodesToCheck.has(nodeId)) {
+				continue;
+			}
+
+			const node = this.graph.nodes.get(nodeId);
+			if (node) {
+				for (const segmentId of [...node.connectedSegments]) {
+					if (deletedSegments.has(segmentId)) continue;
+
+					const segment = this.graph.segments.get(segmentId);
+					if (segment) {
+						const otherNodeId =
+							segment.startNodeId === nodeId ? segment.endNodeId : segment.startNodeId;
+						nodesToCheck.add(otherNodeId);
+					}
+					this.segmentRenderer.removeSegment(segmentId);
+					this.graph.deleteSegment(segmentId);
+					deletedSegments.add(segmentId);
+				}
+				this.nodeRenderer.removeNode(nodeId);
+				this.graph.deleteNode(nodeId);
+				nodesToCheck.delete(nodeId);
+			}
+		}
+
+		for (const nodeId of nodesToCheck) {
+			const node = this.graph.nodes.get(nodeId);
+			if (node && node.connectedSegments.length === 0) {
+				this.nodeRenderer.removeNode(nodeId);
+				this.graph.deleteNode(nodeId);
+			}
+		}
+
+		this.selectedNodes.clear();
+		this.selectedSegments.clear();
+		this.graph.save();
 	}
 
 	clearAll() {
 		this.clearSelection();
+		this.nodeRenderer.clear();
+		this.segmentRenderer.clear();
 		this.graph.clear();
+		this.graph.save();
+	}
+
+	dispose() {
+		if (this.modeHandlers?.cleanup) {
+			this.modeHandlers.cleanup();
+		}
+		if (this.boundKeyDown) {
+			window.removeEventListener('keydown', this.boundKeyDown);
+		}
+		this.sceneManager?.dispose();
 	}
 }
 
-const EDITOR_CONTEXT_KEY = 'editor';
-
-export function setEditorContext(): Editor {
+export function setEditorContext() {
 	const editor = new Editor();
 	setContext(EDITOR_CONTEXT_KEY, editor);
 	return editor;
