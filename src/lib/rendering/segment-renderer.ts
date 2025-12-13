@@ -41,7 +41,8 @@ export class SegmentRenderer {
 		const line = this.meshes.get(segment.id);
 		if (line) {
 			const points = this.getSegmentPoints(segment, startNode, endNode);
-			line.geometry.setFromPoints(points);
+			line.geometry.dispose();
+			line.geometry = new THREE.BufferGeometry().setFromPoints(points);
 		}
 
 		if (this.selectedSegments.has(segment.id)) {

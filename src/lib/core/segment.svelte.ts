@@ -20,7 +20,9 @@ export class Segment {
 		this.laneTemplateId = laneTemplateId;
 	}
 
-	hasControlPoint = $derived(this.controlX !== undefined && this.controlY !== undefined);
+	get hasControlPoint() {
+		return this.controlX !== undefined && this.controlY !== undefined;
+	}
 
 	setControlPoint(x: number, y: number) {
 		this.controlX = x;
