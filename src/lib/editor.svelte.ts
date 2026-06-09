@@ -1,9 +1,12 @@
 import { getContext, setContext } from 'svelte';
 import { SvelteSet } from 'svelte/reactivity';
 import { Graph } from './core/graph.svelte';
+import { getDefaultTemplate } from './core/lane-template';
+import { resolveCrossings } from './core/crossings';
 import { SceneManager } from './rendering/scene.svelte';
 import { NodeRenderer } from './rendering/node-renderer';
-import { SegmentRenderer } from './rendering/segment-renderer';
+import { RoadRenderer } from './rendering/road-renderer';
+import { SelectionRenderer } from './rendering/selection-renderer';
 import type { ModeHandlers, Mode } from './modes/types';
 import { setupDrawMode } from './modes/draw';
 import { setupSelectMode } from './modes/select';
@@ -14,9 +17,12 @@ export class Editor {
 	graph = new Graph();
 	sceneManager!: SceneManager;
 	nodeRenderer!: NodeRenderer;
-	segmentRenderer!: SegmentRenderer;
+	roadRenderer!: RoadRenderer;
+	selectionRenderer!: SelectionRenderer;
 
 	mode = $state<Mode | undefined>(undefined);
+	currentLaneTemplateId = $state(getDefaultTemplate().id);
+	fps = $state(0);
 	selectedNodes = new SvelteSet<string>();
 	selectedSegments = new SvelteSet<string>();
 
@@ -35,9 +41,12 @@ export class Editor {
 		if (this.initialized) return;
 		this.initialized = true;
 
-		this.sceneManager = new SceneManager(container);
+		this.sceneManager = new SceneManager(container, (fps) => {
+			this.fps = fps;
+		});
 		this.nodeRenderer = new NodeRenderer(this.sceneManager.scene);
-		this.segmentRenderer = new SegmentRenderer(this.sceneManager.scene);
+		this.roadRenderer = new RoadRenderer(this.sceneManager.scene);
+		this.selectionRenderer = new SelectionRenderer(this.sceneManager.scene);
 
 		this.loadSavedData();
 		this.setupCanvasEvents();
@@ -48,14 +57,26 @@ export class Editor {
 			for (const node of this.graph.nodes.values()) {
 				this.nodeRenderer.createNode(node);
 			}
-			for (const segment of this.graph.segments.values()) {
-				const startNode = this.graph.nodes.get(segment.startNodeId);
-				const endNode = this.graph.nodes.get(segment.endNodeId);
-				if (startNode && endNode) {
-					this.segmentRenderer.createSegment(segment, startNode, endNode);
-				}
+			this.rebuildRoads();
+		}
+	}
+
+	rebuildRoads() {
+		this.roadRenderer.update(this.graph);
+	}
+
+	// Turn any mid-span segment crossings into shared nodes, so overlapping
+	// roads become real intersections.
+	resolveSegmentCrossings() {
+		if (!resolveCrossings(this.graph)) return;
+
+		this.clearSelection();
+		for (const node of this.graph.nodes.values()) {
+			if (!this.nodeRenderer.getMesh(node.id)) {
+				this.nodeRenderer.createNode(node);
 			}
 		}
+		this.rebuildRoads();
 	}
 
 	private setupCanvasEvents() {
@@ -79,6 +100,9 @@ export class Editor {
 
 		this.clearSelection();
 		this.modeHandlers = null;
+
+		const showNodes = mode === 'draw' || mode === 'select';
+		this.nodeRenderer.setAllVisible(showNodes);
 
 		if (mode === 'draw') {
 			this.modeHandlers = setupDrawMode(this);
@@ -104,31 +128,37 @@ export class Editor {
 
 	selectSegment(segmentId: string) {
 		this.selectedSegments.add(segmentId);
-		const segment = this.graph.segments.get(segmentId);
-		if (segment) {
-			const startNode = this.graph.nodes.get(segment.startNodeId);
-			const endNode = this.graph.nodes.get(segment.endNodeId);
-			if (startNode && endNode) {
-				this.segmentRenderer.setSelected(segmentId, true, segment, startNode, endNode);
-			}
-		}
+		this.refreshSelectionVisuals();
 	}
 
 	deselectSegment(segmentId: string) {
 		this.selectedSegments.delete(segmentId);
-		this.segmentRenderer.setSelected(segmentId, false);
+		this.selectionRenderer.hideSegment(segmentId);
 	}
 
 	clearSelection() {
 		this.nodeRenderer.clearSelection();
-		this.segmentRenderer.clearSelection();
+		this.selectionRenderer.clear();
 		this.selectedNodes.clear();
 		this.selectedSegments.clear();
 	}
 
+	refreshSelectionVisuals() {
+		for (const segmentId of this.selectedSegments) {
+			const segment = this.graph.segments.get(segmentId);
+			if (!segment) continue;
+
+			const startNode = this.graph.nodes.get(segment.startNodeId);
+			const endNode = this.graph.nodes.get(segment.endNodeId);
+			if (!startNode || !endNode) continue;
+
+			this.selectionRenderer.showSegment(segment, startNode, endNode);
+		}
+	}
+
 	deleteSelected() {
-		const nodesToCheck = new Set<string>();
-		const deletedSegments = new Set<string>();
+		const nodesToCheck = new SvelteSet<string>();
+		const deletedSegments = new SvelteSet<string>();
 
 		for (const segmentId of this.selectedSegments) {
 			const segment = this.graph.segments.get(segmentId);
@@ -136,7 +166,6 @@ export class Editor {
 				nodesToCheck.add(segment.startNodeId);
 				nodesToCheck.add(segment.endNodeId);
 			}
-			this.segmentRenderer.removeSegment(segmentId);
 			this.graph.deleteSegment(segmentId);
 			deletedSegments.add(segmentId);
 		}
@@ -157,7 +186,6 @@ export class Editor {
 							segment.startNodeId === nodeId ? segment.endNodeId : segment.startNodeId;
 						nodesToCheck.add(otherNodeId);
 					}
-					this.segmentRenderer.removeSegment(segmentId);
 					this.graph.deleteSegment(segmentId);
 					deletedSegments.add(segmentId);
 				}
@@ -177,13 +205,14 @@ export class Editor {
 
 		this.selectedNodes.clear();
 		this.selectedSegments.clear();
+		this.rebuildRoads();
 		this.graph.save();
 	}
 
 	clearAll() {
 		this.clearSelection();
 		this.nodeRenderer.clear();
-		this.segmentRenderer.clear();
+		this.roadRenderer.clear();
 		this.graph.clear();
 		this.graph.save();
 	}

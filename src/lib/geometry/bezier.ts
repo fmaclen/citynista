@@ -42,6 +42,31 @@ export function getDefaultControlPoint(
 	};
 }
 
+export function closestPointOnQuadraticBezier(
+	px: number,
+	py: number,
+	x0: number,
+	y0: number,
+	cx: number,
+	cy: number,
+	x1: number,
+	y1: number,
+	samples: number = 100
+): { x: number; y: number; t: number; distance: number } {
+	let best = { x: x0, y: y0, t: 0, distance: Infinity };
+
+	for (let i = 0; i <= samples; i++) {
+		const t = i / samples;
+		const point = getQuadraticBezierPoint(x0, y0, cx, cy, x1, y1, t);
+		const distance = Math.hypot(px - point.x, py - point.y);
+		if (distance < best.distance) {
+			best = { x: point.x, y: point.y, t, distance };
+		}
+	}
+
+	return best;
+}
+
 export function distanceToQuadraticBezier(
 	px: number,
 	py: number,

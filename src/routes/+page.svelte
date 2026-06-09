@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { setEditorContext } from '$lib/editor.svelte';
 	import EditorToolbar from '$lib/components/EditorToolbar.svelte';
+	import FpsCounter from '$lib/components/FpsCounter.svelte';
 	import { untrack } from 'svelte';
 
 	let containerElement: HTMLDivElement;
@@ -25,5 +26,6 @@
 
 <div class="h-screen w-screen overflow-hidden bg-[#2a2a2a]">
 	<EditorToolbar />
+	<FpsCounter />
 	<div bind:this={containerElement} class="h-full w-full"></div>
 </div>

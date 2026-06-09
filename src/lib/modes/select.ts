@@ -1,14 +1,18 @@
 import type { ModeHandlers } from './types';
 import type { Editor } from '../editor.svelte';
-import { distanceToQuadraticBezier } from '../geometry/bezier';
+import type { Segment } from '../core/segment.svelte';
+import type { Node } from '../core/node.svelte';
+import { distanceToQuadraticBezier, getQuadraticBezierTangent } from '../geometry/bezier';
 
 const NODE_HIT_THRESHOLD = 15;
 const SEGMENT_HIT_THRESHOLD = 10;
 const CONTROL_POINT_HIT_THRESHOLD = 12;
+const STRAIGHT_SNAP_DISTANCE = 10;
 
 type DragTarget =
-	| { type: 'node'; nodeId: string }
+	| { type: 'nodes' }
 	| { type: 'controlPoint'; segmentId: string }
+	| { type: 'segment'; segmentId: string }
 	| null;
 
 export function setupSelectMode(editor: Editor): ModeHandlers {
@@ -16,6 +20,57 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 	let dragTarget: DragTarget = null;
 	let dragStartX = 0;
 	let dragStartZ = 0;
+	// Control points expressed in their segment's local frame at drag start,
+	// so curves scale and rotate proportionally with their moving endpoints.
+	const controlFrames = new Map<string, { u: number; v: number }>();
+
+	const captureControlFrames = () => {
+		controlFrames.clear();
+
+		for (const segment of editor.graph.segments.values()) {
+			if (!segment.hasControlPoint) continue;
+			if (
+				!editor.selectedNodes.has(segment.startNodeId) &&
+				!editor.selectedNodes.has(segment.endNodeId)
+			) {
+				continue;
+			}
+
+			const startNode = editor.graph.nodes.get(segment.startNodeId);
+			const endNode = editor.graph.nodes.get(segment.endNodeId);
+			if (!startNode || !endNode) continue;
+
+			const dx = endNode.x - startNode.x;
+			const dy = endNode.y - startNode.y;
+			const lengthSq = dx * dx + dy * dy;
+			if (lengthSq < 0.0001) continue;
+
+			const rx = segment.controlX! - startNode.x;
+			const ry = segment.controlY! - startNode.y;
+			controlFrames.set(segment.id, {
+				u: (rx * dx + ry * dy) / lengthSq,
+				v: (dx * ry - dy * rx) / lengthSq
+			});
+		}
+	};
+
+	const restoreControlFrames = () => {
+		for (const [segmentId, frame] of controlFrames) {
+			const segment = editor.graph.segments.get(segmentId);
+			if (!segment) continue;
+
+			const startNode = editor.graph.nodes.get(segment.startNodeId);
+			const endNode = editor.graph.nodes.get(segment.endNodeId);
+			if (!startNode || !endNode) continue;
+
+			const dx = endNode.x - startNode.x;
+			const dy = endNode.y - startNode.y;
+			segment.setControlPoint(
+				startNode.x + frame.u * dx - frame.v * dy,
+				startNode.y + frame.u * dy + frame.v * dx
+			);
+		}
+	};
 
 	const findNodeAt = (worldX: number, worldZ: number) => {
 		return editor.graph.findNodeAt(worldX, worldZ, NODE_HIT_THRESHOLD);
@@ -69,9 +124,149 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 		return null;
 	};
 
+	const moveControlPoint = (segmentId: string, dx: number, dz: number, factor: number) => {
+		const segment = editor.graph.segments.get(segmentId);
+		if (!segment) return;
+
+		const startNode = editor.graph.nodes.get(segment.startNodeId);
+		const endNode = editor.graph.nodes.get(segment.endNodeId);
+		if (!startNode || !endNode) return;
+
+		const cx = segment.controlX ?? (startNode.x + endNode.x) / 2;
+		const cy = segment.controlY ?? (startNode.y + endNode.y) / 2;
+		segment.setControlPoint(cx + dx * factor, cy + dz * factor);
+	};
+
+	// The direction a smooth continuation of the neighboring road would enter
+	// this segment with at the given node, or null when the node has no other
+	// segment. With several neighbors, the one closest to a straight-through
+	// continuation wins.
+	const approachDirectionAt = (segment: Segment, node: Node, otherNode: Node) => {
+		const chordLength = Math.hypot(otherNode.x - node.x, otherNode.y - node.y);
+		if (chordLength < 0.0001) return null;
+		const chordX = (otherNode.x - node.x) / chordLength;
+		const chordY = (otherNode.y - node.y) / chordLength;
+
+		let best: { x: number; y: number } | null = null;
+		let bestDot = Infinity;
+
+		for (const segmentId of node.connectedSegments) {
+			if (segmentId === segment.id) continue;
+			const adjacent = editor.graph.segments.get(segmentId);
+			if (!adjacent) continue;
+
+			const adjacentStart = editor.graph.nodes.get(adjacent.startNodeId);
+			const adjacentEnd = editor.graph.nodes.get(adjacent.endNodeId);
+			if (!adjacentStart || !adjacentEnd) continue;
+
+			const atStart = adjacent.startNodeId === node.id;
+			const cx = adjacent.controlX ?? (adjacentStart.x + adjacentEnd.x) / 2;
+			const cy = adjacent.controlY ?? (adjacentStart.y + adjacentEnd.y) / 2;
+			const tangent = getQuadraticBezierTangent(
+				adjacentStart.x,
+				adjacentStart.y,
+				cx,
+				cy,
+				adjacentEnd.x,
+				adjacentEnd.y,
+				atStart ? 0 : 1
+			);
+			const length = Math.hypot(tangent.x, tangent.y);
+			if (length < 0.0001) continue;
+
+			// Outward along the neighbor, away from the node.
+			const outX = (atStart ? tangent.x : -tangent.x) / length;
+			const outY = (atStart ? tangent.y : -tangent.y) / length;
+
+			const dot = outX * chordX + outY * chordY;
+			if (dot < bestDot) {
+				bestDot = dot;
+				best = { x: -outX, y: -outY };
+			}
+		}
+
+		return best;
+	};
+
+	// Shift while dragging the control point: snap to the "perfect curve"
+	// whose tangents line up with the neighboring segments at both ends —
+	// the control point sits where the two approach rays intersect. Near the
+	// straight line between the nodes it snaps to no curvature at all.
+	const snapControlPoint = (segmentId: string, worldX: number, worldZ: number) => {
+		const segment = editor.graph.segments.get(segmentId);
+		if (!segment) return;
+
+		const startNode = editor.graph.nodes.get(segment.startNodeId);
+		const endNode = editor.graph.nodes.get(segment.endNodeId);
+		if (!startNode || !endNode) return;
+
+		const chordX = endNode.x - startNode.x;
+		const chordY = endNode.y - startNode.y;
+		const chordLength = Math.hypot(chordX, chordY);
+		if (chordLength < 0.0001) return;
+
+		// Straight snap: cursor close to the line between the endpoints.
+		const t = Math.max(
+			0,
+			Math.min(
+				1,
+				((worldX - startNode.x) * chordX + (worldZ - startNode.y) * chordY) /
+					(chordLength * chordLength)
+			)
+		);
+		const nearestX = startNode.x + chordX * t;
+		const nearestY = startNode.y + chordY * t;
+		if (Math.hypot(worldX - nearestX, worldZ - nearestY) < STRAIGHT_SNAP_DISTANCE) {
+			segment.clearControlPoint();
+			return;
+		}
+
+		const fromStart = approachDirectionAt(segment, startNode, endNode);
+		const fromEnd = approachDirectionAt(segment, endNode, startNode);
+		const reach = chordLength * 5;
+
+		if (fromStart && fromEnd) {
+			const denominator = fromStart.x * fromEnd.y - fromStart.y * fromEnd.x;
+			if (Math.abs(denominator) > 0.0001) {
+				const qx = endNode.x - startNode.x;
+				const qy = endNode.y - startNode.y;
+				const a = (qx * fromEnd.y - qy * fromEnd.x) / denominator;
+				const b = (qx * fromStart.y - qy * fromStart.x) / denominator;
+				if (a > 0.01 && b > 0.01 && a < reach && b < reach) {
+					segment.setControlPoint(startNode.x + fromStart.x * a, startNode.y + fromStart.y * a);
+					return;
+				}
+			}
+		}
+
+		const single = fromStart ?? fromEnd;
+		if (single) {
+			const origin = fromStart ? startNode : endNode;
+			const along = Math.max(
+				0,
+				Math.min(reach, (worldX - origin.x) * single.x + (worldZ - origin.y) * single.y)
+			);
+			segment.setControlPoint(origin.x + single.x * along, origin.y + single.y * along);
+			return;
+		}
+
+		// No neighbors at all: symmetric curve via the perpendicular bisector.
+		const perpX = -chordY / chordLength;
+		const perpY = chordX / chordLength;
+		const midX = (startNode.x + endNode.x) / 2;
+		const midY = (startNode.y + endNode.y) / 2;
+		const offset = (worldX - midX) * perpX + (worldZ - midY) * perpY;
+		segment.setControlPoint(midX + perpX * offset, midY + perpY * offset);
+	};
+
+	const applyChanges = () => {
+		editor.refreshSelectionVisuals();
+		editor.rebuildRoads();
+	};
+
 	const onMouseDown = (event: MouseEvent) => {
 		if (event.button !== 0) return;
-		if (event.shiftKey) return;
+		if (event.altKey) return;
 
 		const worldPos = editor.sceneManager.screenToWorld(event.clientX, event.clientY);
 		dragStartX = worldPos.x;
@@ -86,21 +281,30 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 
 		const node = findNodeAt(worldPos.x, worldPos.z);
 		if (node) {
-			if (!editor.selectedNodes.has(node.id)) {
+			if (event.shiftKey) {
+				if (editor.selectedNodes.has(node.id)) {
+					editor.deselectNode(node.id);
+					return;
+				}
+				editor.selectNode(node.id);
+			} else if (!editor.selectedNodes.has(node.id)) {
 				editor.clearSelection();
 				editor.selectNode(node.id);
 			}
 			isDragging = true;
-			dragTarget = { type: 'node', nodeId: node.id };
+			dragTarget = { type: 'nodes' };
+			captureControlFrames();
 			return;
 		}
 
 		const segment = findSegmentAt(worldPos.x, worldPos.z);
 		if (segment) {
-			editor.clearSelection();
-			editor.selectSegment(segment.id);
-			editor.selectNode(segment.startNodeId);
-			editor.selectNode(segment.endNodeId);
+			if (!editor.selectedSegments.has(segment.id)) {
+				editor.clearSelection();
+				editor.selectSegment(segment.id);
+			}
+			isDragging = true;
+			dragTarget = { type: 'segment', segmentId: segment.id };
 			return;
 		}
 
@@ -114,37 +318,41 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 		const dx = worldPos.x - dragStartX;
 		const dz = worldPos.z - dragStartZ;
 
-		if (dragTarget.type === 'node') {
+		if (dragTarget.type === 'nodes') {
 			for (const nodeId of editor.selectedNodes) {
 				const node = editor.graph.nodes.get(nodeId);
 				if (node) {
 					node.x += dx;
 					node.y += dz;
 					editor.nodeRenderer.updateNode(node);
-
-					for (const segmentId of node.connectedSegments) {
-						const segment = editor.graph.segments.get(segmentId);
-						if (segment) {
-							const startNode = editor.graph.nodes.get(segment.startNodeId);
-							const endNode = editor.graph.nodes.get(segment.endNodeId);
-							if (startNode && endNode) {
-								editor.segmentRenderer.updateSegment(segment, startNode, endNode);
-							}
-						}
-					}
 				}
 			}
+			restoreControlFrames();
+			applyChanges();
 		} else if (dragTarget.type === 'controlPoint') {
+			if (event.shiftKey) {
+				snapControlPoint(dragTarget.segmentId, worldPos.x, worldPos.z);
+			} else {
+				moveControlPoint(dragTarget.segmentId, dx, dz, 1);
+			}
+			applyChanges();
+		} else if (dragTarget.type === 'segment') {
+			// Dragging the path moves the whole segment as-is; curvature only
+			// changes via the control-point handle.
 			const segment = editor.graph.segments.get(dragTarget.segmentId);
 			if (segment) {
-				const startNode = editor.graph.nodes.get(segment.startNodeId);
-				const endNode = editor.graph.nodes.get(segment.endNodeId);
-				if (startNode && endNode) {
-					const currentCx = segment.controlX ?? (startNode.x + endNode.x) / 2;
-					const currentCy = segment.controlY ?? (startNode.y + endNode.y) / 2;
-					segment.setControlPoint(currentCx + dx, currentCy + dz);
-					editor.segmentRenderer.updateSegment(segment, startNode, endNode);
+				for (const nodeId of [segment.startNodeId, segment.endNodeId]) {
+					const node = editor.graph.nodes.get(nodeId);
+					if (node) {
+						node.x += dx;
+						node.y += dz;
+						editor.nodeRenderer.updateNode(node);
+					}
 				}
+				if (segment.hasControlPoint) {
+					moveControlPoint(segment.id, dx, dz, 1);
+				}
+				applyChanges();
 			}
 		}
 
@@ -154,10 +362,12 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 
 	const onMouseUp = () => {
 		if (isDragging) {
+			editor.resolveSegmentCrossings();
 			editor.graph.save();
 		}
 		isDragging = false;
 		dragTarget = null;
+		controlFrames.clear();
 	};
 
 	const onKeyDown = (event: KeyboardEvent) => {
@@ -174,6 +384,7 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 	const cleanup = () => {
 		isDragging = false;
 		dragTarget = null;
+		controlFrames.clear();
 	};
 
 	return {

@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 
 const GROUND_SIZE = 10000;
-const GROUND_COLOR = 0x3d6b3d;
+const GROUND_COLOR = 0x4a6d5a;
 
 export class SceneManager {
 	scene: THREE.Scene;
@@ -10,6 +10,9 @@ export class SceneManager {
 
 	private container: HTMLElement;
 	private animationFrameId: number | null = null;
+	private onFps: ((fps: number) => void) | null = null;
+	private frameCount = 0;
+	private fpsWindowStart = 0;
 
 	// Camera state
 	private zoom = $state(1);
@@ -21,8 +24,9 @@ export class SceneManager {
 	private lastMouseX = 0;
 	private lastMouseY = 0;
 
-	constructor(container: HTMLElement) {
+	constructor(container: HTMLElement, onFps?: (fps: number) => void) {
 		this.container = container;
+		this.onFps = onFps ?? null;
 
 		// Create scene
 		this.scene = new THREE.Scene();
@@ -95,7 +99,7 @@ export class SceneManager {
 	}
 
 	private handleMouseDown(event: MouseEvent) {
-		if (event.button === 1 || (event.button === 0 && event.shiftKey)) {
+		if (event.button === 1 || (event.button === 0 && event.altKey)) {
 			this.isPanning = true;
 			this.lastMouseX = event.clientX;
 			this.lastMouseY = event.clientY;
@@ -153,6 +157,18 @@ export class SceneManager {
 	private animate() {
 		this.animationFrameId = requestAnimationFrame(this.animate.bind(this));
 		this.renderer.render(this.scene, this.camera);
+
+		if (this.onFps) {
+			this.frameCount++;
+			const now = performance.now();
+			if (this.fpsWindowStart === 0) {
+				this.fpsWindowStart = now;
+			} else if (now - this.fpsWindowStart >= 500) {
+				this.onFps(Math.round((this.frameCount * 1000) / (now - this.fpsWindowStart)));
+				this.frameCount = 0;
+				this.fpsWindowStart = now;
+			}
+		}
 	}
 
 	screenToWorld(screenX: number, screenY: number): { x: number; z: number } {
