@@ -1,14 +1,34 @@
 <script lang="ts">
 	import { getEditorContext } from '$lib/editor.svelte';
-	import { LANE_TEMPLATES, getLaneTemplate } from '$lib/core/lane-template';
+	import { LANE_COLORS, LANE_TEMPLATES, getTotalWidth } from '$lib/core/lane-template';
 	import { Button } from '$lib/components/ui/button';
-	import * as Select from '$lib/components/ui/select';
 	import { Pencil, MousePointer2, Trash2 } from '@lucide/svelte';
 
 	const editor = getEditorContext();
 
-	const currentTemplate = $derived(getLaneTemplate(editor.currentLaneTemplateId));
+	const maxPresetWidth = Math.max(...LANE_TEMPLATES.map((t) => getTotalWidth(t.lanes)));
+
+	function onKeyDown(event: KeyboardEvent) {
+		const target = event.target;
+		if (
+			target instanceof HTMLInputElement ||
+			target instanceof HTMLTextAreaElement ||
+			(target instanceof HTMLElement && target.isContentEditable)
+		) {
+			return;
+		}
+
+		const index = parseInt(event.key, 10) - 1;
+		if (isNaN(index)) return;
+
+		const template = LANE_TEMPLATES[index];
+		if (template) {
+			editor.currentLaneTemplateId = template.id;
+		}
+	}
 </script>
+
+<svelte:window onkeydown={onKeyDown} />
 
 <div class="fixed bottom-8 left-1/2 z-50 -translate-x-1/2">
 	<nav class="flex flex-row items-center gap-2 rounded-lg border bg-background p-2 shadow-lg">
@@ -32,22 +52,37 @@
 
 		<div class="mx-1 h-6 w-px bg-border"></div>
 
-		<Select.Root
-			type="single"
-			value={editor.currentLaneTemplateId}
-			onValueChange={(value) => {
-				if (value) editor.currentLaneTemplateId = value;
-			}}
-		>
-			<Select.Trigger class="w-28" size="sm">
-				{currentTemplate?.name ?? 'Road Type'}
-			</Select.Trigger>
-			<Select.Content>
-				{#each LANE_TEMPLATES as template (template.id)}
-					<Select.Item value={template.id} label={template.name} />
-				{/each}
-			</Select.Content>
-		</Select.Root>
+		{#each LANE_TEMPLATES as template, i (template.id)}
+			{@const totalWidth = getTotalWidth(template.lanes)}
+			{@const active = editor.currentLaneTemplateId === template.id}
+			<button
+				class="relative h-10 w-10 shrink-0 overflow-hidden rounded-md border-2 transition-colors {active
+					? 'border-foreground'
+					: 'border-border hover:border-muted-foreground'}"
+				style="background-color: {LANE_COLORS.grass};"
+				aria-label={template.name}
+				aria-pressed={active}
+				title="{template.name} — {totalWidth}m (key {i + 1})"
+				onclick={() => (editor.currentLaneTemplateId = template.id)}
+			>
+				<div
+					class="absolute inset-y-0 left-1/2 flex -translate-x-1/2"
+					style="width: {(totalWidth / maxPresetWidth) * 100}%;"
+				>
+					{#each template.lanes as lane, j (j)}
+						<div
+							class="h-full"
+							style="width: {(lane.width / totalWidth) * 100}%; background-color: {LANE_COLORS[
+								lane.type
+							]};"
+						></div>
+					{/each}
+				</div>
+				<span class="absolute right-0.5 bottom-0 text-[9px] leading-none font-medium text-white/70">
+					{i + 1}
+				</span>
+			</button>
+		{/each}
 
 		<div class="mx-1 h-6 w-px bg-border"></div>
 
