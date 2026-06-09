@@ -3,11 +3,14 @@
 	import { LANE_TEMPLATES, getLaneTemplate } from '$lib/core/lane-template';
 	import { Button } from '$lib/components/ui/button';
 	import * as Select from '$lib/components/ui/select';
-	import { Pencil, MousePointer2, Trash2 } from '@lucide/svelte';
+	import { Pencil, MousePointer2, Trash2, Columns3 } from '@lucide/svelte';
 
 	const editor = getEditorContext();
 
 	const currentTemplate = $derived(getLaneTemplate(editor.currentLaneTemplateId));
+	const editableSegmentId = $derived(
+		editor.selectedSegments.size === 1 ? [...editor.selectedSegments][0] : undefined
+	);
 </script>
 
 <div class="fixed bottom-8 left-1/2 z-50 -translate-x-1/2">
@@ -48,6 +51,18 @@
 				{/each}
 			</Select.Content>
 		</Select.Root>
+
+		<div class="mx-1 h-6 w-px bg-border"></div>
+
+		<Button
+			variant="ghost"
+			size="icon"
+			disabled={!editableSegmentId}
+			onclick={() => editableSegmentId && editor.openLaneEditor(editableSegmentId)}
+			title="Edit Lanes"
+		>
+			<Columns3 class="h-4 w-4" />
+		</Button>
 
 		<div class="mx-1 h-6 w-px bg-border"></div>
 

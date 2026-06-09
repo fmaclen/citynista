@@ -1,7 +1,7 @@
 import { SvelteMap } from 'svelte/reactivity';
 import { Node } from './node.svelte';
 import { Segment } from './segment.svelte';
-import type { GraphData } from './types';
+import type { GraphData, Lane } from './types';
 
 const STORAGE_KEY = 'citynista-graph-v2';
 
@@ -19,9 +19,9 @@ export class Graph {
 		return node;
 	}
 
-	createSegment(startNodeId: string, endNodeId: string, laneTemplateId: string = 'default') {
+	createSegment(startNodeId: string, endNodeId: string, lanes: Lane[]) {
 		const id = `segment-${this.segmentIdCounter++}`;
-		const segment = new Segment(id, startNodeId, endNodeId, laneTemplateId);
+		const segment = new Segment(id, startNodeId, endNodeId, lanes);
 		this.segments.set(id, segment);
 
 		const startNode = this.nodes.get(startNodeId);

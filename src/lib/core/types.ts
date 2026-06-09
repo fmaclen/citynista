@@ -4,7 +4,6 @@ export type LaneDirection = 'forward' | 'backward' | 'bidirectional';
 export interface Lane {
 	type: LaneType;
 	width: number;
-	color: string;
 	direction: LaneDirection;
 }
 
@@ -26,7 +25,9 @@ export interface SegmentData {
 	endNodeId: string;
 	controlX?: number;
 	controlY?: number;
-	laneTemplateId: string;
+	lanes?: Lane[];
+	// Legacy saves referenced a shared template instead of owning lanes.
+	laneTemplateId?: string;
 }
 
 export interface GraphData {

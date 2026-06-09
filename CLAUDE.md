@@ -43,9 +43,11 @@ The world is 2D on Three.js's XZ plane: graph coordinates are `(x, y)` where `y`
 2. **Graph** (`src/lib/core/graph.svelte.ts`): Data model
    - Nodes and segments in `SvelteMap`s; saves to localStorage explicitly via `save()`
    - **Node** (`src/lib/core/node.svelte.ts`): position + connected segment ids
-   - **Segment** (`src/lib/core/segment.svelte.ts`): start/end node ids, optional quadratic bezier control point (`controlX`/`controlY`), and a lane template id
+   - **Segment** (`src/lib/core/segment.svelte.ts`): start/end node ids, optional quadratic bezier control point (`controlX`/`controlY`), and an owned ordered lane stack (`lanes`: type sidewalk/grass/road/median, width, direction). `lanesKey` is the serialized form used in piece hashes and cross-section equality checks. Legacy saves with `laneTemplateId` migrate on load.
 
-3. **Lane templates** (`src/lib/core/lane-template.ts`): road cross-sections (Street, Avenue, Highway, Path) as ordered lanes of type sidewalk/grass/road/median with widths.
+3. **Lane templates** (`src/lib/core/lane-template.ts`): presets (Street, Avenue, Highway, Path). Drawing or "apply preset" copies a template's lanes onto the segment via `createLanesFrom()` — segments never share lane arrays.
+
+4. **Lane editor** (`src/lib/components/LaneEditor.svelte`): modal opened by double-clicking a segment in select mode (or the toolbar button when one segment is selected). Edits the segment's lanes in place — add/remove/reorder, type, width, road-lane direction — re-rendering and saving on every change. Mode keyboard shortcuts are suppressed while it is open (`editor.laneEditorSegmentId`).
 
 ### Road Geometry (`src/lib/core/road-geometry.ts`)
 
@@ -69,10 +71,10 @@ Two construction paths:
 
 ### Modes (`src/lib/modes/`)
 
-Each mode returns `ModeHandlers` (`onMouseDown`, `onMouseMove`, `onMouseUp`, `onKeyDown`, `cleanup`).
+Each mode returns `ModeHandlers` (`onMouseDown`, `onMouseMove`, `onMouseUp`, `onDoubleClick`, `onKeyDown`, `cleanup`).
 
 - **draw.ts**: click-to-draw with a translucent ghost preview of the pending road. Snaps to nodes and to segments (splitting them into T junctions on click). Escape cancels and removes an unused start node.
-- **select.ts**: click selects a node or segment; shift+click multi-selects nodes; dragging a path moves the segment rigidly; the red handle changes curvature (shift snaps tangent-continuous with neighbor roads, or straight near the chord). Control points keep their relative position when endpoints move. Delete/Backspace removes the selection.
+- **select.ts**: click selects a node or segment; shift+click multi-selects nodes; dragging a path moves the segment rigidly; the red handle changes curvature (shift snaps tangent-continuous with neighbor roads, or straight near the chord). Control points keep their relative position when endpoints move. Delete/Backspace removes the selection. Double-clicking a segment (away from nodes and the curvature handle) opens the lane editor.
 
 ### Planarization (`src/lib/core/crossings.ts`)
 

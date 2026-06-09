@@ -370,6 +370,22 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 		controlFrames.clear();
 	};
 
+	const onDoubleClick = (event: MouseEvent) => {
+		if (event.button !== 0 || event.altKey) return;
+
+		const worldPos = editor.sceneManager.screenToWorld(event.clientX, event.clientY);
+		if (findNodeAt(worldPos.x, worldPos.z) || findControlPointAt(worldPos.x, worldPos.z)) return;
+
+		const segment = findSegmentAt(worldPos.x, worldPos.z);
+		if (!segment) return;
+
+		if (!editor.selectedSegments.has(segment.id)) {
+			editor.clearSelection();
+			editor.selectSegment(segment.id);
+		}
+		editor.openLaneEditor(segment.id);
+	};
+
 	const onKeyDown = (event: KeyboardEvent) => {
 		if (event.key === 'Delete' || event.key === 'Backspace') {
 			if (editor.selectedNodes.size > 0 || editor.selectedSegments.size > 0) {
@@ -391,6 +407,7 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 		onMouseDown,
 		onMouseMove,
 		onMouseUp,
+		onDoubleClick,
 		onKeyDown,
 		cleanup
 	};

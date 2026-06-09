@@ -15,7 +15,8 @@ import type {
 	RoadLayer,
 	RoadLayerId
 } from '../core/road-geometry';
-import { getLaneTemplate, getTotalWidth } from '../core/lane-template';
+import { getTotalWidth } from '../core/lane-template';
+import type { Lane } from '../core/types';
 
 const LAYER_Y: Record<RoadLayerId, number> = {
 	casing: 0.01,
@@ -113,7 +114,7 @@ export class RoadRenderer {
 
 			const key = `segment:${segment.id}`;
 			const hash = [
-				segment.laneTemplateId,
+				segment.lanesKey,
 				startNode.x,
 				startNode.y,
 				endNode.x,
@@ -133,7 +134,7 @@ export class RoadRenderer {
 
 			this.removePiece(key);
 			const group = this.buildSegmentGroup(
-				segment.laneTemplateId,
+				segment.lanes,
 				samples,
 				joinStart,
 				joinEnd,
@@ -158,9 +159,7 @@ export class RoadRenderer {
 				const isStart = segment.startNodeId === node.id;
 				const stop = isStart ? samples[0] : samples[samples.length - 1];
 				const inner = isStart ? samples[1] : samples[samples.length - 2];
-				parts.push(
-					`${segmentId}:${segment.laneTemplateId}:${stop.x},${stop.y},${inner.x},${inner.y}`
-				);
+				parts.push(`${segmentId}:${segment.lanesKey}:${stop.x},${stop.y},${inner.x},${inner.y}`);
 			}
 			const hash = parts.join('|');
 
@@ -191,7 +190,7 @@ export class RoadRenderer {
 	}
 
 	private buildSegmentGroup(
-		templateId: string,
+		lanes: Lane[],
 		samples: CenterlineSample[],
 		joinStart: boolean,
 		joinEnd: boolean,
@@ -200,10 +199,9 @@ export class RoadRenderer {
 		jitter: number
 	): THREE.Group {
 		const group = new THREE.Group();
-		const template = getLaneTemplate(templateId);
-		if (!template) return group;
+		if (lanes.length === 0) return group;
 
-		const halfWidth = getTotalWidth(template) / 2;
+		const halfWidth = getTotalWidth(lanes) / 2;
 		const startExt = joinStart ? JOIN_OVERLAP : 0;
 		const endExt = joinEnd ? JOIN_OVERLAP : 0;
 
@@ -226,7 +224,7 @@ export class RoadRenderer {
 			this.buildStrip(samples, -halfWidth, halfWidth, 'sidewalk', startExt, endExt, jitter)
 		);
 
-		for (const interval of getLaneIntervals(template)) {
+		for (const interval of getLaneIntervals(lanes)) {
 			if (interval.laneType === 'sidewalk') continue;
 
 			if (interval.laneType === 'road') {

@@ -4,6 +4,7 @@ import type { Editor } from '../editor.svelte';
 import type { Segment } from '../core/segment.svelte';
 import { Graph } from '../core/graph.svelte';
 import { buildRoadLayers } from '../core/road-geometry';
+import { createLanesFrom } from '../core/lane-template';
 import { splitSegment } from '../core/crossings';
 import { closestPointOnQuadraticBezier } from '../geometry/bezier';
 import { RoadRenderer } from '../rendering/road-renderer';
@@ -158,7 +159,11 @@ export function setupDrawMode(editor: Editor): ModeHandlers {
 		previewGraph.clear();
 		const previewStart = previewGraph.createNode(startNode.x, startNode.y);
 		const previewEnd = previewGraph.createNode(snap.x, snap.y);
-		previewGraph.createSegment(previewStart.id, previewEnd.id, editor.currentLaneTemplateId);
+		previewGraph.createSegment(
+			previewStart.id,
+			previewEnd.id,
+			createLanesFrom(editor.currentLaneTemplateId)
+		);
 		ghostRenderer.render(buildRoadLayers(previewGraph));
 	};
 
@@ -179,7 +184,11 @@ export function setupDrawMode(editor: Editor): ModeHandlers {
 			const endNodeId = anchorNodeId(snap);
 
 			if (startNodeId !== endNodeId) {
-				editor.graph.createSegment(startNodeId, endNodeId, editor.currentLaneTemplateId);
+				editor.graph.createSegment(
+					startNodeId,
+					endNodeId,
+					createLanesFrom(editor.currentLaneTemplateId)
+				);
 				editor.resolveSegmentCrossings();
 			}
 
