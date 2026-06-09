@@ -10,7 +10,7 @@
 	import * as Select from '$lib/components/ui/select';
 	import { Button } from '$lib/components/ui/button';
 	import { Input } from '$lib/components/ui/input';
-	import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Plus, Trash2, X } from '@lucide/svelte';
+	import { ArrowLeft, ArrowRight, GripVertical, Plus, Trash2, X } from '@lucide/svelte';
 
 	const editor = getEditorContext();
 
@@ -64,13 +64,30 @@
 		commit();
 	}
 
-	function moveLane(index: number, delta: number) {
-		if (!segment) return;
-		const target = index + delta;
-		if (target < 0 || target >= segment.lanes.length) return;
+	let dragIndex = $state<number | null>(null);
+
+	function startDrag(event: DragEvent, index: number) {
+		dragIndex = index;
+		if (event.dataTransfer) {
+			event.dataTransfer.effectAllowed = 'move';
+			event.dataTransfer.setData('text/plain', String(index));
+		}
+	}
+
+	function dragOverRow(event: DragEvent, index: number) {
+		event.preventDefault();
+		if (!segment || dragIndex === null || dragIndex === index) return;
 
 		const lanes = segment.lanes;
-		[lanes[index], lanes[target]] = [lanes[target], lanes[index]];
+		const [moved] = lanes.splice(dragIndex, 1);
+		lanes.splice(index, 0, moved);
+		dragIndex = index;
+		editor.rebuildRoads();
+	}
+
+	function endDrag() {
+		if (dragIndex === null) return;
+		dragIndex = null;
 		commit();
 	}
 
@@ -133,7 +150,22 @@
 
 		<div class="flex flex-col gap-1.5">
 			{#each segment.lanes as lane, i (i)}
-				<div class="flex items-center gap-1">
+				<div
+					class="flex items-center gap-1 rounded {dragIndex === i ? 'bg-muted opacity-60' : ''}"
+					role="listitem"
+					ondragover={(e) => dragOverRow(e, i)}
+				>
+					<button
+						class="flex h-7 w-5 shrink-0 cursor-grab items-center justify-center text-muted-foreground active:cursor-grabbing"
+						draggable="true"
+						ondragstart={(e) => startDrag(e, i)}
+						ondragend={endDrag}
+						title="Drag to reorder"
+						aria-label="Drag to reorder"
+					>
+						<GripVertical class="h-4 w-4" />
+					</button>
+
 					<div
 						class="h-6 w-3 shrink-0 rounded-sm"
 						style="background-color: {LANE_COLORS[lane.type]};"
@@ -179,26 +211,6 @@
 					{/if}
 
 					<div class="ml-auto flex items-center">
-						<Button
-							variant="ghost"
-							size="icon"
-							class="h-7 w-7"
-							disabled={i === 0}
-							onclick={() => moveLane(i, -1)}
-							title="Move left"
-						>
-							<ArrowUp class="h-4 w-4" />
-						</Button>
-						<Button
-							variant="ghost"
-							size="icon"
-							class="h-7 w-7"
-							disabled={i === segment.lanes.length - 1}
-							onclick={() => moveLane(i, 1)}
-							title="Move right"
-						>
-							<ArrowDown class="h-4 w-4" />
-						</Button>
 						<Button
 							variant="ghost"
 							size="icon"

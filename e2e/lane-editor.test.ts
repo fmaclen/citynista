@@ -91,6 +91,29 @@ test.describe('Lane Editor', () => {
 		await expect(page.locator('aside')).not.toBeVisible();
 	});
 
+	test('reorders lanes by dragging rows', async ({ page }) => {
+		await seedGraph(page);
+		await selectSegment(page);
+
+		const panel = page.locator('aside');
+		const handles = panel.getByTitle('Drag to reorder');
+		const rows = panel.getByRole('listitem');
+		await expect(handles).toHaveCount(4);
+
+		// Street is sidewalk / road / road / sidewalk; drag the first sidewalk
+		// one row down.
+		await handles.first().dragTo(rows.nth(1));
+
+		const segments = await readSavedSegments(page);
+		const edited = segments.find((s: { id: string }) => s.id === 'segment-0');
+		expect(edited.lanes.map((lane: { type: string }) => lane.type)).toEqual([
+			'road',
+			'sidewalk',
+			'road',
+			'sidewalk'
+		]);
+	});
+
 	test('adds lanes and applies presets per segment', async ({ page }) => {
 		await seedGraph(page);
 		await selectSegment(page);
