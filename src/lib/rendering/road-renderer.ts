@@ -27,7 +27,7 @@ const LAYER_Y: Record<RoadLayerId, number> = {
 
 const LAYER_COLORS: Record<RoadLayerId, string> = {
 	sidewalk: '#9A9A94',
-	grass: '#3E6B4D',
+	grass: '#52A06B',
 	road: '#3D3D3D',
 	median: '#6E6E68'
 };

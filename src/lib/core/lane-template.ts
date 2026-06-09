@@ -3,7 +3,7 @@ import type { Lane, LaneTemplate, LaneType } from './types';
 export const LANE_COLORS: Record<LaneType, string> = {
 	road: '#3D3D3D',
 	sidewalk: '#9A9A94',
-	grass: '#3E6B4D',
+	grass: '#52A06B',
 	median: '#6E6E68'
 };
 
