@@ -47,13 +47,13 @@ The world is 2D on Three.js's XZ plane: graph coordinates are `(x, y)` where `y`
 
 3. **Lane templates** (`src/lib/core/lane-template.ts`): presets (Street, Avenue, Highway, Path). Drawing or "apply preset" copies a template's lanes onto the segment via `createLanesFrom()` — segments never share lane arrays.
 
-4. **Lane editor** (`src/lib/components/LaneEditor.svelte`): modal opened by double-clicking a segment in select mode (or the toolbar button when one segment is selected). Edits the segment's lanes in place — add/remove/reorder, type, width, road-lane direction — re-rendering and saving on every change. Mode keyboard shortcuts are suppressed while it is open (`editor.laneEditorSegmentId`).
+4. **Lane editor** (`src/lib/components/LaneEditor.svelte`): a docked side panel that appears whenever exactly one segment is selected, so edits preview live on the map. Edits the segment's lanes in place — add/remove/reorder, type, width, road-lane direction — re-rendering and saving on every change. Mode keyboard shortcuts only fire when the event target is `<body>`, so typing in panel inputs never hits Delete/Escape handlers.
 
 ### Road Geometry (`src/lib/core/road-geometry.ts`)
 
 The intersection model: at nodes with 3+ roads (and 2-segment corners bending sharper than 135°), roads do **not** continue through. Each segment is trimmed back to a stop line (`computeIntersectionTrims`: widest crossing road's half-width + a fixed gap, reserved for future crosswalks); a pavement patch spans the stop lines with corner curves between adjacent arms, and sidewalk bands wrap the corners. Gentle 2-segment bends instead get continuous swept round joins (`addNodeJoins`). Medians and grass end at stop lines.
 
-Layers render bottom-up: `casing` (dark rim), `sidewalk` (doubles as the full pavement plate), `grass`, `road`, `median`. Upper layers visually carve the lower ones, so overlapping geometry composes without booleans.
+Layers render bottom-up: `sidewalk` (doubles as the full pavement plate), `grass`, `road`, `median`. Upper layers visually carve the lower ones, so overlapping geometry composes without booleans. There is deliberately no outline/casing around roads — only the lane colors themselves render.
 
 Two construction paths:
 
@@ -71,10 +71,10 @@ Two construction paths:
 
 ### Modes (`src/lib/modes/`)
 
-Each mode returns `ModeHandlers` (`onMouseDown`, `onMouseMove`, `onMouseUp`, `onDoubleClick`, `onKeyDown`, `cleanup`).
+Each mode returns `ModeHandlers` (`onMouseDown`, `onMouseMove`, `onMouseUp`, `onKeyDown`, `cleanup`).
 
 - **draw.ts**: click-to-draw with a translucent ghost preview of the pending road. Snaps to nodes and to segments (splitting them into T junctions on click). Escape cancels and removes an unused start node.
-- **select.ts**: click selects a node or segment; shift+click multi-selects nodes; dragging a path moves the segment rigidly; the red handle changes curvature (shift snaps tangent-continuous with neighbor roads, or straight near the chord). Control points keep their relative position when endpoints move. Delete/Backspace removes the selection. Double-clicking a segment (away from nodes and the curvature handle) opens the lane editor.
+- **select.ts**: click selects a node or segment; shift+click multi-selects nodes; dragging a path moves the segment rigidly; the red handle changes curvature (shift snaps tangent-continuous with neighbor roads, or straight near the chord). Control points keep their relative position when endpoints move. Delete/Backspace removes the selection. Selecting a single segment also opens the lane editor panel.
 
 ### Planarization (`src/lib/core/crossings.ts`)
 

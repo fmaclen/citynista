@@ -23,7 +23,6 @@ export class Editor {
 	mode = $state<Mode | undefined>(undefined);
 	currentLaneTemplateId = $state(getDefaultTemplate().id);
 	fps = $state(0);
-	laneEditorSegmentId = $state<string | null>(null);
 	selectedNodes = new SvelteSet<string>();
 	selectedSegments = new SvelteSet<string>();
 
@@ -86,7 +85,6 @@ export class Editor {
 		canvas.addEventListener('mousedown', (e) => this.modeHandlers?.onMouseDown?.(e));
 		canvas.addEventListener('mousemove', (e) => this.modeHandlers?.onMouseMove?.(e));
 		canvas.addEventListener('mouseup', (e) => this.modeHandlers?.onMouseUp?.(e));
-		canvas.addEventListener('dblclick', (e) => this.modeHandlers?.onDoubleClick?.(e));
 	}
 
 	private setupMode(mode: Mode | undefined) {
@@ -115,21 +113,14 @@ export class Editor {
 		if (this.modeHandlers?.onKeyDown) {
 			const handler = this.modeHandlers.onKeyDown;
 			// Mode shortcuts (Delete, Escape...) must not fire while typing in
-			// the lane editor dialog.
+			// the lane panel or other UI controls.
 			this.boundKeyDown = (e) => {
-				if (this.laneEditorSegmentId !== null) return;
+				const target = e.target;
+				if (target instanceof HTMLElement && target.tagName !== 'BODY') return;
 				handler(e);
 			};
 			window.addEventListener('keydown', this.boundKeyDown);
 		}
-	}
-
-	openLaneEditor(segmentId: string) {
-		this.laneEditorSegmentId = segmentId;
-	}
-
-	closeLaneEditor() {
-		this.laneEditorSegmentId = null;
 	}
 
 	selectNode(nodeId: string) {
@@ -157,7 +148,6 @@ export class Editor {
 		this.selectionRenderer.clear();
 		this.selectedNodes.clear();
 		this.selectedSegments.clear();
-		this.laneEditorSegmentId = null;
 	}
 
 	refreshSelectionVisuals() {

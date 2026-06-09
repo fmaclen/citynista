@@ -12,7 +12,7 @@ export interface Point {
 	y: number;
 }
 
-export type RoadLayerId = 'casing' | LaneType;
+export type RoadLayerId = LaneType;
 
 export interface PolygonWithHoles {
 	outer: Point[];
@@ -26,7 +26,6 @@ export interface RoadLayer {
 
 const CLIPPER_SCALE = 1000;
 const CURVE_SAMPLES = 32;
-const CASING_WIDTH = 1;
 
 // How far roads stop short of the crossing road's edge at an intersection.
 const INTERSECTION_GAP = 4;
@@ -35,7 +34,6 @@ const CORNER_CURVE_SAMPLES = 12;
 // Small dilate-erode pass that seals hairline cracks where generated pieces
 // share an edge. Corner geometry is explicit, so this stays tiny.
 const CURB_RADIUS: Record<RoadLayerId, number> = {
-	casing: 1.5,
 	sidewalk: 1.5,
 	grass: 1,
 	road: 1.5,
@@ -46,7 +44,7 @@ const JUNCTION_DISC_SCALE = 1.5;
 
 // Bottom-to-top draw order. Road covers crossing sidewalk/grass strips inside
 // junctions; median sits on the roadway.
-export const LAYER_ORDER: RoadLayerId[] = ['casing', 'sidewalk', 'grass', 'road', 'median'];
+export const LAYER_ORDER: RoadLayerId[] = ['sidewalk', 'grass', 'road', 'median'];
 
 interface LaneInterval {
 	laneType: LaneType;
@@ -144,13 +142,6 @@ export function buildRoadLayers(graph: Graph): RoadLayer[] {
 	}
 
 	const layers: RoadLayer[] = [];
-
-	// The casing is a thin rim around the pavement plate, which contains
-	// every other layer.
-	const casingPolygons = pathsToPolygons(offsetPaths(plate, CASING_WIDTH));
-	if (casingPolygons.length > 0) {
-		layers.push({ id: 'casing', polygons: casingPolygons });
-	}
 
 	for (const layerId of LAYER_ORDER) {
 		const paths = layerPaths.get(layerId);
@@ -1083,19 +1074,13 @@ export function buildNodeLayers(
 	}
 	if (allBands.length === 0) return [];
 
-	// The sidewalk layer doubles as the junction's full pavement plate, and
-	// the casing is its rim — same layering trick as segment ribbons.
+	// The sidewalk layer doubles as the junction's full pavement plate — same
+	// layering trick as segment ribbons.
 	const plate = unionPaths(allBands);
 
 	const layers: RoadLayer[] = [];
-	const casingPolygons = pathsToPolygons(offsetPaths(plate, CASING_WIDTH));
-	if (casingPolygons.length > 0) {
-		layers.push({ id: 'casing', polygons: casingPolygons });
-	}
 
 	for (const layerId of LAYER_ORDER) {
-		if (layerId === 'casing') continue;
-
 		let paths: Paths;
 		if (layerId === 'sidewalk') {
 			paths = plate;

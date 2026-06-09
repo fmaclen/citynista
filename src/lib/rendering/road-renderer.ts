@@ -19,7 +19,6 @@ import { getTotalWidth } from '../core/lane-template';
 import type { Lane } from '../core/types';
 
 const LAYER_Y: Record<RoadLayerId, number> = {
-	casing: 0.01,
 	sidewalk: 0.02,
 	grass: 0.03,
 	road: 0.04,
@@ -27,14 +26,12 @@ const LAYER_Y: Record<RoadLayerId, number> = {
 };
 
 const LAYER_COLORS: Record<RoadLayerId, string> = {
-	casing: '#2A2A2A',
-	sidewalk: '#4A4A4A',
-	grass: '#2D4A3E',
+	sidewalk: '#9A9A94',
+	grass: '#3E6B4D',
 	road: '#3D3D3D',
-	median: '#353535'
+	median: '#6E6E68'
 };
 
-const CASING_WIDTH = 1;
 // Segment ribbons reach slightly into their node pieces so no hairline
 // cracks can open between them.
 const JOIN_OVERLAP = 0.5;
@@ -204,19 +201,6 @@ export class RoadRenderer {
 		const halfWidth = getTotalWidth(lanes) / 2;
 		const startExt = joinStart ? JOIN_OVERLAP : 0;
 		const endExt = joinEnd ? JOIN_OVERLAP : 0;
-
-		// Casing wraps dead ends; at joins the node piece takes over.
-		group.add(
-			this.buildStrip(
-				samples,
-				-halfWidth - CASING_WIDTH,
-				halfWidth + CASING_WIDTH,
-				'casing',
-				joinStart ? JOIN_OVERLAP : CASING_WIDTH,
-				joinEnd ? JOIN_OVERLAP : CASING_WIDTH,
-				jitter
-			)
-		);
 
 		// Full-width pavement plate rendered as the sidewalk layer; the lane
 		// strips above carve out the visible sidewalk edges.

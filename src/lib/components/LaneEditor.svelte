@@ -7,17 +7,17 @@
 		getTotalWidth
 	} from '$lib/core/lane-template';
 	import type { LaneType } from '$lib/core/types';
-	import * as Dialog from '$lib/components/ui/dialog';
 	import * as Select from '$lib/components/ui/select';
 	import { Button } from '$lib/components/ui/button';
 	import { Input } from '$lib/components/ui/input';
-	import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Plus, Trash2 } from '@lucide/svelte';
+	import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Plus, Trash2, X } from '@lucide/svelte';
 
 	const editor = getEditorContext();
 
-	const segment = $derived(
-		editor.laneEditorSegmentId ? editor.graph.segments.get(editor.laneEditorSegmentId) : undefined
+	const segmentId = $derived(
+		editor.selectedSegments.size === 1 ? [...editor.selectedSegments][0] : undefined
 	);
+	const segment = $derived(segmentId ? editor.graph.segments.get(segmentId) : undefined);
 
 	const LANE_TYPES: { value: LaneType; label: string }[] = [
 		{ value: 'road', label: 'Road' },
@@ -95,139 +95,141 @@
 	const totalWidth = $derived(segment ? getTotalWidth(segment.lanes) : 0);
 </script>
 
-<Dialog.Root
-	open={segment !== undefined}
-	onOpenChange={(open) => {
-		if (!open) editor.closeLaneEditor();
-	}}
->
-	{#if segment}
-		<Dialog.Content class="max-h-[85vh] overflow-y-auto sm:max-w-xl">
-			<Dialog.Header>
-				<Dialog.Title>Lanes</Dialog.Title>
-				<Dialog.Description>
-					Cross-section of the selected segment, left to right along its drawing direction.
-				</Dialog.Description>
-			</Dialog.Header>
-
-			<div
-				class="flex h-7 w-full overflow-hidden rounded border border-border"
-				title="Cross-section preview"
+{#if segment}
+	<aside
+		class="fixed top-4 right-4 z-40 flex max-h-[calc(100vh-2rem)] w-80 flex-col gap-3 overflow-y-auto rounded-lg border bg-background p-4 shadow-lg"
+	>
+		<div class="flex items-center justify-between">
+			<div>
+				<h2 class="text-sm font-semibold">Lanes</h2>
+				<p class="text-xs text-muted-foreground">Left to right along the drawing direction</p>
+			</div>
+			<Button
+				variant="ghost"
+				size="icon"
+				class="h-7 w-7"
+				onclick={() => editor.clearSelection()}
+				title="Close"
 			>
-				{#each segment.lanes as lane, i (i)}
+				<X class="h-4 w-4" />
+			</Button>
+		</div>
+
+		<div
+			class="flex h-6 w-full overflow-hidden rounded border border-border"
+			title="Cross-section preview"
+		>
+			{#each segment.lanes as lane, i (i)}
+				<div
+					class="flex h-full items-center justify-center overflow-hidden text-[10px] text-white/60"
+					style="width: {(lane.width / totalWidth) * 100}%; background-color: {LANE_COLORS[
+						lane.type
+					]};"
+				>
+					{lane.width}
+				</div>
+			{/each}
+		</div>
+
+		<div class="flex flex-col gap-1.5">
+			{#each segment.lanes as lane, i (i)}
+				<div class="flex items-center gap-1">
 					<div
-						class="flex h-full items-center justify-center overflow-hidden text-[10px] text-white/60"
-						style="width: {(lane.width / totalWidth) * 100}%; background-color: {LANE_COLORS[
-							lane.type
-						]};"
-					>
-						{lane.width}
-					</div>
-				{/each}
-			</div>
+						class="h-6 w-3 shrink-0 rounded-sm"
+						style="background-color: {LANE_COLORS[lane.type]};"
+					></div>
 
-			<div class="flex flex-col gap-1.5">
-				{#each segment.lanes as lane, i (i)}
-					<div class="flex items-center gap-1.5">
-						<div
-							class="h-6 w-6 shrink-0 rounded"
-							style="background-color: {LANE_COLORS[lane.type]};"
-						></div>
-
-						<Select.Root type="single" value={lane.type} onValueChange={(v) => setType(i, v)}>
-							<Select.Trigger class="w-32" size="sm">
-								{LANE_TYPES.find((o) => o.value === lane.type)?.label}
-							</Select.Trigger>
-							<Select.Content>
-								{#each LANE_TYPES as option (option.value)}
-									<Select.Item value={option.value} label={option.label} />
-								{/each}
-							</Select.Content>
-						</Select.Root>
-
-						<Input
-							type="number"
-							step="0.5"
-							min={MIN_LANE_WIDTH}
-							max={MAX_LANE_WIDTH}
-							class="h-8 w-20"
-							value={lane.width}
-							onchange={(e) => setWidth(i, e.currentTarget.value)}
-						/>
-
-						{#if lane.type === 'road'}
-							<Button
-								variant="ghost"
-								size="icon"
-								class="h-8 w-8"
-								onclick={() => flipDirection(i)}
-								title="Direction of travel (relative to drawing direction)"
-							>
-								{#if lane.direction === 'forward'}
-									<ArrowRight class="h-4 w-4" />
-								{:else}
-									<ArrowLeft class="h-4 w-4" />
-								{/if}
-							</Button>
-						{:else}
-							<div class="h-8 w-8 shrink-0"></div>
-						{/if}
-
-						<div class="ml-auto flex items-center">
-							<Button
-								variant="ghost"
-								size="icon"
-								class="h-8 w-8"
-								disabled={i === 0}
-								onclick={() => moveLane(i, -1)}
-								title="Move left"
-							>
-								<ArrowUp class="h-4 w-4" />
-							</Button>
-							<Button
-								variant="ghost"
-								size="icon"
-								class="h-8 w-8"
-								disabled={i === segment.lanes.length - 1}
-								onclick={() => moveLane(i, 1)}
-								title="Move right"
-							>
-								<ArrowDown class="h-4 w-4" />
-							</Button>
-							<Button
-								variant="ghost"
-								size="icon"
-								class="h-8 w-8"
-								disabled={segment.lanes.length <= 1}
-								onclick={() => removeLane(i)}
-								title="Remove lane"
-							>
-								<Trash2 class="h-4 w-4" />
-							</Button>
-						</div>
-					</div>
-				{/each}
-			</div>
-
-			<div class="flex items-center justify-between gap-2">
-				<Button variant="outline" size="sm" onclick={addLane}>
-					<Plus class="h-4 w-4" />
-					Add lane
-				</Button>
-
-				<div class="flex items-center gap-2">
-					<span class="text-sm text-muted-foreground">{totalWidth}m total</span>
-
-					<Select.Root type="single" value="" onValueChange={applyPreset}>
-						<Select.Trigger class="w-36" size="sm">Apply preset…</Select.Trigger>
+					<Select.Root type="single" value={lane.type} onValueChange={(v) => setType(i, v)}>
+						<Select.Trigger class="w-26" size="sm">
+							{LANE_TYPES.find((o) => o.value === lane.type)?.label}
+						</Select.Trigger>
 						<Select.Content>
-							{#each LANE_TEMPLATES as template (template.id)}
-								<Select.Item value={template.id} label={template.name} />
+							{#each LANE_TYPES as option (option.value)}
+								<Select.Item value={option.value} label={option.label} />
 							{/each}
 						</Select.Content>
 					</Select.Root>
+
+					<Input
+						type="number"
+						step="0.5"
+						min={MIN_LANE_WIDTH}
+						max={MAX_LANE_WIDTH}
+						class="h-8 w-16 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+						value={lane.width}
+						onchange={(e) => setWidth(i, e.currentTarget.value)}
+					/>
+
+					{#if lane.type === 'road'}
+						<Button
+							variant="ghost"
+							size="icon"
+							class="h-7 w-7"
+							onclick={() => flipDirection(i)}
+							title="Direction of travel (relative to drawing direction)"
+						>
+							{#if lane.direction === 'forward'}
+								<ArrowRight class="h-4 w-4" />
+							{:else}
+								<ArrowLeft class="h-4 w-4" />
+							{/if}
+						</Button>
+					{:else}
+						<div class="h-7 w-7 shrink-0"></div>
+					{/if}
+
+					<div class="ml-auto flex items-center">
+						<Button
+							variant="ghost"
+							size="icon"
+							class="h-7 w-7"
+							disabled={i === 0}
+							onclick={() => moveLane(i, -1)}
+							title="Move left"
+						>
+							<ArrowUp class="h-4 w-4" />
+						</Button>
+						<Button
+							variant="ghost"
+							size="icon"
+							class="h-7 w-7"
+							disabled={i === segment.lanes.length - 1}
+							onclick={() => moveLane(i, 1)}
+							title="Move right"
+						>
+							<ArrowDown class="h-4 w-4" />
+						</Button>
+						<Button
+							variant="ghost"
+							size="icon"
+							class="h-7 w-7"
+							disabled={segment.lanes.length <= 1}
+							onclick={() => removeLane(i)}
+							title="Remove lane"
+						>
+							<Trash2 class="h-4 w-4" />
+						</Button>
+					</div>
 				</div>
-			</div>
-		</Dialog.Content>
-	{/if}
-</Dialog.Root>
+			{/each}
+		</div>
+
+		<div class="flex items-center justify-between gap-2">
+			<Button variant="outline" size="sm" onclick={addLane}>
+				<Plus class="h-4 w-4" />
+				Add lane
+			</Button>
+
+			<span class="text-xs text-muted-foreground">{totalWidth}m total</span>
+		</div>
+
+		<Select.Root type="single" value="" onValueChange={applyPreset}>
+			<Select.Trigger class="w-full" size="sm">Apply preset…</Select.Trigger>
+			<Select.Content>
+				{#each LANE_TEMPLATES as template (template.id)}
+					<Select.Item value={template.id} label={template.name} />
+				{/each}
+			</Select.Content>
+		</Select.Root>
+	</aside>
+{/if}

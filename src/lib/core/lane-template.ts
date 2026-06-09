@@ -2,9 +2,9 @@ import type { Lane, LaneTemplate, LaneType } from './types';
 
 export const LANE_COLORS: Record<LaneType, string> = {
 	road: '#3D3D3D',
-	sidewalk: '#4A4A4A',
-	grass: '#2D4A3E',
-	median: '#353535'
+	sidewalk: '#9A9A94',
+	grass: '#3E6B4D',
+	median: '#6E6E68'
 };
 
 // Templates are presets: drawing (or applying one in the lane editor) copies

@@ -40,65 +40,69 @@ async function readSavedSegments(page: import('@playwright/test').Page) {
 	}, STORAGE_KEY);
 }
 
+async function selectSegment(page: import('@playwright/test').Page) {
+	await page.getByTitle('Select Mode').click();
+	const point = toScreen(-50, 0);
+	await page.locator('canvas').click({ position: { x: point.x, y: point.y } });
+	await expect(page.locator('aside')).toBeVisible();
+}
+
 test.describe('Lane Editor', () => {
-	test('opens on double-click, edits widths, migrates legacy saves', async ({ page }) => {
+	test('panel opens on selection, edits widths, migrates legacy saves', async ({ page }) => {
 		await seedGraph(page);
+		await selectSegment(page);
 
-		await page.getByTitle('Select Mode').click();
-		// Off the midpoint: once selected, the chord midpoint is the curvature
-		// handle, and double-clicking the handle must not open the editor.
-		const point = toScreen(-50, 0);
-		await page.locator('canvas').dblclick({ position: { x: point.x, y: point.y } });
-
-		const dialog = page.getByRole('dialog');
-		await expect(dialog).toBeVisible();
+		const panel = page.locator('aside');
 
 		// A street is sidewalk / road / road / sidewalk.
-		const widthInputs = dialog.locator('input[type="number"]');
+		const widthInputs = panel.locator('input[type="number"]');
 		await expect(widthInputs).toHaveCount(4);
+
+		// Typing keys in panel inputs must not trigger canvas shortcuts.
+		await widthInputs.first().press('Backspace');
+		await widthInputs.first().press('Escape');
+		await expect(panel).toBeVisible();
 
 		await widthInputs.first().fill('5');
 		await widthInputs.first().press('Tab');
-		await expect(dialog.getByText('13m total')).toBeVisible();
+		await expect(panel.getByText('13m total')).toBeVisible();
 
 		const segments = await readSavedSegments(page);
+		expect(segments).toHaveLength(2);
 		const edited = segments.find((s: { id: string }) => s.id === 'segment-0');
 		expect(edited.lanes).toHaveLength(4);
 		expect(edited.lanes[0]).toEqual({ type: 'sidewalk', width: 5, direction: 'bidirectional' });
 		expect(edited.laneTemplateId).toBeUndefined();
 	});
 
-	test('opens from the toolbar button for the selected segment', async ({ page }) => {
+	test('panel hides when the selection is cleared', async ({ page }) => {
 		await seedGraph(page);
+		await selectSegment(page);
 
-		await page.getByTitle('Select Mode').click();
-		const editLanes = page.getByTitle('Edit Lanes');
-		await expect(editLanes).toBeDisabled();
+		await page.locator('aside').getByTitle('Close').click();
+		await expect(page.locator('aside')).not.toBeVisible();
 
-		const mid = toScreen(-100, 0);
-		await page.locator('canvas').click({ position: { x: mid.x, y: mid.y } });
-		await expect(editLanes).toBeEnabled();
+		// Reselect (still in select mode), then click empty ground to deselect.
+		const point = toScreen(-50, 0);
+		await page.locator('canvas').click({ position: { x: point.x, y: point.y } });
+		await expect(page.locator('aside')).toBeVisible();
 
-		await editLanes.click();
-		await expect(page.getByRole('dialog')).toBeVisible();
+		await page.locator('canvas').click({ position: { x: 200, y: 600 } });
+		await expect(page.locator('aside')).not.toBeVisible();
 	});
 
 	test('adds lanes and applies presets per segment', async ({ page }) => {
 		await seedGraph(page);
+		await selectSegment(page);
 
-		await page.getByTitle('Select Mode').click();
-		const point = toScreen(-50, 0);
-		await page.locator('canvas').dblclick({ position: { x: point.x, y: point.y } });
+		const panel = page.locator('aside');
 
-		const dialog = page.getByRole('dialog');
-		await expect(dialog).toBeVisible();
+		await panel.getByRole('button', { name: 'Add lane' }).click();
+		await expect(panel.locator('input[type="number"]')).toHaveCount(5);
 
-		await dialog.getByRole('button', { name: 'Add lane' }).click();
-		await expect(dialog.locator('input[type="number"]')).toHaveCount(5);
-
-		await dialog.getByText('Apply preset…').click();
+		await panel.getByText('Apply preset…').click();
 		await page.getByRole('option', { name: 'Avenue' }).click();
-		const widthInputs = dialog.locator('input[type="number"]');
+		const widthInputs = panel.locator('input[type="number"]');
 		await expect(widthInputs).toHaveCount(9);
 
 		// Both segments are now avenue-shaped; editing one must not touch the
