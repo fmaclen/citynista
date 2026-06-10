@@ -445,6 +445,7 @@ function buildBandPath(centerline: CenterlineSample[], start: number, end: numbe
 interface NodeArm {
 	normal: Point;
 	outward: Point;
+	startsHere: boolean;
 	lanes: Lane[];
 	lanesKey: string;
 }
@@ -480,10 +481,11 @@ function addNodeJoins(
 		const armA = arms[i];
 		const armB = arms[(i + 1) % arms.length];
 
-		let normalB = armB.normal;
-		if (armA.normal.x * normalB.x + armA.normal.y * normalB.y < 0) {
-			normalB = { x: -normalB.x, y: -normalB.y };
-		}
+		// Frames continue head-to-tail only when one segment ends here and the
+		// other starts here; otherwise armB's frame is mirrored, so both its
+		// normal and its interval list flip.
+		const flipped = armA.startsHere === armB.startsHere;
+		const normalB = flipped ? { x: -armB.normal.x, y: -armB.normal.y } : armB.normal;
 
 		const rotation = rotationBetween(armA.normal, normalB);
 		if (Math.abs(rotation) < MIN_JOIN_ANGLE) continue;
@@ -493,8 +495,12 @@ function addNodeJoins(
 		const intervalsA = getLaneIntervals(armA.lanes);
 		const intervalsB = getLaneIntervals(armB.lanes);
 		for (let k = 0; k < intervalsA.length; k++) {
+			const raw = flipped ? intervalsB[intervalsB.length - 1 - k] : intervalsB[k];
+			const counterpart = flipped
+				? { laneType: raw.laneType, start: -raw.end, end: -raw.start }
+				: raw;
 			const bands = getOrCreateBands(bandsByType, intervalsA[k].laneType);
-			addWedgePieces(bands, center, dirs, intervalsA[k], intervalsB[k]);
+			addWedgePieces(bands, center, dirs, intervalsA[k], counterpart);
 		}
 	}
 }
@@ -513,6 +519,7 @@ function addTransition(
 	interface TransitionArm {
 		stop: Point;
 		posDir: Point;
+		startsHere: boolean;
 		profile: ArmProfile;
 	}
 
@@ -530,15 +537,16 @@ function addTransition(
 		arms.push({
 			stop: { x: stopSample.x, y: stopSample.y },
 			posDir: { x: stopSample.normalX, y: stopSample.normalY },
+			startsHere: isStart,
 			profile: getArmProfile(segment.lanes)
 		});
 	}
 	if (arms.length !== 2) return;
 
 	const [a, b] = arms;
-	// Mirror b's frame when the segments run through the node in opposite
-	// drawing directions.
-	const flipped = a.posDir.x * b.posDir.x + a.posDir.y * b.posDir.y < 0;
+	// Frames continue head-to-tail only when one segment ends here and the
+	// other starts here; otherwise mirror b's frame so world sides match up.
+	const flipped = a.startsHere === b.startsHere;
 	const dirB = flipped ? { x: -b.posDir.x, y: -b.posDir.y } : b.posDir;
 	const positiveB = flipped ? b.profile.negative : b.profile.positive;
 	const negativeB = flipped ? b.profile.positive : b.profile.negative;
@@ -564,20 +572,43 @@ function addTransition(
 		-b.profile.halfWidth,
 		b.profile.halfWidth
 	);
-	quad(
-		'road',
-		a.profile.positive.roadInner,
-		a.profile.positive.roadEdge,
-		positiveB.roadInner,
-		positiveB.roadEdge
-	);
-	quad(
-		'road',
-		-a.profile.negative.roadEdge,
-		-a.profile.negative.roadInner,
-		-negativeB.roadEdge,
-		-negativeB.roadInner
-	);
+
+	// The roadway leaves the center open only while a grass center runs
+	// through the whole transition (grass renders under asphalt). Medians
+	// draw on top of the roadway, so everywhere else one full-span quad
+	// paves the center — a median that stops at its mouth ends square
+	// against asphalt instead of leaving a sliver of plate behind.
+	const centerGrass = (side: SideProfile) => hasBand(side.grass) && side.grass.inner < BAND_EPSILON;
+	const grassCenterContinues =
+		centerGrass(a.profile.positive) &&
+		centerGrass(a.profile.negative) &&
+		centerGrass(positiveB) &&
+		centerGrass(negativeB);
+
+	if (grassCenterContinues) {
+		quad(
+			'road',
+			a.profile.positive.roadInner,
+			a.profile.positive.roadEdge,
+			positiveB.roadInner,
+			positiveB.roadEdge
+		);
+		quad(
+			'road',
+			-a.profile.negative.roadEdge,
+			-a.profile.negative.roadInner,
+			-negativeB.roadEdge,
+			-negativeB.roadInner
+		);
+	} else {
+		quad(
+			'road',
+			-a.profile.negative.roadEdge,
+			a.profile.positive.roadEdge,
+			-negativeB.roadEdge,
+			positiveB.roadEdge
+		);
+	}
 
 	const matched = (laneType: LaneType, bandA: SideBand, bandB: SideBand, side: 1 | -1) => {
 		if (!hasBand(bandA) || !hasBand(bandB)) return;
@@ -597,6 +628,7 @@ interface IntersectionArm {
 	side: Point;
 	// World direction of the segment's positive-offset side.
 	crossDir: Point;
+	startsHere: boolean;
 	lanes: Lane[];
 	lanesKey: string;
 	halfWidth: number;
@@ -646,6 +678,7 @@ function addIntersection(
 			into,
 			side,
 			crossDir: isStart ? side : { x: -side.x, y: -side.y },
+			startsHere: isStart,
 			lanes: segment.lanes,
 			lanesKey: segment.lanesKey,
 			halfWidth: profile.halfWidth,
@@ -722,9 +755,11 @@ function addCornerBands(
 	armB: IntersectionArm,
 	bandsByType: Map<LaneType, Paths>
 ) {
-	// Anti-parallel positive sides mean the segments run through the corner
-	// in opposite drawing directions; mirror armB so world sides match up.
-	const flipped = armA.crossDir.x * armB.crossDir.x + armA.crossDir.y * armB.crossDir.y < 0;
+	// Frames continue head-to-tail only when one segment ends here and the
+	// other starts here; otherwise mirror armB so world sides match up. This
+	// is topological on purpose — at a right angle the two positive sides
+	// are perpendicular and no geometric test can tell the cases apart.
+	const flipped = armA.startsHere === armB.startsHere;
 	const dirB = flipped ? { x: -armB.crossDir.x, y: -armB.crossDir.y } : armB.crossDir;
 
 	const edgeCurve = (offset: number) =>
@@ -808,6 +843,7 @@ function collectNodeArms(graph: Graph, node: Node): NodeArm[] {
 		arms.push({
 			normal: { x: -tangent.y, y: tangent.x },
 			outward: isStart ? tangent : { x: -tangent.x, y: -tangent.y },
+			startsHere: isStart,
 			lanes: segment.lanes,
 			lanesKey: segment.lanesKey
 		});
