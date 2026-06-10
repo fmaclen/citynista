@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test';
 
 const STORAGE_KEY = 'citynista-graph-v2';
 
-test.describe('Three.js Editor', () => {
+test.describe('Persistence', () => {
 	test.beforeEach(async ({ page }) => {
 		await page.goto('/');
 		await page.evaluate((key) => localStorage.removeItem(key), STORAGE_KEY);
@@ -70,7 +70,6 @@ test.describe('Three.js Editor', () => {
 			return data ? JSON.parse(data) : null;
 		}, STORAGE_KEY);
 
-		console.log('Before curve:', JSON.stringify(beforeCurve, null, 2));
 		expect(beforeCurve.segments.length).toBe(1);
 
 		// The control point (red circle) should now be visible at the center of the segment
@@ -86,7 +85,6 @@ test.describe('Three.js Editor', () => {
 			return data ? JSON.parse(data) : null;
 		}, STORAGE_KEY);
 
-		console.log('After curve:', JSON.stringify(afterCurve, null, 2));
 		expect(afterCurve.segments.length).toBe(1);
 
 		// Control point should now be set (segment was curved)
