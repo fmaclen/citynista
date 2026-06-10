@@ -12,7 +12,7 @@ const STRAIGHT_SNAP_DISTANCE = 10;
 type DragTarget =
 	| { type: 'nodes' }
 	| { type: 'controlPoint'; segmentId: string }
-	| { type: 'segment'; segmentId: string }
+	| { type: 'segments'; segmentIds: string[] }
 	| null;
 
 export function setupSelectMode(editor: Editor): ModeHandlers {
@@ -299,16 +299,24 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 
 		const segment = findSegmentAt(worldPos.x, worldPos.z);
 		if (segment) {
-			if (!editor.selectedSegments.has(segment.id)) {
+			if (event.shiftKey) {
+				if (editor.selectedSegments.has(segment.id)) {
+					editor.deselectSegment(segment.id);
+					return;
+				}
+				editor.selectSegment(segment.id);
+			} else if (!editor.selectedSegments.has(segment.id)) {
 				editor.clearSelection();
 				editor.selectSegment(segment.id);
 			}
 			isDragging = true;
-			dragTarget = { type: 'segment', segmentId: segment.id };
+			dragTarget = { type: 'segments', segmentIds: [...editor.selectedSegments] };
 			return;
 		}
 
-		editor.clearSelection();
+		if (!event.shiftKey) {
+			editor.clearSelection();
+		}
 	};
 
 	const onMouseMove = (event: MouseEvent) => {
@@ -340,12 +348,18 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 				moveControlPoint(dragTarget.segmentId, dx, dz, 1);
 			}
 			applyChanges();
-		} else if (dragTarget.type === 'segment') {
-			// Dragging the path moves the whole segment as-is; curvature only
-			// changes via the control-point handle.
-			const segment = editor.graph.segments.get(dragTarget.segmentId);
-			if (segment) {
+		} else if (dragTarget.type === 'segments') {
+			// Dragging a path moves the selected segments rigidly; curvature only
+			// changes via the control-point handle. Shared endpoints move once.
+			const movedNodes = new Set<string>();
+			for (const segmentId of dragTarget.segmentIds) {
+				const segment = editor.graph.segments.get(segmentId);
+				if (!segment) continue;
+
 				for (const nodeId of [segment.startNodeId, segment.endNodeId]) {
+					if (movedNodes.has(nodeId)) continue;
+					movedNodes.add(nodeId);
+
 					const node = editor.graph.nodes.get(nodeId);
 					if (node) {
 						node.x += dx;
@@ -356,8 +370,8 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 				if (segment.hasControlPoint) {
 					moveControlPoint(segment.id, dx, dz, 1);
 				}
-				applyChanges();
 			}
+			applyChanges();
 		}
 
 		dragStartX = worldPos.x;
