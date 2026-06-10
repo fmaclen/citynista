@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Citynista is a web-based city planning tool prototype: draw street networks with multiple road types, shape them with bezier curves, and render them in a flat-shaded 2D top-down style similar to Apple Maps or Cities: Skylines. The long-term goal is importing OpenStreetMap graphs and making them editable. Snappy editing is prioritized over high-fidelity rendering.
+Citynista is a web-based city planning tool prototype: draw street networks with multiple road types, shape them with bezier curves, and render them in a flat-shaded 2D top-down map style. The long-term goal is importing OpenStreetMap graphs and making them editable. Snappy editing is prioritized over high-fidelity rendering.
 
 ## Tech Stack
 
@@ -65,20 +65,20 @@ Two construction paths:
 ### Rendering (`src/lib/rendering/`)
 
 - **`road-renderer.ts`**: piece-based incremental renderer. `update(graph)` caches one piece per segment and per node, keyed by a hash of its inputs; only changed pieces rebuild (segments are cheap analytic ribbon strips — no Clipper/earcut; nodes use `buildNodeLayers`). Ribbons overlap node pieces slightly to avoid hairline cracks; tiny per-piece elevations prevent z-fighting. `render(layers)` is the one-shot path for the ghost preview. **Performance contract: editing cost must stay proportional to what changed, not map size** — new geometry features must be expressible per-segment or per-node (or extend the piece hashes).
-- **`node-renderer.ts`**: node discs (amber; blue + enlarged when selected), visible in draw/select modes.
-- **`selection-renderer.ts`**: selected-segment visuals — blue bezier centerline, dashed guides, red control-point handle.
-- **`scene.svelte.ts`**: scene, orthographic camera, zoom (wheel), pan (alt+drag or middle mouse), FPS reporting.
+- **`node-renderer.ts`**: node rings sized to the widest road at the node (the editor syncs radii in `rebuildRoads`), toned blue when revealed by hover, yellow when part of a selection. Nodes stay hidden in every mode except "revealed" ones — selection endpoints and the node under the cursor; hovering a segment shows its ribbon highlight and reveals its endpoint rings. In draw mode the snap feedback comes from the cursor ring, not from node markers.
+- **`selection-renderer.ts`**: segment highlights — translucent full-width ribbon with round end caps matching the node rings — blue for hover, yellow with a solid stroke for selection (blue = hover, yellow = selected everywhere in the editor; fills use `LessDepth` so same-elevation overlaps never double-blend). Selection adds yellow dashed bezier guides and a yellow diamond curvature handle.
+- **`scene.svelte.ts`**: scene, orthographic camera, zoom (wheel), pan (space+drag, alt+drag, or middle mouse), FPS reporting.
 
 ### Modes (`src/lib/modes/`)
 
-Each mode returns `ModeHandlers` (`onMouseDown`, `onMouseMove`, `onMouseUp`, `onKeyDown`, `cleanup`).
+Each mode returns `ModeHandlers` (`onMouseDown`, `onMouseMove`, `onMouseUp`, `onKeyDown`, `cleanup`). Select is the always-on default; draw mode is entered by picking a preset in the toolbar (click or number keys). The editor's mode `$effect` deliberately `untrack`s `setupMode` so selection changes don't re-trigger it.
 
-- **draw.ts**: click-to-draw with a translucent ghost preview of the pending road. Snaps to nodes and to segments (splitting them into T junctions on click). Escape cancels and removes an unused start node.
-- **select.ts**: click selects a node or segment; shift+click multi-selects nodes; dragging a path moves the segment rigidly; the red handle changes curvature (shift snaps tangent-continuous with neighbor roads, or straight near the chord). Control points keep their relative position when endpoints move. Delete/Backspace removes the selection. Selecting a single segment also opens the lane editor panel.
+- **draw.ts**: click-to-draw with a translucent ghost preview of the pending road. Snaps to nodes and to segments (splitting them into T junctions on click). Escape is two-stage: first cancels the pending segment (removing an unused start node), second returns to select mode.
+- **select.ts**: the default mode. Click selects a node or segment; shift+click toggles nodes/segments in the selection; dragging from empty ground draws a marquee selecting contained nodes and fully-contained segments; dragging a path moves the selected segments rigidly; the red handle changes curvature (shift snaps tangent-continuous with neighbor roads, or straight near the chord). Control points keep their relative position when endpoints move. Delete/Backspace removes the selection. Selecting a single segment also opens the lane editor panel.
 
 ### Planarization (`src/lib/core/crossings.ts`)
 
-After drawing or finishing a drag, `resolveCrossings` finds mid-span segment crossings and splits both segments at a shared new node, creating a real intersection. Curved segments split via de Casteljau, preserving their exact shape. Crossings near existing endpoints are skipped, which guarantees termination.
+After drawing (and only then — moving segments in select mode never splits), `resolveCrossings` finds mid-span segment crossings and splits both segments at a shared new node, creating a real intersection. Curved segments split via de Casteljau, preserving their exact shape. Crossings near existing endpoints are skipped, which guarantees termination.
 
 ## Testing Guidelines
 

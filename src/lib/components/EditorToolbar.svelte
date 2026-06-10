@@ -2,11 +2,16 @@
 	import { getEditorContext } from '$lib/editor.svelte';
 	import { LANE_COLORS, LANE_TEMPLATES, getTotalWidth } from '$lib/core/lane-template';
 	import { Button } from '$lib/components/ui/button';
-	import { Pencil, MousePointer2, Trash2 } from '@lucide/svelte';
+	import { MousePointer2, Trash2 } from '@lucide/svelte';
 
 	const editor = getEditorContext();
 
 	const maxPresetWidth = Math.max(...LANE_TEMPLATES.map((t) => getTotalWidth(t.lanes)));
+
+	function activatePreset(templateId: string) {
+		editor.currentLaneTemplateId = templateId;
+		editor.mode = 'draw';
+	}
 
 	function onKeyDown(event: KeyboardEvent) {
 		const target = event.target;
@@ -23,7 +28,7 @@
 
 		const template = LANE_TEMPLATES[index];
 		if (template) {
-			editor.currentLaneTemplateId = template.id;
+			activatePreset(template.id);
 		}
 	}
 </script>
@@ -33,19 +38,11 @@
 <div class="fixed bottom-8 left-1/2 z-50 -translate-x-1/2">
 	<nav class="flex flex-row items-center gap-2 rounded-lg border bg-background p-2 shadow-lg">
 		<Button
-			variant={editor.mode === 'draw' ? 'default' : 'ghost'}
-			size="icon"
-			onclick={() => (editor.mode = editor.mode === 'draw' ? undefined : 'draw')}
-			title="Draw Mode"
-		>
-			<Pencil class="h-4 w-4" />
-		</Button>
-
-		<Button
 			variant={editor.mode === 'select' ? 'default' : 'ghost'}
 			size="icon"
-			onclick={() => (editor.mode = editor.mode === 'select' ? undefined : 'select')}
-			title="Select Mode"
+			onclick={() => (editor.mode = 'select')}
+			title="Select"
+			aria-pressed={editor.mode === 'select'}
 		>
 			<MousePointer2 class="h-4 w-4" />
 		</Button>
@@ -54,7 +51,7 @@
 
 		{#each LANE_TEMPLATES as template, i (template.id)}
 			{@const totalWidth = getTotalWidth(template.lanes)}
-			{@const active = editor.currentLaneTemplateId === template.id}
+			{@const active = editor.mode === 'draw' && editor.currentLaneTemplateId === template.id}
 			<button
 				class="relative h-10 w-10 shrink-0 overflow-hidden rounded-md border-2 transition-colors {active
 					? 'border-foreground'
@@ -62,8 +59,8 @@
 				style="background-color: {LANE_COLORS.grass};"
 				aria-label={template.name}
 				aria-pressed={active}
-				title="{template.name} — {totalWidth}m (key {i + 1})"
-				onclick={() => (editor.currentLaneTemplateId = template.id)}
+				title="Draw {template.name} — {totalWidth}m (key {i + 1})"
+				onclick={() => activatePreset(template.id)}
 			>
 				<div
 					class="absolute inset-y-0 left-1/2 flex -translate-x-1/2"

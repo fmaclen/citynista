@@ -40,8 +40,8 @@ async function readSavedSegments(page: import('@playwright/test').Page) {
 	}, STORAGE_KEY);
 }
 
+// Select mode is the default; clicking a segment selects it directly.
 async function selectSegment(page: import('@playwright/test').Page) {
-	await page.getByTitle('Select Mode').click();
 	const point = toScreen(-50, 0);
 	await page.locator('canvas').click({ position: { x: point.x, y: point.y } });
 	await expect(page.locator('aside')).toBeVisible();
@@ -112,6 +112,45 @@ test.describe('Lane Editor', () => {
 			'road',
 			'sidewalk'
 		]);
+	});
+
+	test('shift+click multi-selects segments and edits them together', async ({ page }) => {
+		await seedGraph(page);
+
+		const canvas = page.locator('canvas');
+		const panel = page.locator('aside');
+
+		// Select the street, then shift+click the avenue.
+		await canvas.click({ position: toScreen(-100, 0) });
+		await expect(panel).toBeVisible();
+		await canvas.click({ position: toScreen(100, 0), modifiers: ['Shift'] });
+
+		// Different configurations: no lane rows, just the preset escape hatch.
+		await expect(panel.getByText('Editing 2 segments')).toBeVisible();
+		await expect(panel.getByText('different lane configurations')).toBeVisible();
+		await expect(panel.locator('input[type="number"]')).toHaveCount(0);
+
+		// Overwrite both with a preset; the selection becomes uniform.
+		await panel.getByText('Apply preset…').click();
+		await page.getByRole('option', { name: 'Street' }).click();
+		const widthInputs = panel.locator('input[type="number"]');
+		await expect(widthInputs).toHaveCount(4);
+
+		// Width edits now apply to every selected segment.
+		await widthInputs.first().fill('6');
+		await widthInputs.first().press('Tab');
+
+		const segments = await readSavedSegments(page);
+		expect(segments).toHaveLength(2);
+		for (const segment of segments) {
+			expect(segment.lanes).toHaveLength(4);
+			expect(segment.lanes[0]).toEqual({ type: 'sidewalk', width: 6, direction: 'bidirectional' });
+		}
+
+		// Shift+click on a selected segment removes it from the selection —
+		// away from the midpoint, which is the control-point handle.
+		await canvas.click({ position: toScreen(150, 0), modifiers: ['Shift'] });
+		await expect(panel.getByText('Left to right along the drawing direction')).toBeVisible();
 	});
 
 	test('adds lanes and applies presets per segment', async ({ page }) => {

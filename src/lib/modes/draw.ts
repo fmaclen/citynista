@@ -4,16 +4,18 @@ import type { Editor } from '../editor.svelte';
 import type { Segment } from '../core/segment.svelte';
 import { Graph } from '../core/graph.svelte';
 import { buildRoadLayers } from '../core/road-geometry';
-import { createLanesFrom } from '../core/lane-template';
+import { createLanesFrom, getLaneTemplate, getTotalWidth } from '../core/lane-template';
 import { splitSegment } from '../core/crossings';
 import { closestPointOnQuadraticBezier } from '../geometry/bezier';
 import { RoadRenderer } from '../rendering/road-renderer';
 
 const GHOST_OPACITY = 0.45;
 const GHOST_ELEVATION = 0.06;
-const GHOST_NODE_RADIUS = 6;
-const GHOST_NODE_COLOR = 0xf59e0b;
-const GHOST_NODE_SNAPPED_COLOR = 0x4a9eff;
+// Matches NodeRenderer's ring style and palette — blue while free (hover),
+// yellow once snapped (committed) — sized to the active preset's width.
+const GHOST_RING_THICKNESS = 1.2;
+const GHOST_NODE_COLOR = 0x4a9eff;
+const GHOST_NODE_SNAPPED_COLOR = 0xfacc15;
 const GHOST_NODE_Y = 0.3;
 const MIN_PREVIEW_LENGTH = 1;
 const SEGMENT_SNAP_THRESHOLD = 12;
@@ -45,15 +47,24 @@ export function setupDrawMode(editor: Editor): ModeHandlers {
 	const cursorMaterial = new THREE.MeshBasicMaterial({
 		color: GHOST_NODE_COLOR,
 		transparent: true,
-		opacity: 0.6
+		opacity: 0.8
 	});
-	const cursorNode = new THREE.Mesh(
-		new THREE.CircleGeometry(GHOST_NODE_RADIUS, 32),
-		cursorMaterial
-	);
+	const cursorNode = new THREE.Mesh(new THREE.BufferGeometry(), cursorMaterial);
 	cursorNode.rotation.x = -Math.PI / 2;
 	cursorNode.visible = false;
 	editor.sceneManager.scene.add(cursorNode);
+
+	let cursorRadius = 0;
+	const updateCursorRadius = () => {
+		const template = getLaneTemplate(editor.currentLaneTemplateId);
+		const radius = (template ? getTotalWidth(template.lanes) / 2 : 4) + 2;
+		if (radius === cursorRadius) return;
+
+		cursorRadius = radius;
+		cursorNode.geometry.dispose();
+		cursorNode.geometry = new THREE.RingGeometry(radius - GHOST_RING_THICKNESS, radius, 48);
+	};
+	updateCursorRadius();
 
 	const findSegmentSnap = (worldX: number, worldZ: number): SegmentSnap | null => {
 		let best: SegmentSnap | null = null;
@@ -139,6 +150,7 @@ export function setupDrawMode(editor: Editor): ModeHandlers {
 	const updatePreview = (worldX: number, worldZ: number) => {
 		const snap = resolveSnap(worldX, worldZ);
 
+		updateCursorRadius();
 		cursorNode.visible = true;
 		cursorNode.position.set(snap.x, GHOST_NODE_Y, snap.y);
 		cursorMaterial.color.setHex(snap.kind === 'free' ? GHOST_NODE_COLOR : GHOST_NODE_SNAPPED_COLOR);
@@ -206,10 +218,16 @@ export function setupDrawMode(editor: Editor): ModeHandlers {
 		updatePreview(worldPos.x, worldPos.z);
 	};
 
+	// Escape is two-stage: first cancel the segment being drawn, then leave
+	// draw mode entirely.
 	const onKeyDown = (event: KeyboardEvent) => {
-		if (event.key === 'Escape') {
+		if (event.key !== 'Escape') return;
+
+		if (startNodeId !== null) {
 			discardOrphanStart();
 			ghostRenderer.clear();
+		} else {
+			editor.mode = 'select';
 		}
 	};
 

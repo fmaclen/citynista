@@ -1,10 +1,10 @@
-import { getContext, setContext } from 'svelte';
-import { SvelteSet } from 'svelte/reactivity';
+import { getContext, setContext, untrack } from 'svelte';
+import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 import { Graph } from './core/graph.svelte';
 import { getDefaultTemplate } from './core/lane-template';
 import { resolveCrossings } from './core/crossings';
 import { SceneManager } from './rendering/scene.svelte';
-import { NodeRenderer } from './rendering/node-renderer';
+import { NodeRenderer, type NodeTone } from './rendering/node-renderer';
 import { RoadRenderer } from './rendering/road-renderer';
 import { SelectionRenderer } from './rendering/selection-renderer';
 import type { ModeHandlers, Mode } from './modes/types';
@@ -20,7 +20,7 @@ export class Editor {
 	roadRenderer!: RoadRenderer;
 	selectionRenderer!: SelectionRenderer;
 
-	mode = $state<Mode | undefined>(undefined);
+	mode = $state<Mode>('select');
 	currentLaneTemplateId = $state(getDefaultTemplate().id);
 	fps = $state(0);
 	selectedNodes = new SvelteSet<string>();
@@ -28,10 +28,15 @@ export class Editor {
 
 	private modeHandlers: ModeHandlers | null = null;
 	private boundKeyDown: ((e: KeyboardEvent) => void) | null = null;
+	private hoveredNodeId: string | null = null;
+	private hoveredSegmentId: string | null = null;
 
 	constructor() {
+		// Track only the mode itself: setupMode reads selection state internally
+		// and must not re-run when that state changes.
 		$effect(() => {
-			this.setupMode(this.mode);
+			const mode = this.mode;
+			untrack(() => this.setupMode(mode));
 		});
 	}
 
@@ -50,6 +55,8 @@ export class Editor {
 
 		this.loadSavedData();
 		this.setupCanvasEvents();
+		// The mode effect already ran before init; install the default mode now.
+		this.setupMode(this.mode);
 	}
 
 	private loadSavedData() {
@@ -63,6 +70,21 @@ export class Editor {
 
 	rebuildRoads() {
 		this.roadRenderer.update(this.graph);
+		for (const node of this.graph.nodes.values()) {
+			this.nodeRenderer.setRadius(node.id, this.nodeRingRadius(node));
+		}
+	}
+
+	// Node rings hug the widest road meeting at the node.
+	private nodeRingRadius(node: { connectedSegments: string[] }) {
+		let maxHalfWidth = 0;
+		for (const segmentId of node.connectedSegments) {
+			const segment = this.graph.segments.get(segmentId);
+			if (segment) {
+				maxHalfWidth = Math.max(maxHalfWidth, segment.totalWidth / 2);
+			}
+		}
+		return (maxHalfWidth || 4) + 2;
 	}
 
 	// Turn any mid-span segment crossings into shared nodes, so overlapping
@@ -82,12 +104,20 @@ export class Editor {
 	private setupCanvasEvents() {
 		const canvas = this.sceneManager.getCanvas();
 
-		canvas.addEventListener('mousedown', (e) => this.modeHandlers?.onMouseDown?.(e));
-		canvas.addEventListener('mousemove', (e) => this.modeHandlers?.onMouseMove?.(e));
+		// SceneManager's own listeners run first; while it pans the camera
+		// (space/alt/middle drag) the modes must not see the same gestures.
+		canvas.addEventListener('mousedown', (e) => {
+			if (this.sceneManager.isCameraPanning()) return;
+			this.modeHandlers?.onMouseDown?.(e);
+		});
+		canvas.addEventListener('mousemove', (e) => {
+			if (this.sceneManager.isCameraPanning()) return;
+			this.modeHandlers?.onMouseMove?.(e);
+		});
 		canvas.addEventListener('mouseup', (e) => this.modeHandlers?.onMouseUp?.(e));
 	}
 
-	private setupMode(mode: Mode | undefined) {
+	private setupMode(mode: Mode) {
 		if (!this.sceneManager) return;
 
 		if (this.modeHandlers?.cleanup) {
@@ -99,14 +129,13 @@ export class Editor {
 		}
 
 		this.clearSelection();
+		this.setHoveredNode(null);
+		this.setHoveredSegment(null);
 		this.modeHandlers = null;
-
-		const showNodes = mode === 'draw' || mode === 'select';
-		this.nodeRenderer.setAllVisible(showNodes);
 
 		if (mode === 'draw') {
 			this.modeHandlers = setupDrawMode(this);
-		} else if (mode === 'select') {
+		} else {
 			this.modeHandlers = setupSelectMode(this);
 		}
 
@@ -126,21 +155,25 @@ export class Editor {
 	selectNode(nodeId: string) {
 		this.selectedNodes.add(nodeId);
 		this.nodeRenderer.setSelected(nodeId, true);
+		this.refreshRevealedNodes();
 	}
 
 	deselectNode(nodeId: string) {
 		this.selectedNodes.delete(nodeId);
 		this.nodeRenderer.setSelected(nodeId, false);
+		this.refreshRevealedNodes();
 	}
 
 	selectSegment(segmentId: string) {
 		this.selectedSegments.add(segmentId);
 		this.refreshSelectionVisuals();
+		this.refreshRevealedNodes();
 	}
 
 	deselectSegment(segmentId: string) {
 		this.selectedSegments.delete(segmentId);
 		this.selectionRenderer.hideSegment(segmentId);
+		this.refreshRevealedNodes();
 	}
 
 	clearSelection() {
@@ -148,6 +181,67 @@ export class Editor {
 		this.selectionRenderer.clear();
 		this.selectedNodes.clear();
 		this.selectedSegments.clear();
+		this.refreshRevealedNodes();
+	}
+
+	setHoveredNode(nodeId: string | null) {
+		if (this.hoveredNodeId === nodeId) return;
+		this.hoveredNodeId = nodeId;
+		this.nodeRenderer.setHovered(nodeId);
+		this.refreshRevealedNodes();
+	}
+
+	setHoveredSegment(segmentId: string | null) {
+		if (this.hoveredSegmentId === segmentId) return;
+		this.hoveredSegmentId = segmentId;
+
+		// Selected segments already show their full selection visuals.
+		const segment =
+			segmentId && !this.selectedSegments.has(segmentId)
+				? this.graph.segments.get(segmentId)
+				: undefined;
+		const startNode = segment && this.graph.nodes.get(segment.startNodeId);
+		const endNode = segment && this.graph.nodes.get(segment.endNodeId);
+
+		if (segment && startNode && endNode) {
+			this.selectionRenderer.showHover(
+				segment,
+				startNode,
+				endNode,
+				this.nodeRingRadius(startNode),
+				this.nodeRingRadius(endNode)
+			);
+		} else {
+			this.selectionRenderer.hideHover();
+		}
+		this.refreshRevealedNodes();
+	}
+
+	// Nodes shown despite the base visibility being off: selection endpoints
+	// and the node under the cursor, toned by why they show (selection wins).
+	private refreshRevealedNodes() {
+		const revealed = new SvelteMap<string, NodeTone>();
+		if (this.hoveredNodeId) {
+			revealed.set(this.hoveredNodeId, 'hover');
+		}
+		if (this.hoveredSegmentId) {
+			const segment = this.graph.segments.get(this.hoveredSegmentId);
+			if (segment) {
+				revealed.set(segment.startNodeId, 'hover');
+				revealed.set(segment.endNodeId, 'hover');
+			}
+		}
+		for (const nodeId of this.selectedNodes) {
+			revealed.set(nodeId, 'selected');
+		}
+		for (const segmentId of this.selectedSegments) {
+			const segment = this.graph.segments.get(segmentId);
+			if (segment) {
+				revealed.set(segment.startNodeId, 'selected');
+				revealed.set(segment.endNodeId, 'selected');
+			}
+		}
+		this.nodeRenderer.setRevealed(revealed);
 	}
 
 	refreshSelectionVisuals() {
@@ -159,7 +253,13 @@ export class Editor {
 			const endNode = this.graph.nodes.get(segment.endNodeId);
 			if (!startNode || !endNode) continue;
 
-			this.selectionRenderer.showSegment(segment, startNode, endNode);
+			this.selectionRenderer.showSegment(
+				segment,
+				startNode,
+				endNode,
+				this.nodeRingRadius(startNode),
+				this.nodeRingRadius(endNode)
+			);
 		}
 	}
 
@@ -210,8 +310,9 @@ export class Editor {
 			}
 		}
 
-		this.selectedNodes.clear();
-		this.selectedSegments.clear();
+		this.clearSelection();
+		this.setHoveredNode(null);
+		this.setHoveredSegment(null);
 		this.rebuildRoads();
 		this.graph.save();
 	}

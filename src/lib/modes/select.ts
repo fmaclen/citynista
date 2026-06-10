@@ -1,3 +1,4 @@
+import * as THREE from 'three';
 import type { ModeHandlers } from './types';
 import type { Editor } from '../editor.svelte';
 import type { Segment } from '../core/segment.svelte';
@@ -8,11 +9,13 @@ const NODE_HIT_THRESHOLD = 15;
 const SEGMENT_HIT_THRESHOLD = 10;
 const CONTROL_POINT_HIT_THRESHOLD = 12;
 const STRAIGHT_SNAP_DISTANCE = 10;
+const MARQUEE_COLOR = 0x4a9eff;
+const MARQUEE_Y = 0.5;
 
 type DragTarget =
 	| { type: 'nodes' }
 	| { type: 'controlPoint'; segmentId: string }
-	| { type: 'segment'; segmentId: string }
+	| { type: 'segments'; segmentIds: string[] }
 	| null;
 
 export function setupSelectMode(editor: Editor): ModeHandlers {
@@ -20,6 +23,92 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 	let dragTarget: DragTarget = null;
 	let dragStartX = 0;
 	let dragStartZ = 0;
+	let marqueeStart: { x: number; z: number } | null = null;
+
+	const marqueeFillMaterial = new THREE.MeshBasicMaterial({
+		color: MARQUEE_COLOR,
+		transparent: true,
+		opacity: 0.12,
+		// Blend over selection highlights instead of occluding them.
+		depthWrite: false
+	});
+	const marqueeFill = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), marqueeFillMaterial);
+	marqueeFill.rotation.x = -Math.PI / 2;
+	marqueeFill.position.y = MARQUEE_Y;
+	marqueeFill.visible = false;
+	editor.sceneManager.scene.add(marqueeFill);
+
+	const marqueeOutlineGeometry = new THREE.BufferGeometry();
+	marqueeOutlineGeometry.setAttribute(
+		'position',
+		new THREE.Float32BufferAttribute(new Float32Array(12), 3)
+	);
+	const marqueeOutlineMaterial = new THREE.LineBasicMaterial({
+		color: MARQUEE_COLOR,
+		transparent: true,
+		opacity: 0.9
+	});
+	const marqueeOutline = new THREE.LineLoop(marqueeOutlineGeometry, marqueeOutlineMaterial);
+	marqueeOutline.frustumCulled = false;
+	marqueeOutline.visible = false;
+	editor.sceneManager.scene.add(marqueeOutline);
+
+	const updateMarqueeVisual = (endX: number, endZ: number) => {
+		if (!marqueeStart) return;
+
+		const minX = Math.min(marqueeStart.x, endX);
+		const maxX = Math.max(marqueeStart.x, endX);
+		const minZ = Math.min(marqueeStart.z, endZ);
+		const maxZ = Math.max(marqueeStart.z, endZ);
+
+		marqueeFill.position.set((minX + maxX) / 2, MARQUEE_Y, (minZ + maxZ) / 2);
+		marqueeFill.scale.set(Math.max(maxX - minX, 0.001), Math.max(maxZ - minZ, 0.001), 1);
+
+		const positions = marqueeOutlineGeometry.getAttribute('position');
+		positions.setXYZ(0, minX, MARQUEE_Y, minZ);
+		positions.setXYZ(1, maxX, MARQUEE_Y, minZ);
+		positions.setXYZ(2, maxX, MARQUEE_Y, maxZ);
+		positions.setXYZ(3, minX, MARQUEE_Y, maxZ);
+		positions.needsUpdate = true;
+
+		marqueeFill.visible = true;
+		marqueeOutline.visible = true;
+	};
+
+	const hideMarquee = () => {
+		marqueeFill.visible = false;
+		marqueeOutline.visible = false;
+	};
+
+	// Select everything inside the rectangle: nodes by position, segments
+	// when both endpoints fall inside.
+	const applyMarquee = (endX: number, endZ: number) => {
+		if (!marqueeStart) return;
+
+		const minX = Math.min(marqueeStart.x, endX);
+		const maxX = Math.max(marqueeStart.x, endX);
+		const minZ = Math.min(marqueeStart.z, endZ);
+		const maxZ = Math.max(marqueeStart.z, endZ);
+		const inside = (x: number, y: number) => x >= minX && x <= maxX && y >= minZ && y <= maxZ;
+
+		for (const node of editor.graph.nodes.values()) {
+			if (inside(node.x, node.y)) {
+				editor.selectNode(node.id);
+			}
+		}
+		for (const segment of editor.graph.segments.values()) {
+			const startNode = editor.graph.nodes.get(segment.startNodeId);
+			const endNode = editor.graph.nodes.get(segment.endNodeId);
+			if (
+				startNode &&
+				endNode &&
+				inside(startNode.x, startNode.y) &&
+				inside(endNode.x, endNode.y)
+			) {
+				editor.selectSegment(segment.id);
+			}
+		}
+	};
 	// Control points expressed in their segment's local frame at drag start,
 	// so curves scale and rotate proportionally with their moving endpoints.
 	const controlFrames = new Map<string, { u: number; v: number }>();
@@ -272,6 +361,10 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 		dragStartX = worldPos.x;
 		dragStartZ = worldPos.z;
 
+		// The hover highlight would go stale while dragging; selection visuals
+		// take over from here.
+		editor.setHoveredSegment(null);
+
 		const controlPointSegment = findControlPointAt(worldPos.x, worldPos.z);
 		if (controlPointSegment) {
 			isDragging = true;
@@ -299,22 +392,42 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 
 		const segment = findSegmentAt(worldPos.x, worldPos.z);
 		if (segment) {
-			if (!editor.selectedSegments.has(segment.id)) {
+			if (event.shiftKey) {
+				if (editor.selectedSegments.has(segment.id)) {
+					editor.deselectSegment(segment.id);
+					return;
+				}
+				editor.selectSegment(segment.id);
+			} else if (!editor.selectedSegments.has(segment.id)) {
 				editor.clearSelection();
 				editor.selectSegment(segment.id);
 			}
 			isDragging = true;
-			dragTarget = { type: 'segment', segmentId: segment.id };
+			dragTarget = { type: 'segments', segmentIds: [...editor.selectedSegments] };
 			return;
 		}
 
-		editor.clearSelection();
+		if (!event.shiftKey) {
+			editor.clearSelection();
+		}
+		marqueeStart = { x: worldPos.x, z: worldPos.z };
 	};
 
 	const onMouseMove = (event: MouseEvent) => {
-		if (!isDragging || !dragTarget) return;
-
 		const worldPos = editor.sceneManager.screenToWorld(event.clientX, event.clientY);
+
+		if (marqueeStart) {
+			updateMarqueeVisual(worldPos.x, worldPos.z);
+			return;
+		}
+
+		if (!isDragging || !dragTarget) {
+			const node = findNodeAt(worldPos.x, worldPos.z);
+			editor.setHoveredNode(node?.id ?? null);
+			editor.setHoveredSegment(node ? null : (findSegmentAt(worldPos.x, worldPos.z)?.id ?? null));
+			return;
+		}
+
 		const dx = worldPos.x - dragStartX;
 		const dz = worldPos.z - dragStartZ;
 
@@ -336,12 +449,18 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 				moveControlPoint(dragTarget.segmentId, dx, dz, 1);
 			}
 			applyChanges();
-		} else if (dragTarget.type === 'segment') {
-			// Dragging the path moves the whole segment as-is; curvature only
-			// changes via the control-point handle.
-			const segment = editor.graph.segments.get(dragTarget.segmentId);
-			if (segment) {
+		} else if (dragTarget.type === 'segments') {
+			// Dragging a path moves the selected segments rigidly; curvature only
+			// changes via the control-point handle. Shared endpoints move once.
+			const movedNodes = new Set<string>();
+			for (const segmentId of dragTarget.segmentIds) {
+				const segment = editor.graph.segments.get(segmentId);
+				if (!segment) continue;
+
 				for (const nodeId of [segment.startNodeId, segment.endNodeId]) {
+					if (movedNodes.has(nodeId)) continue;
+					movedNodes.add(nodeId);
+
 					const node = editor.graph.nodes.get(nodeId);
 					if (node) {
 						node.x += dx;
@@ -352,17 +471,26 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 				if (segment.hasControlPoint) {
 					moveControlPoint(segment.id, dx, dz, 1);
 				}
-				applyChanges();
 			}
+			applyChanges();
 		}
 
 		dragStartX = worldPos.x;
 		dragStartZ = worldPos.z;
 	};
 
-	const onMouseUp = () => {
+	const onMouseUp = (event: MouseEvent) => {
+		if (marqueeStart) {
+			const worldPos = editor.sceneManager.screenToWorld(event.clientX, event.clientY);
+			applyMarquee(worldPos.x, worldPos.z);
+			hideMarquee();
+			marqueeStart = null;
+			return;
+		}
+
+		// Moving things never splits segments — crossings only become
+		// intersections while drawing.
 		if (isDragging) {
-			editor.resolveSegmentCrossings();
 			editor.graph.save();
 		}
 		isDragging = false;
@@ -384,7 +512,16 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 	const cleanup = () => {
 		isDragging = false;
 		dragTarget = null;
+		marqueeStart = null;
 		controlFrames.clear();
+		editor.setHoveredNode(null);
+		editor.setHoveredSegment(null);
+		editor.sceneManager.scene.remove(marqueeFill);
+		editor.sceneManager.scene.remove(marqueeOutline);
+		marqueeFill.geometry.dispose();
+		marqueeFillMaterial.dispose();
+		marqueeOutlineGeometry.dispose();
+		marqueeOutlineMaterial.dispose();
 	};
 
 	return {
