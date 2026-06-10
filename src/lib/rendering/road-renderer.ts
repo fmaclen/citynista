@@ -107,6 +107,12 @@ export class RoadRenderer {
 			const joinEnd = endNode.connectedSegments.length > 1;
 			const medianTrimStart = getMedianBreakTrim(graph, startNode);
 			const medianTrimEnd = getMedianBreakTrim(graph, endNode);
+			// At two-segment same-type nodes the node piece carries medians and
+			// grass through (bend wedges or corner bands), so those strips
+			// overlap it like the other layers; at junctions they must stop
+			// square at the stop line.
+			const continuityJoinStart = startNode.connectedSegments.length === 2 && medianTrimStart === 0;
+			const continuityJoinEnd = endNode.connectedSegments.length === 2 && medianTrimEnd === 0;
 			const trim = trims.get(segment.id);
 
 			const key = `segment:${segment.id}`;
@@ -123,7 +129,9 @@ export class RoadRenderer {
 				joinStart,
 				joinEnd,
 				medianTrimStart,
-				medianTrimEnd
+				medianTrimEnd,
+				continuityJoinStart,
+				continuityJoinEnd
 			].join('|');
 
 			seen.add(key);
@@ -137,6 +145,8 @@ export class RoadRenderer {
 				joinEnd,
 				medianTrimStart,
 				medianTrimEnd,
+				continuityJoinStart,
+				continuityJoinEnd,
 				this.jitterFor(key)
 			);
 			this.rootGroup.add(group);
@@ -193,6 +203,8 @@ export class RoadRenderer {
 		joinEnd: boolean,
 		medianTrimStart: number,
 		medianTrimEnd: number,
+		continuityJoinStart: boolean,
+		continuityJoinEnd: boolean,
 		jitter: number
 	): THREE.Group {
 		const group = new THREE.Group();
@@ -218,13 +230,36 @@ export class RoadRenderer {
 				continue;
 			}
 
+			if (interval.laneType === 'grass') {
+				group.add(
+					this.buildStrip(
+						samples,
+						interval.start,
+						interval.end,
+						'grass',
+						continuityJoinStart ? JOIN_OVERLAP : 0,
+						continuityJoinEnd ? JOIN_OVERLAP : 0,
+						jitter
+					)
+				);
+				continue;
+			}
+
 			let laneSamples = samples;
 			if (interval.laneType === 'median' && (medianTrimStart > 0 || medianTrimEnd > 0)) {
 				laneSamples = trimCenterline(samples, medianTrimStart, medianTrimEnd);
 				if (laneSamples.length < 2) continue;
 			}
 			group.add(
-				this.buildStrip(laneSamples, interval.start, interval.end, interval.laneType, 0, 0, jitter)
+				this.buildStrip(
+					laneSamples,
+					interval.start,
+					interval.end,
+					interval.laneType,
+					continuityJoinStart ? JOIN_OVERLAP : 0,
+					continuityJoinEnd ? JOIN_OVERLAP : 0,
+					jitter
+				)
 			);
 		}
 
