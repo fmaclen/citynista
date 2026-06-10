@@ -23,6 +23,7 @@ export class SceneManager {
 
 	// Interaction state
 	private isPanning = false;
+	private spaceDown = false;
 	private lastMouseX = 0;
 	private lastMouseY = 0;
 
@@ -88,7 +89,25 @@ export class SceneManager {
 		canvas.addEventListener('mouseleave', this.handleMouseUp.bind(this));
 
 		window.addEventListener('resize', this.handleResize.bind(this));
+		window.addEventListener('keydown', this.handleKeyDown);
+		window.addEventListener('keyup', this.handleKeyUp);
 	}
+
+	private handleKeyDown = (event: KeyboardEvent) => {
+		if (event.code !== 'Space' || event.repeat) return;
+		const target = event.target;
+		if (target instanceof HTMLElement && target.tagName !== 'BODY') return;
+
+		event.preventDefault();
+		this.spaceDown = true;
+		this.updateCursor();
+	};
+
+	private handleKeyUp = (event: KeyboardEvent) => {
+		if (event.code !== 'Space') return;
+		this.spaceDown = false;
+		this.updateCursor();
+	};
 
 	private handleWheel(event: WheelEvent) {
 		event.preventDefault();
@@ -101,11 +120,11 @@ export class SceneManager {
 	}
 
 	private handleMouseDown(event: MouseEvent) {
-		if (event.button === 1 || (event.button === 0 && event.altKey)) {
+		if (event.button === 1 || (event.button === 0 && (event.altKey || this.spaceDown))) {
 			this.isPanning = true;
 			this.lastMouseX = event.clientX;
 			this.lastMouseY = event.clientY;
-			this.renderer.domElement.style.cursor = 'grabbing';
+			this.updateCursor();
 		}
 	}
 
@@ -114,7 +133,9 @@ export class SceneManager {
 			const dx = event.clientX - this.lastMouseX;
 			const dy = event.clientY - this.lastMouseY;
 
-			const scale = this.getFrustumWidth() / this.container.clientWidth;
+			// World units per screen pixel: the base frustum spans the viewport
+			// height, so this keeps the grabbed point under the cursor.
+			const scale = this.getFrustumWidth() / this.container.clientHeight;
 			this.panX -= dx * scale;
 			this.panY += dy * scale;
 
@@ -128,8 +149,20 @@ export class SceneManager {
 	private handleMouseUp() {
 		if (this.isPanning) {
 			this.isPanning = false;
-			this.renderer.domElement.style.cursor = 'default';
+			this.updateCursor();
 		}
+	}
+
+	private updateCursor() {
+		this.renderer.domElement.style.cursor = this.isPanning
+			? 'grabbing'
+			: this.spaceDown
+				? 'grab'
+				: 'default';
+	}
+
+	isCameraPanning() {
+		return this.isPanning;
 	}
 
 	private handleResize() {
@@ -192,6 +225,9 @@ export class SceneManager {
 		if (this.animationFrameId !== null) {
 			cancelAnimationFrame(this.animationFrameId);
 		}
+
+		window.removeEventListener('keydown', this.handleKeyDown);
+		window.removeEventListener('keyup', this.handleKeyUp);
 
 		this.renderer.domElement.remove();
 		this.renderer.dispose();

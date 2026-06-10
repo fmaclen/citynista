@@ -88,8 +88,16 @@ export class Editor {
 	private setupCanvasEvents() {
 		const canvas = this.sceneManager.getCanvas();
 
-		canvas.addEventListener('mousedown', (e) => this.modeHandlers?.onMouseDown?.(e));
-		canvas.addEventListener('mousemove', (e) => this.modeHandlers?.onMouseMove?.(e));
+		// SceneManager's own listeners run first; while it pans the camera
+		// (space/alt/middle drag) the modes must not see the same gestures.
+		canvas.addEventListener('mousedown', (e) => {
+			if (this.sceneManager.isCameraPanning()) return;
+			this.modeHandlers?.onMouseDown?.(e);
+		});
+		canvas.addEventListener('mousemove', (e) => {
+			if (this.sceneManager.isCameraPanning()) return;
+			this.modeHandlers?.onMouseMove?.(e);
+		});
 		canvas.addEventListener('mouseup', (e) => this.modeHandlers?.onMouseUp?.(e));
 	}
 
