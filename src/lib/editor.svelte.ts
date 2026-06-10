@@ -29,6 +29,7 @@ export class Editor {
 	private modeHandlers: ModeHandlers | null = null;
 	private boundKeyDown: ((e: KeyboardEvent) => void) | null = null;
 	private hoveredNodeId: string | null = null;
+	private hoveredSegmentId: string | null = null;
 
 	constructor() {
 		// Track only the mode itself: setupMode reads selection state internally
@@ -114,6 +115,7 @@ export class Editor {
 
 		this.clearSelection();
 		this.setHoveredNode(null);
+		this.setHoveredSegment(null);
 		this.modeHandlers = null;
 
 		// In select mode nodes stay hidden until hovered or selected.
@@ -174,6 +176,25 @@ export class Editor {
 		if (this.hoveredNodeId === nodeId) return;
 		this.hoveredNodeId = nodeId;
 		this.refreshRevealedNodes();
+	}
+
+	setHoveredSegment(segmentId: string | null) {
+		if (this.hoveredSegmentId === segmentId) return;
+		this.hoveredSegmentId = segmentId;
+
+		// Selected segments already show their full selection visuals.
+		const segment =
+			segmentId && !this.selectedSegments.has(segmentId)
+				? this.graph.segments.get(segmentId)
+				: undefined;
+		const startNode = segment && this.graph.nodes.get(segment.startNodeId);
+		const endNode = segment && this.graph.nodes.get(segment.endNodeId);
+
+		if (segment && startNode && endNode) {
+			this.selectionRenderer.showHover(segment, startNode, endNode);
+		} else {
+			this.selectionRenderer.hideHover();
+		}
 	}
 
 	// Nodes shown despite the base visibility being off: selection endpoints

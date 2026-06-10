@@ -359,6 +359,10 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 		dragStartX = worldPos.x;
 		dragStartZ = worldPos.z;
 
+		// The hover highlight would go stale while dragging; selection visuals
+		// take over from here.
+		editor.setHoveredSegment(null);
+
 		const controlPointSegment = findControlPointAt(worldPos.x, worldPos.z);
 		if (controlPointSegment) {
 			isDragging = true;
@@ -416,7 +420,9 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 		}
 
 		if (!isDragging || !dragTarget) {
-			editor.setHoveredNode(findNodeAt(worldPos.x, worldPos.z)?.id ?? null);
+			const node = findNodeAt(worldPos.x, worldPos.z);
+			editor.setHoveredNode(node?.id ?? null);
+			editor.setHoveredSegment(node ? null : (findSegmentAt(worldPos.x, worldPos.z)?.id ?? null));
 			return;
 		}
 
@@ -506,6 +512,7 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 		marqueeStart = null;
 		controlFrames.clear();
 		editor.setHoveredNode(null);
+		editor.setHoveredSegment(null);
 		editor.sceneManager.scene.remove(marqueeFill);
 		editor.sceneManager.scene.remove(marqueeOutline);
 		marqueeFill.geometry.dispose();

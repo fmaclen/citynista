@@ -8,8 +8,10 @@ const CONTROL_COLOR = 0xff6b6b;
 const HANDLE_COLOR = 0xffffff;
 const CURVE_SAMPLES = 50;
 const PATH_Y = 0.18;
+const HOVER_Y = 0.17;
 const CONTROL_Y = 0.22;
 const CONTROL_RADIUS = 4;
+const HOVER_OPACITY = 0.5;
 
 interface SegmentVisual {
 	group: THREE.Group;
@@ -21,9 +23,58 @@ interface SegmentVisual {
 export class SelectionRenderer {
 	private scene: THREE.Scene;
 	private visuals = new Map<string, SegmentVisual>();
+	private hoverPath: THREE.Line | null = null;
 
 	constructor(scene: THREE.Scene) {
 		this.scene = scene;
+	}
+
+	private pathPoints(segment: Segment, startNode: Node, endNode: Node, y: number) {
+		const points: THREE.Vector3[] = [];
+		if (segment.hasControlPoint) {
+			for (let i = 0; i <= CURVE_SAMPLES; i++) {
+				const point = getQuadraticBezierPoint(
+					startNode.x,
+					startNode.y,
+					segment.controlX!,
+					segment.controlY!,
+					endNode.x,
+					endNode.y,
+					i / CURVE_SAMPLES
+				);
+				points.push(new THREE.Vector3(point.x, y, point.y));
+			}
+		} else {
+			points.push(new THREE.Vector3(startNode.x, y, startNode.y));
+			points.push(new THREE.Vector3(endNode.x, y, endNode.y));
+		}
+		return points;
+	}
+
+	showHover(segment: Segment, startNode: Node, endNode: Node) {
+		if (!this.hoverPath) {
+			this.hoverPath = new THREE.Line(
+				new THREE.BufferGeometry(),
+				new THREE.LineBasicMaterial({
+					color: PATH_COLOR,
+					transparent: true,
+					opacity: HOVER_OPACITY
+				})
+			);
+			this.scene.add(this.hoverPath);
+		}
+
+		this.hoverPath.geometry.dispose();
+		this.hoverPath.geometry = new THREE.BufferGeometry().setFromPoints(
+			this.pathPoints(segment, startNode, endNode, HOVER_Y)
+		);
+		this.hoverPath.visible = true;
+	}
+
+	hideHover() {
+		if (this.hoverPath) {
+			this.hoverPath.visible = false;
+		}
 	}
 
 	showSegment(segment: Segment, startNode: Node, endNode: Node) {
@@ -66,26 +117,10 @@ export class SelectionRenderer {
 		const cx = segment.controlX ?? (startNode.x + endNode.x) / 2;
 		const cy = segment.controlY ?? (startNode.y + endNode.y) / 2;
 
-		const pathPoints: THREE.Vector3[] = [];
-		if (segment.hasControlPoint) {
-			for (let i = 0; i <= CURVE_SAMPLES; i++) {
-				const point = getQuadraticBezierPoint(
-					startNode.x,
-					startNode.y,
-					cx,
-					cy,
-					endNode.x,
-					endNode.y,
-					i / CURVE_SAMPLES
-				);
-				pathPoints.push(new THREE.Vector3(point.x, PATH_Y, point.y));
-			}
-		} else {
-			pathPoints.push(new THREE.Vector3(startNode.x, PATH_Y, startNode.y));
-			pathPoints.push(new THREE.Vector3(endNode.x, PATH_Y, endNode.y));
-		}
 		visual.path.geometry.dispose();
-		visual.path.geometry = new THREE.BufferGeometry().setFromPoints(pathPoints);
+		visual.path.geometry = new THREE.BufferGeometry().setFromPoints(
+			this.pathPoints(segment, startNode, endNode, PATH_Y)
+		);
 
 		visual.handles.geometry.dispose();
 		visual.handles.geometry = new THREE.BufferGeometry().setFromPoints([
