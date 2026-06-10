@@ -74,7 +74,7 @@ Two construction paths:
 Each mode returns `ModeHandlers` (`onMouseDown`, `onMouseMove`, `onMouseUp`, `onKeyDown`, `cleanup`). Select is the always-on default; draw mode is entered by picking a preset in the toolbar (click or number keys). The editor's mode `$effect` deliberately `untrack`s `setupMode` so selection changes don't re-trigger it.
 
 - **draw.ts**: click-to-draw with a translucent ghost preview of the pending road. Snaps to nodes and to segments (splitting them into T junctions on click). Escape is two-stage: first cancels the pending segment (removing an unused start node), second returns to select mode.
-- **select.ts**: click selects a node or segment; shift+click multi-selects nodes; dragging a path moves the segment rigidly; the red handle changes curvature (shift snaps tangent-continuous with neighbor roads, or straight near the chord). Control points keep their relative position when endpoints move. Delete/Backspace removes the selection. Selecting a single segment also opens the lane editor panel.
+- **select.ts**: the default mode. Click selects a node or segment; shift+click toggles nodes/segments in the selection; dragging from empty ground draws a marquee selecting contained nodes and fully-contained segments; dragging a path moves the selected segments rigidly; the red handle changes curvature (shift snaps tangent-continuous with neighbor roads, or straight near the chord). Control points keep their relative position when endpoints move. Delete/Backspace removes the selection. Selecting a single segment also opens the lane editor panel.
 
 ### Planarization (`src/lib/core/crossings.ts`)
 
