@@ -11,11 +11,11 @@ import { RoadRenderer } from '../rendering/road-renderer';
 
 const GHOST_OPACITY = 0.45;
 const GHOST_ELEVATION = 0.06;
-// Matches NodeRenderer's ring style: white for a free placement, the blue
-// interaction accent once snapped, sized to the active preset's width.
+// Matches NodeRenderer's ring style and palette — blue while free (hover),
+// yellow once snapped (committed) — sized to the active preset's width.
 const GHOST_RING_THICKNESS = 1.2;
-const GHOST_NODE_COLOR = 0xfafaf9;
-const GHOST_NODE_SNAPPED_COLOR = 0x4a9eff;
+const GHOST_NODE_COLOR = 0x4a9eff;
+const GHOST_NODE_SNAPPED_COLOR = 0xfacc15;
 const GHOST_NODE_Y = 0.3;
 const MIN_PREVIEW_LENGTH = 1;
 const SEGMENT_SNAP_THRESHOLD = 12;

@@ -3,32 +3,56 @@ import type { Segment } from '../core/segment.svelte';
 import type { Node } from '../core/node.svelte';
 import { getQuadraticBezierPoint, getQuadraticBezierTangent } from '../geometry/bezier';
 
-// Cities-Skylines-style highlights: segments get a translucent full-width
-// ribbon in the interaction accent, hover is a fainter version of selection.
-// White marks grabbable things — the bezier guides and curvature handle.
-const ACCENT_COLOR = 0x4a9eff;
-const SELECT_OPACITY = 0.35;
-const HOVER_OPACITY = 0.18;
-const GUIDE_COLOR = 0xffffff;
-const GUIDE_OPACITY = 0.6;
-const CONTROL_COLOR = 0xffffff;
+// Cities-Skylines-style highlights: a translucent full-width ribbon with
+// round end caps sized to the node rings, wrapped in a solid stroke. Blue
+// means hover, yellow means selected — everywhere in the editor. Fill
+// pieces share one elevation, write depth, and use LessDepth so overlaps
+// (caps over the ribbon, neighboring selections over a shared node) render
+// exactly once; strokes render after all fills and survive only outside
+// them, which outlines the union of the highlighted area without any
+// boundary math.
+const HOVER_COLOR = 0x4a9eff;
+const SELECT_COLOR = 0xfacc15;
+const SELECT_OPACITY = 0.18;
+const HOVER_OPACITY = 0.12;
+const STROKE_WIDTH = 1.2;
+const STROKE_OPACITY = 0.85;
+const FILL_RENDER_ORDER = 1;
+const STROKE_RENDER_ORDER = 2;
+const GUIDE_COLOR = 0xfacc15;
+const GUIDE_OPACITY = 0.7;
+const CONTROL_COLOR = 0xfacc15;
 const CONTROL_SIZE = 4.5;
 const CURVE_SAMPLES = 50;
+const CAP_SEGMENTS = 48;
 const RIBBON_MARGIN = 1;
 const HOVER_Y = 0.16;
 const SELECT_Y = 0.17;
 const GUIDE_Y = 0.21;
 const CONTROL_Y = 0.22;
 
+interface Highlight {
+	ribbon: THREE.Mesh;
+	startCap: THREE.Mesh;
+	endCap: THREE.Mesh;
+	material: THREE.MeshBasicMaterial;
+}
+
 interface SegmentVisual {
 	group: THREE.Group;
-	ribbon: THREE.Mesh;
+	fill: Highlight;
+	stroke: Highlight;
 	handles: THREE.Line;
 	control: THREE.Mesh;
 }
 
-function buildRibbonGeometry(segment: Segment, startNode: Node, endNode: Node, y: number) {
-	const halfWidth = segment.totalWidth / 2 + RIBBON_MARGIN;
+function buildRibbonGeometry(
+	segment: Segment,
+	startNode: Node,
+	endNode: Node,
+	halfWidth: number,
+	y: number
+) {
 	const cx = segment.controlX ?? (startNode.x + endNode.x) / 2;
 	const cy = segment.controlY ?? (startNode.y + endNode.y) / 2;
 	const steps = segment.hasControlPoint ? CURVE_SAMPLES : 1;
@@ -78,53 +102,108 @@ function buildRibbonGeometry(segment: Segment, startNode: Node, endNode: Node, y
 	return geometry;
 }
 
+function createHighlight(color: number, opacity: number, renderOrder: number): Highlight {
+	const material = new THREE.MeshBasicMaterial({
+		color,
+		transparent: true,
+		opacity,
+		depthWrite: true,
+		// Equal-depth fragments are discarded, so same-elevation overlaps
+		// within the highlight never double-blend.
+		depthFunc: THREE.LessDepth,
+		side: THREE.DoubleSide
+	});
+
+	const ribbon = new THREE.Mesh(new THREE.BufferGeometry(), material);
+	const startCap = new THREE.Mesh(new THREE.BufferGeometry(), material);
+	const endCap = new THREE.Mesh(new THREE.BufferGeometry(), material);
+	startCap.rotation.x = -Math.PI / 2;
+	endCap.rotation.x = -Math.PI / 2;
+	for (const mesh of [ribbon, startCap, endCap]) {
+		mesh.renderOrder = renderOrder;
+	}
+
+	return { ribbon, startCap, endCap, material };
+}
+
+function updateHighlight(
+	highlight: Highlight,
+	segment: Segment,
+	startNode: Node,
+	endNode: Node,
+	startRadius: number,
+	endRadius: number,
+	y: number,
+	outset: number
+) {
+	const halfWidth = segment.totalWidth / 2 + RIBBON_MARGIN + outset;
+
+	highlight.ribbon.geometry.dispose();
+	highlight.ribbon.geometry = buildRibbonGeometry(segment, startNode, endNode, halfWidth, y);
+
+	highlight.startCap.geometry.dispose();
+	highlight.startCap.geometry = new THREE.CircleGeometry(startRadius + outset, CAP_SEGMENTS);
+	highlight.startCap.position.set(startNode.x, y, startNode.y);
+
+	highlight.endCap.geometry.dispose();
+	highlight.endCap.geometry = new THREE.CircleGeometry(endRadius + outset, CAP_SEGMENTS);
+	highlight.endCap.position.set(endNode.x, y, endNode.y);
+}
+
+function disposeHighlight(highlight: Highlight) {
+	highlight.ribbon.geometry.dispose();
+	highlight.startCap.geometry.dispose();
+	highlight.endCap.geometry.dispose();
+	highlight.material.dispose();
+}
+
 export class SelectionRenderer {
 	private scene: THREE.Scene;
 	private visuals = new Map<string, SegmentVisual>();
-	private hoverRibbon: THREE.Mesh | null = null;
+	private hover: Highlight | null = null;
 
 	constructor(scene: THREE.Scene) {
 		this.scene = scene;
 	}
 
-	showHover(segment: Segment, startNode: Node, endNode: Node) {
-		if (!this.hoverRibbon) {
-			this.hoverRibbon = new THREE.Mesh(
-				new THREE.BufferGeometry(),
-				new THREE.MeshBasicMaterial({
-					color: ACCENT_COLOR,
-					transparent: true,
-					opacity: HOVER_OPACITY,
-					side: THREE.DoubleSide
-				})
-			);
-			this.scene.add(this.hoverRibbon);
+	showHover(
+		segment: Segment,
+		startNode: Node,
+		endNode: Node,
+		startRadius: number,
+		endRadius: number
+	) {
+		if (!this.hover) {
+			this.hover = createHighlight(HOVER_COLOR, HOVER_OPACITY, 0);
+			this.scene.add(this.hover.ribbon, this.hover.startCap, this.hover.endCap);
 		}
 
-		this.hoverRibbon.geometry.dispose();
-		this.hoverRibbon.geometry = buildRibbonGeometry(segment, startNode, endNode, HOVER_Y);
-		this.hoverRibbon.visible = true;
+		updateHighlight(this.hover, segment, startNode, endNode, startRadius, endRadius, HOVER_Y, 0);
+		this.hover.ribbon.visible = true;
+		this.hover.startCap.visible = true;
+		this.hover.endCap.visible = true;
 	}
 
 	hideHover() {
-		if (this.hoverRibbon) {
-			this.hoverRibbon.visible = false;
+		if (this.hover) {
+			this.hover.ribbon.visible = false;
+			this.hover.startCap.visible = false;
+			this.hover.endCap.visible = false;
 		}
 	}
 
-	showSegment(segment: Segment, startNode: Node, endNode: Node) {
+	showSegment(
+		segment: Segment,
+		startNode: Node,
+		endNode: Node,
+		startRadius: number,
+		endRadius: number
+	) {
 		let visual = this.visuals.get(segment.id);
 
 		if (!visual) {
-			const ribbon = new THREE.Mesh(
-				new THREE.BufferGeometry(),
-				new THREE.MeshBasicMaterial({
-					color: ACCENT_COLOR,
-					transparent: true,
-					opacity: SELECT_OPACITY,
-					side: THREE.DoubleSide
-				})
-			);
+			const fill = createHighlight(SELECT_COLOR, SELECT_OPACITY, FILL_RENDER_ORDER);
+			const stroke = createHighlight(SELECT_COLOR, STROKE_OPACITY, STROKE_RENDER_ORDER);
 
 			const handles = new THREE.Line(
 				new THREE.BufferGeometry(),
@@ -146,20 +225,30 @@ export class SelectionRenderer {
 			control.userData = { type: 'controlPoint', segmentId: segment.id };
 
 			const group = new THREE.Group();
-			group.add(ribbon);
+			group.add(fill.ribbon, fill.startCap, fill.endCap);
+			group.add(stroke.ribbon, stroke.startCap, stroke.endCap);
 			group.add(handles);
 			group.add(control);
 			this.scene.add(group);
 
-			visual = { group, ribbon, handles, control };
+			visual = { group, fill, stroke, handles, control };
 			this.visuals.set(segment.id, visual);
 		}
 
+		updateHighlight(visual.fill, segment, startNode, endNode, startRadius, endRadius, SELECT_Y, 0);
+		updateHighlight(
+			visual.stroke,
+			segment,
+			startNode,
+			endNode,
+			startRadius,
+			endRadius,
+			SELECT_Y,
+			STROKE_WIDTH
+		);
+
 		const cx = segment.controlX ?? (startNode.x + endNode.x) / 2;
 		const cy = segment.controlY ?? (startNode.y + endNode.y) / 2;
-
-		visual.ribbon.geometry.dispose();
-		visual.ribbon.geometry = buildRibbonGeometry(segment, startNode, endNode, SELECT_Y);
 
 		visual.handles.geometry.dispose();
 		visual.handles.geometry = new THREE.BufferGeometry().setFromPoints([
@@ -176,8 +265,8 @@ export class SelectionRenderer {
 		const visual = this.visuals.get(segmentId);
 		if (!visual) return;
 
-		visual.ribbon.geometry.dispose();
-		(visual.ribbon.material as THREE.Material).dispose();
+		disposeHighlight(visual.fill);
+		disposeHighlight(visual.stroke);
 		visual.handles.geometry.dispose();
 		(visual.handles.material as THREE.Material).dispose();
 		visual.control.geometry.dispose();

@@ -1,10 +1,10 @@
 import { getContext, setContext, untrack } from 'svelte';
-import { SvelteSet } from 'svelte/reactivity';
+import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 import { Graph } from './core/graph.svelte';
 import { getDefaultTemplate } from './core/lane-template';
 import { resolveCrossings } from './core/crossings';
 import { SceneManager } from './rendering/scene.svelte';
-import { NodeRenderer } from './rendering/node-renderer';
+import { NodeRenderer, type NodeTone } from './rendering/node-renderer';
 import { RoadRenderer } from './rendering/road-renderer';
 import { SelectionRenderer } from './rendering/selection-renderer';
 import type { ModeHandlers, Mode } from './modes/types';
@@ -204,7 +204,13 @@ export class Editor {
 		const endNode = segment && this.graph.nodes.get(segment.endNodeId);
 
 		if (segment && startNode && endNode) {
-			this.selectionRenderer.showHover(segment, startNode, endNode);
+			this.selectionRenderer.showHover(
+				segment,
+				startNode,
+				endNode,
+				this.nodeRingRadius(startNode),
+				this.nodeRingRadius(endNode)
+			);
 		} else {
 			this.selectionRenderer.hideHover();
 		}
@@ -212,24 +218,27 @@ export class Editor {
 	}
 
 	// Nodes shown despite the base visibility being off: selection endpoints
-	// and the node under the cursor.
+	// and the node under the cursor, toned by why they show (selection wins).
 	private refreshRevealedNodes() {
-		const revealed = new SvelteSet(this.selectedNodes);
-		for (const segmentId of this.selectedSegments) {
-			const segment = this.graph.segments.get(segmentId);
-			if (segment) {
-				revealed.add(segment.startNodeId);
-				revealed.add(segment.endNodeId);
-			}
-		}
+		const revealed = new SvelteMap<string, NodeTone>();
 		if (this.hoveredNodeId) {
-			revealed.add(this.hoveredNodeId);
+			revealed.set(this.hoveredNodeId, 'hover');
 		}
 		if (this.hoveredSegmentId) {
 			const segment = this.graph.segments.get(this.hoveredSegmentId);
 			if (segment) {
-				revealed.add(segment.startNodeId);
-				revealed.add(segment.endNodeId);
+				revealed.set(segment.startNodeId, 'hover');
+				revealed.set(segment.endNodeId, 'hover');
+			}
+		}
+		for (const nodeId of this.selectedNodes) {
+			revealed.set(nodeId, 'selected');
+		}
+		for (const segmentId of this.selectedSegments) {
+			const segment = this.graph.segments.get(segmentId);
+			if (segment) {
+				revealed.set(segment.startNodeId, 'selected');
+				revealed.set(segment.endNodeId, 'selected');
 			}
 		}
 		this.nodeRenderer.setRevealed(revealed);
@@ -244,7 +253,13 @@ export class Editor {
 			const endNode = this.graph.nodes.get(segment.endNodeId);
 			if (!startNode || !endNode) continue;
 
-			this.selectionRenderer.showSegment(segment, startNode, endNode);
+			this.selectionRenderer.showSegment(
+				segment,
+				startNode,
+				endNode,
+				this.nodeRingRadius(startNode),
+				this.nodeRingRadius(endNode)
+			);
 		}
 	}
 

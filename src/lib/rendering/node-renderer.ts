@@ -3,13 +3,15 @@ import type { Node } from '../core/node.svelte';
 
 // Cities-Skylines-style node markers: outline rings sized to the widest
 // road meeting at the node (the editor keeps radii in sync on rebuild).
-// White marks grabbable things; blue is the shared interaction accent.
+// Blue means hover, yellow means selected — rings revealed as part of a
+// selection take the selected tone, rings revealed by hover the hover one.
 const DEFAULT_RADIUS = 6;
 const RING_THICKNESS = 1.2;
-const NODE_COLOR = 0xfafaf9;
-const NODE_HOVER_COLOR = 0xbfdbfe;
-const NODE_SELECTED_COLOR = 0x4a9eff;
+const NODE_HOVER_COLOR = 0x4a9eff;
+const NODE_SELECTED_COLOR = 0xfacc15;
 const NODE_OPACITY = 0.9;
+
+export type NodeTone = 'hover' | 'selected';
 const NODE_SEGMENTS = 48;
 const NODE_Y_OFFSET = 0.2;
 
@@ -19,7 +21,7 @@ export class NodeRenderer {
 	private radii = new Map<string, number>();
 	private selectedNodes = new Set<string>();
 	private hoveredNode: string | null = null;
-	private revealed = new Set<string>();
+	private revealed = new Map<string, NodeTone>();
 
 	constructor(scene: THREE.Scene) {
 		this.scene = scene;
@@ -32,7 +34,7 @@ export class NodeRenderer {
 	createNode(node: Node) {
 		const geometry = this.ringGeometry(DEFAULT_RADIUS);
 		const material = new THREE.MeshBasicMaterial({
-			color: NODE_COLOR,
+			color: NODE_HOVER_COLOR,
 			transparent: true,
 			opacity: NODE_OPACITY
 		});
@@ -112,26 +114,26 @@ export class NodeRenderer {
 		const mesh = this.meshes.get(nodeId);
 		if (!mesh) return;
 
-		const selected = this.selectedNodes.has(nodeId);
+		const selected = this.selectedNodes.has(nodeId) || this.revealed.get(nodeId) === 'selected';
 		const material = mesh.material as THREE.MeshBasicMaterial;
-		material.color.setHex(
-			selected ? NODE_SELECTED_COLOR : nodeId === this.hoveredNode ? NODE_HOVER_COLOR : NODE_COLOR
-		);
+		material.color.setHex(selected ? NODE_SELECTED_COLOR : NODE_HOVER_COLOR);
 	}
 
 	// Nodes are hidden by default; only revealed ones render — selection
-	// endpoints and whatever is under the cursor.
-	setRevealed(nodeIds: ReadonlySet<string>) {
-		for (const nodeId of this.revealed) {
-			if (!nodeIds.has(nodeId)) {
+	// endpoints and whatever is under the cursor, toned by why they show.
+	setRevealed(tones: ReadonlyMap<string, NodeTone>) {
+		for (const nodeId of [...this.revealed.keys()]) {
+			if (!tones.has(nodeId)) {
 				this.revealed.delete(nodeId);
 				this.applyVisibility(nodeId);
 			}
 		}
-		for (const nodeId of nodeIds) {
-			if (!this.revealed.has(nodeId)) {
-				this.revealed.add(nodeId);
-				this.applyVisibility(nodeId);
+		for (const [nodeId, tone] of tones) {
+			if (this.revealed.get(nodeId) !== tone) {
+				const isNew = !this.revealed.has(nodeId);
+				this.revealed.set(nodeId, tone);
+				if (isNew) this.applyVisibility(nodeId);
+				this.applyStyle(nodeId);
 			}
 		}
 	}

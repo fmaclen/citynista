@@ -28,7 +28,9 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 	const marqueeFillMaterial = new THREE.MeshBasicMaterial({
 		color: MARQUEE_COLOR,
 		transparent: true,
-		opacity: 0.12
+		opacity: 0.12,
+		// Blend over selection highlights instead of occluding them.
+		depthWrite: false
 	});
 	const marqueeFill = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), marqueeFillMaterial);
 	marqueeFill.rotation.x = -Math.PI / 2;
