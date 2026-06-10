@@ -488,8 +488,9 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 			return;
 		}
 
+		// Moving things never splits segments — crossings only become
+		// intersections while drawing.
 		if (isDragging) {
-			editor.resolveSegmentCrossings();
 			editor.graph.save();
 		}
 		isDragging = false;

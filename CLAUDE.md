@@ -78,7 +78,7 @@ Each mode returns `ModeHandlers` (`onMouseDown`, `onMouseMove`, `onMouseUp`, `on
 
 ### Planarization (`src/lib/core/crossings.ts`)
 
-After drawing or finishing a drag, `resolveCrossings` finds mid-span segment crossings and splits both segments at a shared new node, creating a real intersection. Curved segments split via de Casteljau, preserving their exact shape. Crossings near existing endpoints are skipped, which guarantees termination.
+After drawing (and only then — moving segments in select mode never splits), `resolveCrossings` finds mid-span segment crossings and splits both segments at a shared new node, creating a real intersection. Curved segments split via de Casteljau, preserving their exact shape. Crossings near existing endpoints are skipped, which guarantees termination.
 
 ## Testing Guidelines
 
