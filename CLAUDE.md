@@ -65,15 +65,15 @@ Two construction paths:
 ### Rendering (`src/lib/rendering/`)
 
 - **`road-renderer.ts`**: piece-based incremental renderer. `update(graph)` caches one piece per segment and per node, keyed by a hash of its inputs; only changed pieces rebuild (segments are cheap analytic ribbon strips — no Clipper/earcut; nodes use `buildNodeLayers`). Ribbons overlap node pieces slightly to avoid hairline cracks; tiny per-piece elevations prevent z-fighting. `render(layers)` is the one-shot path for the ghost preview. **Performance contract: editing cost must stay proportional to what changed, not map size** — new geometry features must be expressible per-segment or per-node (or extend the piece hashes).
-- **`node-renderer.ts`**: node discs (amber; blue + enlarged when selected), visible in draw/select modes.
+- **`node-renderer.ts`**: node discs (amber; blue + enlarged when selected). All nodes show in draw mode; in select mode they stay hidden except "revealed" ones — selection endpoints and the node under the cursor.
 - **`selection-renderer.ts`**: selected-segment visuals — blue bezier centerline, dashed guides, red control-point handle.
 - **`scene.svelte.ts`**: scene, orthographic camera, zoom (wheel), pan (alt+drag or middle mouse), FPS reporting.
 
 ### Modes (`src/lib/modes/`)
 
-Each mode returns `ModeHandlers` (`onMouseDown`, `onMouseMove`, `onMouseUp`, `onKeyDown`, `cleanup`).
+Each mode returns `ModeHandlers` (`onMouseDown`, `onMouseMove`, `onMouseUp`, `onKeyDown`, `cleanup`). Select is the always-on default; draw mode is entered by picking a preset in the toolbar (click or number keys). The editor's mode `$effect` deliberately `untrack`s `setupMode` so selection changes don't re-trigger it.
 
-- **draw.ts**: click-to-draw with a translucent ghost preview of the pending road. Snaps to nodes and to segments (splitting them into T junctions on click). Escape cancels and removes an unused start node.
+- **draw.ts**: click-to-draw with a translucent ghost preview of the pending road. Snaps to nodes and to segments (splitting them into T junctions on click). Escape is two-stage: first cancels the pending segment (removing an unused start node), second returns to select mode.
 - **select.ts**: click selects a node or segment; shift+click multi-selects nodes; dragging a path moves the segment rigidly; the red handle changes curvature (shift snaps tangent-continuous with neighbor roads, or straight near the chord). Control points keep their relative position when endpoints move. Delete/Backspace removes the selection. Selecting a single segment also opens the lane editor panel.
 
 ### Planarization (`src/lib/core/crossings.ts`)

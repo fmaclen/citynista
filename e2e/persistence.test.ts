@@ -13,8 +13,8 @@ test.describe('Persistence', () => {
 	test('data persists and renders after page reload', async ({ page }) => {
 		const canvas = page.locator('canvas');
 
-		// Enter draw mode - first button
-		await page.locator('button').first().click();
+		// Picking a preset enters draw mode
+		await page.getByRole('button', { name: 'Street' }).click();
 
 		// Draw some segments
 		await canvas.click({ position: { x: 200, y: 200 }, force: true });
@@ -50,16 +50,17 @@ test.describe('Persistence', () => {
 	test('bezier control point curves segment without breaking it', async ({ page }) => {
 		const canvas = page.locator('canvas');
 
-		// Enter draw mode
-		await page.locator('button').first().click();
+		// Picking a preset enters draw mode
+		await page.getByRole('button', { name: 'Street' }).click();
 
 		// Draw a horizontal segment in the middle of the canvas
 		await canvas.click({ position: { x: 200, y: 300 }, force: true });
 		await canvas.click({ position: { x: 500, y: 300 }, force: true });
-		await page.keyboard.press('Escape');
 
-		// Enter select mode
-		await page.locator('button').nth(1).click();
+		// First escape cancels the pending segment, second returns to select mode
+		await page.keyboard.press('Escape');
+		await page.keyboard.press('Escape');
+		await expect(page.getByTitle('Select')).toHaveAttribute('aria-pressed', 'true');
 
 		// Click on the segment to select it (middle point)
 		await canvas.click({ position: { x: 350, y: 300 }, force: true });

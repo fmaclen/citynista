@@ -1,4 +1,4 @@
-import { getContext, setContext } from 'svelte';
+import { getContext, setContext, untrack } from 'svelte';
 import { SvelteSet } from 'svelte/reactivity';
 import { Graph } from './core/graph.svelte';
 import { getDefaultTemplate } from './core/lane-template';
@@ -20,7 +20,7 @@ export class Editor {
 	roadRenderer!: RoadRenderer;
 	selectionRenderer!: SelectionRenderer;
 
-	mode = $state<Mode | undefined>(undefined);
+	mode = $state<Mode>('select');
 	currentLaneTemplateId = $state(getDefaultTemplate().id);
 	fps = $state(0);
 	selectedNodes = new SvelteSet<string>();
@@ -28,10 +28,14 @@ export class Editor {
 
 	private modeHandlers: ModeHandlers | null = null;
 	private boundKeyDown: ((e: KeyboardEvent) => void) | null = null;
+	private hoveredNodeId: string | null = null;
 
 	constructor() {
+		// Track only the mode itself: setupMode reads selection state internally
+		// and must not re-run when that state changes.
 		$effect(() => {
-			this.setupMode(this.mode);
+			const mode = this.mode;
+			untrack(() => this.setupMode(mode));
 		});
 	}
 
@@ -50,6 +54,8 @@ export class Editor {
 
 		this.loadSavedData();
 		this.setupCanvasEvents();
+		// The mode effect already ran before init; install the default mode now.
+		this.setupMode(this.mode);
 	}
 
 	private loadSavedData() {
@@ -87,7 +93,7 @@ export class Editor {
 		canvas.addEventListener('mouseup', (e) => this.modeHandlers?.onMouseUp?.(e));
 	}
 
-	private setupMode(mode: Mode | undefined) {
+	private setupMode(mode: Mode) {
 		if (!this.sceneManager) return;
 
 		if (this.modeHandlers?.cleanup) {
@@ -99,14 +105,15 @@ export class Editor {
 		}
 
 		this.clearSelection();
+		this.setHoveredNode(null);
 		this.modeHandlers = null;
 
-		const showNodes = mode === 'draw' || mode === 'select';
-		this.nodeRenderer.setAllVisible(showNodes);
+		// In select mode nodes stay hidden until hovered or selected.
+		this.nodeRenderer.setAllVisible(mode === 'draw');
 
 		if (mode === 'draw') {
 			this.modeHandlers = setupDrawMode(this);
-		} else if (mode === 'select') {
+		} else {
 			this.modeHandlers = setupSelectMode(this);
 		}
 
@@ -126,21 +133,25 @@ export class Editor {
 	selectNode(nodeId: string) {
 		this.selectedNodes.add(nodeId);
 		this.nodeRenderer.setSelected(nodeId, true);
+		this.refreshRevealedNodes();
 	}
 
 	deselectNode(nodeId: string) {
 		this.selectedNodes.delete(nodeId);
 		this.nodeRenderer.setSelected(nodeId, false);
+		this.refreshRevealedNodes();
 	}
 
 	selectSegment(segmentId: string) {
 		this.selectedSegments.add(segmentId);
 		this.refreshSelectionVisuals();
+		this.refreshRevealedNodes();
 	}
 
 	deselectSegment(segmentId: string) {
 		this.selectedSegments.delete(segmentId);
 		this.selectionRenderer.hideSegment(segmentId);
+		this.refreshRevealedNodes();
 	}
 
 	clearSelection() {
@@ -148,6 +159,30 @@ export class Editor {
 		this.selectionRenderer.clear();
 		this.selectedNodes.clear();
 		this.selectedSegments.clear();
+		this.refreshRevealedNodes();
+	}
+
+	setHoveredNode(nodeId: string | null) {
+		if (this.hoveredNodeId === nodeId) return;
+		this.hoveredNodeId = nodeId;
+		this.refreshRevealedNodes();
+	}
+
+	// Nodes shown despite the base visibility being off: selection endpoints
+	// and the node under the cursor.
+	private refreshRevealedNodes() {
+		const revealed = new SvelteSet(this.selectedNodes);
+		for (const segmentId of this.selectedSegments) {
+			const segment = this.graph.segments.get(segmentId);
+			if (segment) {
+				revealed.add(segment.startNodeId);
+				revealed.add(segment.endNodeId);
+			}
+		}
+		if (this.hoveredNodeId) {
+			revealed.add(this.hoveredNodeId);
+		}
+		this.nodeRenderer.setRevealed(revealed);
 	}
 
 	refreshSelectionVisuals() {
@@ -212,6 +247,8 @@ export class Editor {
 
 		this.selectedNodes.clear();
 		this.selectedSegments.clear();
+		this.setHoveredNode(null);
+		this.refreshRevealedNodes();
 		this.rebuildRoads();
 		this.graph.save();
 	}

@@ -206,10 +206,16 @@ export function setupDrawMode(editor: Editor): ModeHandlers {
 		updatePreview(worldPos.x, worldPos.z);
 	};
 
+	// Escape is two-stage: first cancel the segment being drawn, then leave
+	// draw mode entirely.
 	const onKeyDown = (event: KeyboardEvent) => {
-		if (event.key === 'Escape') {
+		if (event.key !== 'Escape') return;
+
+		if (startNodeId !== null) {
 			discardOrphanStart();
 			ghostRenderer.clear();
+		} else {
+			editor.mode = 'select';
 		}
 	};
 

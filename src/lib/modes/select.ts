@@ -312,9 +312,13 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 	};
 
 	const onMouseMove = (event: MouseEvent) => {
-		if (!isDragging || !dragTarget) return;
-
 		const worldPos = editor.sceneManager.screenToWorld(event.clientX, event.clientY);
+
+		if (!isDragging || !dragTarget) {
+			editor.setHoveredNode(findNodeAt(worldPos.x, worldPos.z)?.id ?? null);
+			return;
+		}
+
 		const dx = worldPos.x - dragStartX;
 		const dz = worldPos.z - dragStartZ;
 
@@ -385,6 +389,7 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 		isDragging = false;
 		dragTarget = null;
 		controlFrames.clear();
+		editor.setHoveredNode(null);
 	};
 
 	return {

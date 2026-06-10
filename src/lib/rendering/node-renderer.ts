@@ -14,6 +14,7 @@ export class NodeRenderer {
 	private meshes = new Map<string, THREE.Mesh>();
 	private selectedNodes = new Set<string>();
 	private visible = false;
+	private revealed = new Set<string>();
 
 	constructor(scene: THREE.Scene) {
 		this.scene = scene;
@@ -31,7 +32,7 @@ export class NodeRenderer {
 		mesh.rotation.x = -Math.PI / 2;
 		mesh.position.set(node.x, NODE_Y_OFFSET, node.y);
 		mesh.userData = { type: 'node', id: node.id };
-		mesh.visible = this.visible;
+		mesh.visible = this.visible || this.revealed.has(node.id);
 
 		this.scene.add(mesh);
 		this.meshes.set(node.id, mesh);
@@ -55,6 +56,7 @@ export class NodeRenderer {
 			this.meshes.delete(nodeId);
 		}
 		this.selectedNodes.delete(nodeId);
+		this.revealed.delete(nodeId);
 	}
 
 	setSelected(nodeId: string, selected: boolean) {
@@ -86,8 +88,32 @@ export class NodeRenderer {
 
 	setAllVisible(visible: boolean) {
 		this.visible = visible;
-		for (const mesh of this.meshes.values()) {
-			mesh.visible = visible;
+		for (const nodeId of this.meshes.keys()) {
+			this.applyVisibility(nodeId);
+		}
+	}
+
+	// Nodes that stay visible even while the renderer as a whole is hidden,
+	// e.g. selection endpoints and the hovered node in select mode.
+	setRevealed(nodeIds: ReadonlySet<string>) {
+		for (const nodeId of this.revealed) {
+			if (!nodeIds.has(nodeId)) {
+				this.revealed.delete(nodeId);
+				this.applyVisibility(nodeId);
+			}
+		}
+		for (const nodeId of nodeIds) {
+			if (!this.revealed.has(nodeId)) {
+				this.revealed.add(nodeId);
+				this.applyVisibility(nodeId);
+			}
+		}
+	}
+
+	private applyVisibility(nodeId: string) {
+		const mesh = this.meshes.get(nodeId);
+		if (mesh) {
+			mesh.visible = this.visible || this.revealed.has(nodeId);
 		}
 	}
 

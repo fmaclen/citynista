@@ -40,8 +40,8 @@ async function readSavedSegments(page: import('@playwright/test').Page) {
 	}, STORAGE_KEY);
 }
 
+// Select mode is the default; clicking a segment selects it directly.
 async function selectSegment(page: import('@playwright/test').Page) {
-	await page.getByTitle('Select Mode').click();
 	const point = toScreen(-50, 0);
 	await page.locator('canvas').click({ position: { x: point.x, y: point.y } });
 	await expect(page.locator('aside')).toBeVisible();
