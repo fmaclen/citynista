@@ -65,8 +65,8 @@ Two construction paths:
 ### Rendering (`src/lib/rendering/`)
 
 - **`road-renderer.ts`**: piece-based incremental renderer. `update(graph)` caches one piece per segment and per node, keyed by a hash of its inputs; only changed pieces rebuild (segments are cheap analytic ribbon strips — no Clipper/earcut; nodes use `buildNodeLayers`). Ribbons overlap node pieces slightly to avoid hairline cracks; tiny per-piece elevations prevent z-fighting. `render(layers)` is the one-shot path for the ghost preview. **Performance contract: editing cost must stay proportional to what changed, not map size** — new geometry features must be expressible per-segment or per-node (or extend the piece hashes).
-- **`node-renderer.ts`**: node discs (amber; blue + enlarged when selected). All nodes show in draw mode; in select mode they stay hidden except "revealed" ones — selection endpoints and the node under the cursor. Hovering a segment highlights its centerline via the selection renderer.
-- **`selection-renderer.ts`**: selected-segment visuals — blue bezier centerline, dashed guides, red control-point handle.
+- **`node-renderer.ts`**: node rings (white = grabbable, light-blue tint on hover, solid blue when selected) sized to the widest road at the node; the editor syncs radii in `rebuildRoads`. All nodes show in draw mode; in select mode they stay hidden except "revealed" ones — selection endpoints and the node under the cursor. Hovering a segment shows its ribbon highlight and reveals its endpoint rings.
+- **`selection-renderer.ts`**: Cities-Skylines-style highlights — translucent full-width blue ribbon over hovered (faint) and selected (stronger) segments, plus white dashed bezier guides and a white diamond curvature handle on selection.
 - **`scene.svelte.ts`**: scene, orthographic camera, zoom (wheel), pan (space+drag, alt+drag, or middle mouse), FPS reporting.
 
 ### Modes (`src/lib/modes/`)

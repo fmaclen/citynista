@@ -1,18 +1,24 @@
 import * as THREE from 'three';
 import type { Node } from '../core/node.svelte';
 
-const NODE_RADIUS = 6;
-const NODE_COLOR = 0xf59e0b; // amber-500
+// Cities-Skylines-style node markers: outline rings sized to the widest
+// road meeting at the node (the editor keeps radii in sync on rebuild).
+// White marks grabbable things; blue is the shared interaction accent.
+const DEFAULT_RADIUS = 6;
+const RING_THICKNESS = 1.2;
+const NODE_COLOR = 0xfafaf9;
+const NODE_HOVER_COLOR = 0xbfdbfe;
 const NODE_SELECTED_COLOR = 0x4a9eff;
-const NODE_SELECTED_SCALE = 1.3;
-const NODE_OPACITY = 0.75;
-const NODE_SEGMENTS = 32;
+const NODE_OPACITY = 0.9;
+const NODE_SEGMENTS = 48;
 const NODE_Y_OFFSET = 0.2;
 
 export class NodeRenderer {
 	private scene: THREE.Scene;
 	private meshes = new Map<string, THREE.Mesh>();
+	private radii = new Map<string, number>();
 	private selectedNodes = new Set<string>();
+	private hoveredNode: string | null = null;
 	private visible = false;
 	private revealed = new Set<string>();
 
@@ -20,8 +26,12 @@ export class NodeRenderer {
 		this.scene = scene;
 	}
 
+	private ringGeometry(radius: number) {
+		return new THREE.RingGeometry(radius - RING_THICKNESS, radius, NODE_SEGMENTS);
+	}
+
 	createNode(node: Node) {
-		const geometry = new THREE.CircleGeometry(NODE_RADIUS, NODE_SEGMENTS);
+		const geometry = this.ringGeometry(DEFAULT_RADIUS);
 		const material = new THREE.MeshBasicMaterial({
 			color: NODE_COLOR,
 			transparent: true,
@@ -36,6 +46,7 @@ export class NodeRenderer {
 
 		this.scene.add(mesh);
 		this.meshes.set(node.id, mesh);
+		this.radii.set(node.id, DEFAULT_RADIUS);
 
 		return mesh;
 	}
@@ -47,6 +58,15 @@ export class NodeRenderer {
 		}
 	}
 
+	setRadius(nodeId: string, radius: number) {
+		const mesh = this.meshes.get(nodeId);
+		if (!mesh || this.radii.get(nodeId) === radius) return;
+
+		mesh.geometry.dispose();
+		mesh.geometry = this.ringGeometry(radius);
+		this.radii.set(nodeId, radius);
+	}
+
 	removeNode(nodeId: string) {
 		const mesh = this.meshes.get(nodeId);
 		if (mesh) {
@@ -55,35 +75,49 @@ export class NodeRenderer {
 			(mesh.material as THREE.Material).dispose();
 			this.meshes.delete(nodeId);
 		}
+		this.radii.delete(nodeId);
 		this.selectedNodes.delete(nodeId);
 		this.revealed.delete(nodeId);
+		if (this.hoveredNode === nodeId) {
+			this.hoveredNode = null;
+		}
 	}
 
 	setSelected(nodeId: string, selected: boolean) {
-		const mesh = this.meshes.get(nodeId);
-		if (mesh) {
-			const material = mesh.material as THREE.MeshBasicMaterial;
-			material.color.setHex(selected ? NODE_SELECTED_COLOR : NODE_COLOR);
-			mesh.scale.setScalar(selected ? NODE_SELECTED_SCALE : 1);
-
-			if (selected) {
-				this.selectedNodes.add(nodeId);
-			} else {
-				this.selectedNodes.delete(nodeId);
-			}
+		if (selected) {
+			this.selectedNodes.add(nodeId);
+		} else {
+			this.selectedNodes.delete(nodeId);
 		}
+		this.applyStyle(nodeId);
+	}
+
+	setHovered(nodeId: string | null) {
+		if (this.hoveredNode === nodeId) return;
+
+		const previous = this.hoveredNode;
+		this.hoveredNode = nodeId;
+		if (previous) this.applyStyle(previous);
+		if (nodeId) this.applyStyle(nodeId);
 	}
 
 	clearSelection() {
-		for (const nodeId of this.selectedNodes) {
-			const mesh = this.meshes.get(nodeId);
-			if (mesh) {
-				const material = mesh.material as THREE.MeshBasicMaterial;
-				material.color.setHex(NODE_COLOR);
-				mesh.scale.setScalar(1);
-			}
-		}
+		const cleared = [...this.selectedNodes];
 		this.selectedNodes.clear();
+		for (const nodeId of cleared) {
+			this.applyStyle(nodeId);
+		}
+	}
+
+	private applyStyle(nodeId: string) {
+		const mesh = this.meshes.get(nodeId);
+		if (!mesh) return;
+
+		const selected = this.selectedNodes.has(nodeId);
+		const material = mesh.material as THREE.MeshBasicMaterial;
+		material.color.setHex(
+			selected ? NODE_SELECTED_COLOR : nodeId === this.hoveredNode ? NODE_HOVER_COLOR : NODE_COLOR
+		);
 	}
 
 	setAllVisible(visible: boolean) {

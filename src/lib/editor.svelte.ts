@@ -70,6 +70,21 @@ export class Editor {
 
 	rebuildRoads() {
 		this.roadRenderer.update(this.graph);
+		for (const node of this.graph.nodes.values()) {
+			this.nodeRenderer.setRadius(node.id, this.nodeRingRadius(node));
+		}
+	}
+
+	// Node rings hug the widest road meeting at the node.
+	private nodeRingRadius(node: { connectedSegments: string[] }) {
+		let maxHalfWidth = 0;
+		for (const segmentId of node.connectedSegments) {
+			const segment = this.graph.segments.get(segmentId);
+			if (segment) {
+				maxHalfWidth = Math.max(maxHalfWidth, segment.totalWidth / 2);
+			}
+		}
+		return (maxHalfWidth || 4) + 2;
 	}
 
 	// Turn any mid-span segment crossings into shared nodes, so overlapping
@@ -175,6 +190,7 @@ export class Editor {
 	setHoveredNode(nodeId: string | null) {
 		if (this.hoveredNodeId === nodeId) return;
 		this.hoveredNodeId = nodeId;
+		this.nodeRenderer.setHovered(nodeId);
 		this.refreshRevealedNodes();
 	}
 
@@ -195,6 +211,7 @@ export class Editor {
 		} else {
 			this.selectionRenderer.hideHover();
 		}
+		this.refreshRevealedNodes();
 	}
 
 	// Nodes shown despite the base visibility being off: selection endpoints
@@ -210,6 +227,13 @@ export class Editor {
 		}
 		if (this.hoveredNodeId) {
 			revealed.add(this.hoveredNodeId);
+		}
+		if (this.hoveredSegmentId) {
+			const segment = this.graph.segments.get(this.hoveredSegmentId);
+			if (segment) {
+				revealed.add(segment.startNodeId);
+				revealed.add(segment.endNodeId);
+			}
 		}
 		this.nodeRenderer.setRevealed(revealed);
 	}
