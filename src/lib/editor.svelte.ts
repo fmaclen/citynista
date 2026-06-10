@@ -310,10 +310,9 @@ export class Editor {
 			}
 		}
 
-		this.selectedNodes.clear();
-		this.selectedSegments.clear();
+		this.clearSelection();
 		this.setHoveredNode(null);
-		this.refreshRevealedNodes();
+		this.setHoveredSegment(null);
 		this.rebuildRoads();
 		this.graph.save();
 	}
