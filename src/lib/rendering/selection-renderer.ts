@@ -3,7 +3,7 @@ import type { Segment } from '../core/segment.svelte';
 import type { Node } from '../core/node.svelte';
 import { getQuadraticBezierPoint, getQuadraticBezierTangent } from '../geometry/bezier';
 
-// Cities-Skylines-style highlights: a translucent full-width ribbon with
+// Segment highlights: a translucent full-width ribbon with
 // round end caps sized to the node rings, wrapped in a solid stroke. Blue
 // means hover, yellow means selected — everywhere in the editor. Fill
 // pieces share one elevation, write depth, and use LessDepth so overlaps

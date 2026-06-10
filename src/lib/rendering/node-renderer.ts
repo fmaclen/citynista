@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import type { Node } from '../core/node.svelte';
 
-// Cities-Skylines-style node markers: outline rings sized to the widest
+// Node markers: outline rings sized to the widest
 // road meeting at the node (the editor keeps radii in sync on rebuild).
 // Blue means hover, yellow means selected — rings revealed as part of a
 // selection take the selected tone, rings revealed by hover the hover one.
