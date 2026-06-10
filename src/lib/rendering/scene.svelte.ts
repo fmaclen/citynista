@@ -1,7 +1,9 @@
 import * as THREE from 'three';
 
 const GROUND_SIZE = 10000;
-const GROUND_COLOR = 0x4a6d5a;
+// Matches the grass lane color in road-renderer's LAYER_COLORS — the ground
+// plane reads as the same grass.
+const GROUND_COLOR = 0x52a06b;
 
 export class SceneManager {
 	scene: THREE.Scene;

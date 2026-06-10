@@ -111,7 +111,14 @@ export class Editor {
 		}
 
 		if (this.modeHandlers?.onKeyDown) {
-			this.boundKeyDown = this.modeHandlers.onKeyDown;
+			const handler = this.modeHandlers.onKeyDown;
+			// Mode shortcuts (Delete, Escape...) must not fire while typing in
+			// the lane panel or other UI controls.
+			this.boundKeyDown = (e) => {
+				const target = e.target;
+				if (target instanceof HTMLElement && target.tagName !== 'BODY') return;
+				handler(e);
+			};
 			window.addEventListener('keydown', this.boundKeyDown);
 		}
 	}

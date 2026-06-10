@@ -50,8 +50,6 @@ test.describe('Intersection Rendering', () => {
 
 		await expect(page.locator('nav')).toBeVisible();
 
-		await page.screenshot({ path: 'e2e/screenshots/intersection-test.png' });
-
 		const savedData = await page.evaluate((key) => {
 			const data = localStorage.getItem(key);
 			return data ? JSON.parse(data) : null;
@@ -59,31 +57,5 @@ test.describe('Intersection Rendering', () => {
 
 		expect(savedData.nodes.length).toBe(9);
 		expect(savedData.segments.length).toBe(8);
-	});
-
-	test('nodes visible in select mode, hidden when deselected', async ({ page }) => {
-		await page.goto('/');
-		await expect(page.locator('canvas')).toBeVisible();
-
-		await page.evaluate(
-			({ key, data }) => {
-				localStorage.setItem(key, JSON.stringify(data));
-			},
-			{ key: STORAGE_KEY, data: TEST_GRAPH_DATA }
-		);
-
-		await page.reload();
-		await expect(page.locator('canvas')).toBeVisible();
-		await expect(page.locator('nav')).toBeVisible();
-
-		await page.screenshot({ path: 'e2e/screenshots/nodes-hidden.png' });
-
-		await page.locator('button').nth(1).click();
-
-		await page.screenshot({ path: 'e2e/screenshots/nodes-visible-select-mode.png' });
-
-		await page.locator('button').nth(1).click();
-
-		await page.screenshot({ path: 'e2e/screenshots/nodes-hidden-after-deselect.png' });
 	});
 });

@@ -29,3 +29,5 @@ _old_reference/*
 _old_reference/**/*
 
 SCRATCHPAD.md
+
+e2e/screenshots

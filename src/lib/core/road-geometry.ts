@@ -3,8 +3,8 @@ import type { Path, Paths, PolyNode, PolyTree } from 'clipper-lib';
 import type { Graph } from './graph.svelte';
 import type { Node } from './node.svelte';
 import type { Segment } from './segment.svelte';
-import type { LaneType, LaneTemplate } from './types';
-import { getLaneTemplate, getTotalWidth } from './lane-template';
+import type { Lane, LaneType } from './types';
+import { getTotalWidth } from './lane-template';
 import { getQuadraticBezierPoint, getQuadraticBezierTangent } from '../geometry/bezier';
 
 export interface Point {
@@ -12,7 +12,7 @@ export interface Point {
 	y: number;
 }
 
-export type RoadLayerId = 'casing' | LaneType;
+export type RoadLayerId = LaneType;
 
 export interface PolygonWithHoles {
 	outer: Point[];
@@ -26,7 +26,6 @@ export interface RoadLayer {
 
 const CLIPPER_SCALE = 1000;
 const CURVE_SAMPLES = 32;
-const CASING_WIDTH = 1;
 
 // How far roads stop short of the crossing road's edge at an intersection.
 const INTERSECTION_GAP = 4;
@@ -35,7 +34,6 @@ const CORNER_CURVE_SAMPLES = 12;
 // Small dilate-erode pass that seals hairline cracks where generated pieces
 // share an edge. Corner geometry is explicit, so this stays tiny.
 const CURB_RADIUS: Record<RoadLayerId, number> = {
-	casing: 1.5,
 	sidewalk: 1.5,
 	grass: 1,
 	road: 1.5,
@@ -46,7 +44,7 @@ const JUNCTION_DISC_SCALE = 1.5;
 
 // Bottom-to-top draw order. Road covers crossing sidewalk/grass strips inside
 // junctions; median sits on the roadway.
-export const LAYER_ORDER: RoadLayerId[] = ['casing', 'sidewalk', 'grass', 'road', 'median'];
+export const LAYER_ORDER: RoadLayerId[] = ['sidewalk', 'grass', 'road', 'median'];
 
 interface LaneInterval {
 	laneType: LaneType;
@@ -64,8 +62,7 @@ export function buildRoadLayers(graph: Graph): RoadLayer[] {
 		const endNode = graph.nodes.get(segment.endNodeId);
 		if (!startNode || !endNode) continue;
 
-		const template = getLaneTemplate(segment.laneTemplateId);
-		if (!template) continue;
+		if (segment.lanes.length === 0) continue;
 
 		const trim = trims.get(segment.id);
 		const centerline = sampleTrimmedCenterline(
@@ -78,7 +75,7 @@ export function buildRoadLayers(graph: Graph): RoadLayer[] {
 		if (centerline.length < 2) continue;
 		centerlines.set(segment.id, centerline);
 
-		for (const interval of getLaneIntervals(template)) {
+		for (const interval of getLaneIntervals(segment.lanes)) {
 			const band = buildBandPath(centerline, interval.start, interval.end);
 			const bands = bandsByType.get(interval.laneType);
 			if (bands) {
@@ -146,13 +143,6 @@ export function buildRoadLayers(graph: Graph): RoadLayer[] {
 
 	const layers: RoadLayer[] = [];
 
-	// The casing is a thin rim around the pavement plate, which contains
-	// every other layer.
-	const casingPolygons = pathsToPolygons(offsetPaths(plate, CASING_WIDTH));
-	if (casingPolygons.length > 0) {
-		layers.push({ id: 'casing', polygons: casingPolygons });
-	}
-
 	for (const layerId of LAYER_ORDER) {
 		const paths = layerPaths.get(layerId);
 		if (!paths) continue;
@@ -166,11 +156,11 @@ export function buildRoadLayers(graph: Graph): RoadLayer[] {
 	return layers;
 }
 
-export function getLaneIntervals(template: LaneTemplate): LaneInterval[] {
+export function getLaneIntervals(lanes: Lane[]): LaneInterval[] {
 	const intervals: LaneInterval[] = [];
-	let offset = -getTotalWidth(template) / 2;
+	let offset = -getTotalWidth(lanes) / 2;
 
-	for (const lane of template.lanes) {
+	for (const lane of lanes) {
 		const previous = intervals[intervals.length - 1];
 		if (previous && previous.laneType === lane.type) {
 			previous.end += lane.width;
@@ -223,10 +213,8 @@ export function computeIntersectionTrims(graph: Graph): Map<string, SegmentTrim>
 		const halfWidths = new Map<string, number>();
 		for (const segmentId of node.connectedSegments) {
 			const segment = graph.segments.get(segmentId);
-			if (!segment) continue;
-			const template = getLaneTemplate(segment.laneTemplateId);
-			if (!template) continue;
-			halfWidths.set(segmentId, getTotalWidth(template) / 2);
+			if (!segment || segment.lanes.length === 0) continue;
+			halfWidths.set(segmentId, segment.totalWidth / 2);
 		}
 
 		for (const segmentId of node.connectedSegments) {
@@ -391,7 +379,8 @@ function buildBandPath(centerline: CenterlineSample[], start: number, end: numbe
 interface NodeArm {
 	normal: Point;
 	outward: Point;
-	template: LaneTemplate;
+	lanes: Lane[];
+	lanesKey: string;
 }
 
 const MIN_JOIN_ANGLE = 0.05;
@@ -423,19 +412,19 @@ function addNodeJoins(graph: Graph, node: Node, bandsByType: Map<LaneType, Paths
 
 		const dirs = sampleArcDirections(armA.normal, rotation);
 
-		if (armA.template.id === armB.template.id) {
-			const intervalsA = getLaneIntervals(armA.template);
-			const intervalsB = getLaneIntervals(armB.template);
+		if (armA.lanesKey === armB.lanesKey) {
+			const intervalsA = getLaneIntervals(armA.lanes);
+			const intervalsB = getLaneIntervals(armB.lanes);
 			for (let k = 0; k < intervalsA.length; k++) {
 				const bands = getOrCreateBands(bandsByType, intervalsA[k].laneType);
 				addWedgePieces(bands, center, dirs, intervalsA[k], intervalsB[k]);
 			}
 		} else {
-			// Different road types meeting: interpolate between the two
-			// cross-sections — pavement out to each side's sidewalk, and the
-			// sidewalk rings joined to each other.
-			const profileA = getJoinProfile(armA.template);
-			const profileB = getJoinProfile(armB.template);
+			// Different cross-sections meeting: interpolate between the two
+			// — pavement out to each side's sidewalk, and the sidewalk rings
+			// joined to each other.
+			const profileA = getJoinProfile(armA.lanes);
+			const profileB = getJoinProfile(armB.lanes);
 
 			const roadBands = getOrCreateBands(bandsByType, 'road');
 			addWedgePieces(
@@ -495,8 +484,7 @@ function addIntersection(
 		const centerline = centerlines.get(segmentId);
 		if (!centerline || centerline.length < 2) continue;
 
-		const template = getLaneTemplate(segment.laneTemplateId);
-		if (!template) continue;
+		if (segment.lanes.length === 0) continue;
 
 		const isStart = segment.startNodeId === node.id;
 		const stopSample = isStart ? centerline[0] : centerline[centerline.length - 1];
@@ -508,11 +496,11 @@ function addIntersection(
 		});
 		if (!into) continue;
 
-		const profile = getJoinProfile(template);
+		const profile = getJoinProfile(segment.lanes);
 		arms.push({
 			stop: { x: stopSample.x, y: stopSample.y },
 			into,
-			halfWidth: getTotalWidth(template) / 2,
+			halfWidth: segment.totalWidth / 2,
 			roadHalf: profile.sidewalkInner
 		});
 	}
@@ -623,8 +611,7 @@ function collectNodeArms(graph: Graph, node: Node): NodeArm[] {
 		const endNode = graph.nodes.get(segment.endNodeId);
 		if (!startNode || !endNode) continue;
 
-		const template = getLaneTemplate(segment.laneTemplateId);
-		if (!template) continue;
+		if (segment.lanes.length === 0) continue;
 
 		const isStart = segment.startNodeId === node.id;
 		const tangent = getSegmentTangentAtNode(segment, startNode, endNode, isStart);
@@ -632,7 +619,8 @@ function collectNodeArms(graph: Graph, node: Node): NodeArm[] {
 		arms.push({
 			normal: { x: -tangent.y, y: tangent.x },
 			outward: isStart ? tangent : { x: -tangent.x, y: -tangent.y },
-			template
+			lanes: segment.lanes,
+			lanesKey: segment.lanesKey
 		});
 	}
 
@@ -670,13 +658,13 @@ function getSegmentTangentAtNode(
 	return { x: 1, y: 0 };
 }
 
-// Radial extents used when joining two different templates: everything inside
-// the outermost sidewalk strip is treated as pavement.
-function getJoinProfile(template: LaneTemplate): { sidewalkInner: number; sidewalkOuter: number } {
-	const halfWidth = getTotalWidth(template) / 2;
+// Radial extents used when joining two different cross-sections: everything
+// inside the outermost sidewalk strip is treated as pavement.
+function getJoinProfile(lanes: Lane[]): { sidewalkInner: number; sidewalkOuter: number } {
+	const halfWidth = getTotalWidth(lanes) / 2;
 	let sidewalkInner = halfWidth;
 
-	for (const interval of getLaneIntervals(template)) {
+	for (const interval of getLaneIntervals(lanes)) {
 		if (interval.laneType !== 'sidewalk') continue;
 		const outerEdge = Math.max(Math.abs(interval.start), Math.abs(interval.end));
 		if (Math.abs(outerEdge - halfWidth) < 0.01) {
@@ -808,10 +796,8 @@ function buildMedianBreakDiscs(graph: Graph): Paths {
 		for (const segmentId of node.connectedSegments) {
 			const segment = graph.segments.get(segmentId);
 			if (!segment) continue;
-			const template = getLaneTemplate(segment.laneTemplateId);
-			if (!template) continue;
 
-			for (const interval of getLaneIntervals(template)) {
+			for (const interval of getLaneIntervals(segment.lanes)) {
 				if (interval.laneType !== 'road') continue;
 				maxRoadExtent = Math.max(maxRoadExtent, Math.abs(interval.start), Math.abs(interval.end));
 			}
@@ -826,14 +812,12 @@ function buildMedianBreakDiscs(graph: Graph): Paths {
 }
 
 // Intersection trims already stop medians short of 3+ way nodes; discs are
-// only needed where two different road types meet end-to-end.
+// only needed where two different cross-sections meet end-to-end.
 function isMedianBreakNode(graph: Graph, node: Node): boolean {
 	if (node.connectedSegments.length !== 2) return false;
 
-	const templates = node.connectedSegments.map(
-		(segmentId) => graph.segments.get(segmentId)?.laneTemplateId
-	);
-	return templates[0] !== templates[1];
+	const keys = node.connectedSegments.map((segmentId) => graph.segments.get(segmentId)?.lanesKey);
+	return keys[0] !== keys[1];
 }
 
 function buildDiscPath(cx: number, cy: number, radius: number): Path {
@@ -886,10 +870,7 @@ function buildJunctionDiscs(graph: Graph): Paths {
 		for (const segmentId of node.connectedSegments) {
 			const segment = graph.segments.get(segmentId);
 			if (!segment) continue;
-			const template = getLaneTemplate(segment.laneTemplateId);
-			if (template) {
-				maxWidth = Math.max(maxWidth, getTotalWidth(template));
-			}
+			maxWidth = Math.max(maxWidth, segment.totalWidth);
 		}
 
 		if (maxWidth > 0) {
@@ -1060,10 +1041,8 @@ export function getMedianBreakTrim(graph: Graph, node: Node): number {
 	for (const segmentId of node.connectedSegments) {
 		const segment = graph.segments.get(segmentId);
 		if (!segment) continue;
-		const template = getLaneTemplate(segment.laneTemplateId);
-		if (!template) continue;
 
-		for (const interval of getLaneIntervals(template)) {
+		for (const interval of getLaneIntervals(segment.lanes)) {
 			if (interval.laneType !== 'road') continue;
 			maxRoadExtent = Math.max(maxRoadExtent, Math.abs(interval.start), Math.abs(interval.end));
 		}
@@ -1095,19 +1074,13 @@ export function buildNodeLayers(
 	}
 	if (allBands.length === 0) return [];
 
-	// The sidewalk layer doubles as the junction's full pavement plate, and
-	// the casing is its rim — same layering trick as segment ribbons.
+	// The sidewalk layer doubles as the junction's full pavement plate — same
+	// layering trick as segment ribbons.
 	const plate = unionPaths(allBands);
 
 	const layers: RoadLayer[] = [];
-	const casingPolygons = pathsToPolygons(offsetPaths(plate, CASING_WIDTH));
-	if (casingPolygons.length > 0) {
-		layers.push({ id: 'casing', polygons: casingPolygons });
-	}
 
 	for (const layerId of LAYER_ORDER) {
-		if (layerId === 'casing') continue;
-
 		let paths: Paths;
 		if (layerId === 'sidewalk') {
 			paths = plate;

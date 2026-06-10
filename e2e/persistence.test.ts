@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test';
 
 const STORAGE_KEY = 'citynista-graph-v2';
 
-test.describe('Three.js Editor', () => {
+test.describe('Persistence', () => {
 	test.beforeEach(async ({ page }) => {
 		await page.goto('/');
 		await page.evaluate((key) => localStorage.removeItem(key), STORAGE_KEY);
@@ -32,17 +32,11 @@ test.describe('Three.js Editor', () => {
 		expect(savedData.nodes.length).toBe(3);
 		expect(savedData.segments.length).toBe(2);
 
-		// Take screenshot before reload
-		await page.screenshot({ path: 'e2e/screenshots/before-reload.png' });
-
 		// Reload the page
 		await page.reload();
 
 		// Wait for canvas to appear after reload
 		await expect(page.locator('canvas')).toBeVisible();
-
-		// Take screenshot after reload
-		await page.screenshot({ path: 'e2e/screenshots/after-reload.png' });
 
 		// Verify data is still in localStorage
 		const loadedData = await page.evaluate((key) => {
@@ -64,9 +58,6 @@ test.describe('Three.js Editor', () => {
 		await canvas.click({ position: { x: 500, y: 300 }, force: true });
 		await page.keyboard.press('Escape');
 
-		// Take screenshot of straight segment
-		await page.screenshot({ path: 'e2e/screenshots/curved-before.png' });
-
 		// Enter select mode
 		await page.locator('button').nth(1).click();
 
@@ -79,7 +70,6 @@ test.describe('Three.js Editor', () => {
 			return data ? JSON.parse(data) : null;
 		}, STORAGE_KEY);
 
-		console.log('Before curve:', JSON.stringify(beforeCurve, null, 2));
 		expect(beforeCurve.segments.length).toBe(1);
 
 		// The control point (red circle) should now be visible at the center of the segment
@@ -89,16 +79,12 @@ test.describe('Three.js Editor', () => {
 		await page.mouse.move(350, 150);
 		await page.mouse.up();
 
-		// Take screenshot after curving
-		await page.screenshot({ path: 'e2e/screenshots/curved-after.png' });
-
 		// Verify the segment still exists and has control point
 		const afterCurve = await page.evaluate((key) => {
 			const data = localStorage.getItem(key);
 			return data ? JSON.parse(data) : null;
 		}, STORAGE_KEY);
 
-		console.log('After curve:', JSON.stringify(afterCurve, null, 2));
 		expect(afterCurve.segments.length).toBe(1);
 
 		// Control point should now be set (segment was curved)

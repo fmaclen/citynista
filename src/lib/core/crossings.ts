@@ -187,16 +187,17 @@ export function splitSegment(graph: Graph, segment: Segment, t: number, nodeId: 
 
 	const startNodeId = segment.startNodeId;
 	const endNodeId = segment.endNodeId;
-	const templateId = segment.laneTemplateId;
+	const leftLanes = segment.cloneLanes();
+	const rightLanes = segment.cloneLanes();
 
 	graph.deleteSegment(segment.id);
 
-	const left = graph.createSegment(startNodeId, nodeId, templateId);
+	const left = graph.createSegment(startNodeId, nodeId, leftLanes);
 	if (leftControl) {
 		left.setControlPoint(leftControl.x, leftControl.y);
 	}
 
-	const right = graph.createSegment(nodeId, endNodeId, templateId);
+	const right = graph.createSegment(nodeId, endNodeId, rightLanes);
 	if (rightControl) {
 		right.setControlPoint(rightControl.x, rightControl.y);
 	}
