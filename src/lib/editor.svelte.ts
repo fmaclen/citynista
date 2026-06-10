@@ -133,9 +133,6 @@ export class Editor {
 		this.setHoveredSegment(null);
 		this.modeHandlers = null;
 
-		// In select mode nodes stay hidden until hovered or selected.
-		this.nodeRenderer.setAllVisible(mode === 'draw');
-
 		if (mode === 'draw') {
 			this.modeHandlers = setupDrawMode(this);
 		} else {

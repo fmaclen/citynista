@@ -19,7 +19,6 @@ export class NodeRenderer {
 	private radii = new Map<string, number>();
 	private selectedNodes = new Set<string>();
 	private hoveredNode: string | null = null;
-	private visible = false;
 	private revealed = new Set<string>();
 
 	constructor(scene: THREE.Scene) {
@@ -42,7 +41,7 @@ export class NodeRenderer {
 		mesh.rotation.x = -Math.PI / 2;
 		mesh.position.set(node.x, NODE_Y_OFFSET, node.y);
 		mesh.userData = { type: 'node', id: node.id };
-		mesh.visible = this.visible || this.revealed.has(node.id);
+		mesh.visible = this.revealed.has(node.id);
 
 		this.scene.add(mesh);
 		this.meshes.set(node.id, mesh);
@@ -120,15 +119,8 @@ export class NodeRenderer {
 		);
 	}
 
-	setAllVisible(visible: boolean) {
-		this.visible = visible;
-		for (const nodeId of this.meshes.keys()) {
-			this.applyVisibility(nodeId);
-		}
-	}
-
-	// Nodes that stay visible even while the renderer as a whole is hidden,
-	// e.g. selection endpoints and the hovered node in select mode.
+	// Nodes are hidden by default; only revealed ones render — selection
+	// endpoints and whatever is under the cursor.
 	setRevealed(nodeIds: ReadonlySet<string>) {
 		for (const nodeId of this.revealed) {
 			if (!nodeIds.has(nodeId)) {
@@ -147,7 +139,7 @@ export class NodeRenderer {
 	private applyVisibility(nodeId: string) {
 		const mesh = this.meshes.get(nodeId);
 		if (mesh) {
-			mesh.visible = this.visible || this.revealed.has(nodeId);
+			mesh.visible = this.revealed.has(nodeId);
 		}
 	}
 
