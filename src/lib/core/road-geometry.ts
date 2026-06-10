@@ -91,11 +91,10 @@ export function buildRoadLayers(graph: Graph): RoadLayer[] {
 		if (isPatchNode(graph, node)) {
 			addIntersection(graph, node, centerlines, bandsByType);
 		} else {
-			addNodeJoins(graph, node, bandsByType);
+			addNodeJoins(graph, node, centerlines, bandsByType);
 		}
 	}
 
-	const medianBreakDiscs = buildMedianBreakDiscs(graph);
 	const junctionDiscs = buildJunctionDiscs(graph);
 
 	const allBands: Paths = [];
@@ -134,11 +133,10 @@ export function buildRoadLayers(graph: Graph): RoadLayer[] {
 
 	const medianBands = bandsByType.get('median');
 	if (medianBands && medianBands.length > 0) {
-		let medianPaths = applyCurbRounding(unionPaths(medianBands), CURB_RADIUS.median, junctionDiscs);
-		if (medianBreakDiscs.length > 0) {
-			medianPaths = subtractPaths(medianPaths, medianBreakDiscs);
-		}
-		layerPaths.set('median', medianPaths);
+		layerPaths.set(
+			'median',
+			applyCurbRounding(unionPaths(medianBands), CURB_RADIUS.median, junctionDiscs)
+		);
 	}
 
 	const layers: RoadLayer[] = [];
@@ -202,40 +200,108 @@ function isPatchNode(graph: Graph, node: Node): boolean {
 	return dot > CORNER_PATCH_MIN_DOT;
 }
 
-// At patch nodes every road stops short of the node: far enough back to
-// clear the widest crossing road, plus a fixed gap.
+// Shallowest crossing angle the trim math uses: anything flatter is treated
+// as this, so near-tangent arms don't trim back across the whole map.
+const MIN_CROSSING_SIN = 0.15;
+
+// Where two different cross-sections continue into each other, both pull
+// back from the node and the gap becomes a tapered transition piece. The
+// taper length scales with how much the width changes.
+const TRANSITION_TAPER = 1.5;
+const TRANSITION_MIN_HALF = 2;
+const TRANSITION_MAX_HALF = 12;
+
+// A 2-segment continuation node joining two different cross-sections —
+// rendered as a tapered morph between the two profiles.
+function isTransitionNode(graph: Graph, node: Node): boolean {
+	if (node.connectedSegments.length !== 2 || isPatchNode(graph, node)) return false;
+
+	const [a, b] = node.connectedSegments.map((segmentId) => graph.segments.get(segmentId));
+	if (!a || !b || a.lanes.length === 0 || b.lanes.length === 0) return false;
+	return a.lanesKey !== b.lanesKey;
+}
+
+// At patch nodes every road stops short of the node: far enough back that
+// its mouth clears every crossing road's edge, plus a fixed gap. For arms
+// meeting at a shallow angle the pullback grows with 1/sin so the mouth
+// actually exits the other road's corridor — but only for arms no wider
+// than the one they're clearing, so a major road never yields to a narrow
+// shallow ramp or path.
 export function computeIntersectionTrims(graph: Graph): Map<string, SegmentTrim> {
 	const trims = new Map<string, SegmentTrim>();
 
+	const applyTrim = (segmentId: string, atNode: Node, trim: number) => {
+		const segment = graph.segments.get(segmentId);
+		if (!segment) return;
+
+		const existing = trims.get(segmentId) ?? { start: 0, end: 0 };
+		if (segment.startNodeId === atNode.id) {
+			existing.start = Math.max(existing.start, trim);
+		}
+		if (segment.endNodeId === atNode.id) {
+			existing.end = Math.max(existing.end, trim);
+		}
+		trims.set(segmentId, existing);
+	};
+
 	for (const node of graph.nodes.values()) {
+		if (isTransitionNode(graph, node)) {
+			const [a, b] = node.connectedSegments.map((segmentId) => graph.segments.get(segmentId)!);
+			const halfLength = Math.min(
+				TRANSITION_MAX_HALF,
+				Math.max(
+					TRANSITION_MIN_HALF,
+					(Math.abs(a.totalWidth - b.totalWidth) / 2) * TRANSITION_TAPER
+				)
+			);
+			applyTrim(a.id, node, halfLength);
+			applyTrim(b.id, node, halfLength);
+			continue;
+		}
+
 		if (!isPatchNode(graph, node)) continue;
 
-		const halfWidths = new Map<string, number>();
+		interface TrimArm {
+			segmentId: string;
+			halfWidth: number;
+			outward: Point;
+		}
+		const arms: TrimArm[] = [];
 		for (const segmentId of node.connectedSegments) {
 			const segment = graph.segments.get(segmentId);
 			if (!segment || segment.lanes.length === 0) continue;
-			halfWidths.set(segmentId, segment.totalWidth / 2);
+
+			const startNode = graph.nodes.get(segment.startNodeId);
+			const endNode = graph.nodes.get(segment.endNodeId);
+			if (!startNode || !endNode) continue;
+
+			const isStart = segment.startNodeId === node.id;
+			const tangent = getSegmentTangentAtNode(segment, startNode, endNode, isStart);
+			arms.push({
+				segmentId,
+				halfWidth: segment.totalWidth / 2,
+				outward: isStart ? tangent : { x: -tangent.x, y: -tangent.y }
+			});
 		}
 
-		for (const segmentId of node.connectedSegments) {
-			const segment = graph.segments.get(segmentId);
-			if (!segment) continue;
+		for (const arm of arms) {
+			let trim = 0;
+			for (const other of arms) {
+				if (other.segmentId === arm.segmentId) continue;
 
-			let maxOtherHalfWidth = 0;
-			for (const [otherId, halfWidth] of halfWidths) {
-				if (otherId === segmentId) continue;
-				maxOtherHalfWidth = Math.max(maxOtherHalfWidth, halfWidth);
+				const cos = arm.outward.x * other.outward.x + arm.outward.y * other.outward.y;
+				let required = other.halfWidth + INTERSECTION_GAP;
+				if (cos > 0 && arm.halfWidth <= other.halfWidth + 0.01) {
+					const sin = Math.max(
+						Math.abs(arm.outward.x * other.outward.y - arm.outward.y * other.outward.x),
+						MIN_CROSSING_SIN
+					);
+					required = (other.halfWidth + INTERSECTION_GAP + arm.halfWidth * cos) / sin;
+				}
+				trim = Math.max(trim, required);
 			}
 
-			const trim = maxOtherHalfWidth + INTERSECTION_GAP;
-			const existing = trims.get(segmentId) ?? { start: 0, end: 0 };
-			if (segment.startNodeId === node.id) {
-				existing.start = Math.max(existing.start, trim);
-			}
-			if (segment.endNodeId === node.id) {
-				existing.end = Math.max(existing.end, trim);
-			}
-			trims.set(segmentId, existing);
+			applyTrim(arm.segmentId, node, trim);
 		}
 	}
 
@@ -379,6 +445,7 @@ function buildBandPath(centerline: CenterlineSample[], start: number, end: numbe
 interface NodeArm {
 	normal: Point;
 	outward: Point;
+	startsHere: boolean;
 	lanes: Lane[];
 	lanesKey: string;
 }
@@ -389,7 +456,19 @@ const WEDGE_ANGLE_STEP = Math.PI / 16;
 // Bands butt-end exactly at their nodes, which leaves a wedge-shaped notch on
 // the outer side of every bend. Fill each lane layer's swept cross-section
 // between adjacent segments — the polygon equivalent of a round line join.
-function addNodeJoins(graph: Graph, node: Node, bandsByType: Map<LaneType, Paths>) {
+// Nodes joining two different cross-sections get a tapered transition piece
+// between the trimmed mouths instead.
+function addNodeJoins(
+	graph: Graph,
+	node: Node,
+	centerlines: Map<string, CenterlineSample[]>,
+	bandsByType: Map<LaneType, Paths>
+) {
+	if (isTransitionNode(graph, node)) {
+		addTransition(graph, node, centerlines, bandsByType);
+		return;
+	}
+
 	const arms = collectNodeArms(graph, node);
 	if (arms.length < 2) return;
 
@@ -402,73 +481,167 @@ function addNodeJoins(graph: Graph, node: Node, bandsByType: Map<LaneType, Paths
 		const armA = arms[i];
 		const armB = arms[(i + 1) % arms.length];
 
-		let normalB = armB.normal;
-		if (armA.normal.x * normalB.x + armA.normal.y * normalB.y < 0) {
-			normalB = { x: -normalB.x, y: -normalB.y };
-		}
+		// Frames continue head-to-tail only when one segment ends here and the
+		// other starts here; otherwise armB's frame is mirrored, so both its
+		// normal and its interval list flip.
+		const flipped = armA.startsHere === armB.startsHere;
+		const normalB = flipped ? { x: -armB.normal.x, y: -armB.normal.y } : armB.normal;
 
 		const rotation = rotationBetween(armA.normal, normalB);
 		if (Math.abs(rotation) < MIN_JOIN_ANGLE) continue;
 
 		const dirs = sampleArcDirections(armA.normal, rotation);
 
-		if (armA.lanesKey === armB.lanesKey) {
-			const intervalsA = getLaneIntervals(armA.lanes);
-			const intervalsB = getLaneIntervals(armB.lanes);
-			for (let k = 0; k < intervalsA.length; k++) {
-				const bands = getOrCreateBands(bandsByType, intervalsA[k].laneType);
-				addWedgePieces(bands, center, dirs, intervalsA[k], intervalsB[k]);
-			}
-		} else {
-			// Different cross-sections meeting: interpolate between the two
-			// — pavement out to each side's sidewalk, and the sidewalk rings
-			// joined to each other.
-			const profileA = getJoinProfile(armA.lanes);
-			const profileB = getJoinProfile(armB.lanes);
-
-			const roadBands = getOrCreateBands(bandsByType, 'road');
-			addWedgePieces(
-				roadBands,
-				center,
-				dirs,
-				{ start: -profileA.sidewalkInner, end: profileA.sidewalkInner },
-				{ start: -profileB.sidewalkInner, end: profileB.sidewalkInner }
-			);
-
-			if (
-				profileA.sidewalkOuter > profileA.sidewalkInner ||
-				profileB.sidewalkOuter > profileB.sidewalkInner
-			) {
-				const sidewalkBands = getOrCreateBands(bandsByType, 'sidewalk');
-				addWedgePieces(
-					sidewalkBands,
-					center,
-					dirs,
-					{ start: profileA.sidewalkInner, end: profileA.sidewalkOuter },
-					{ start: profileB.sidewalkInner, end: profileB.sidewalkOuter }
-				);
-				addWedgePieces(
-					sidewalkBands,
-					center,
-					dirs,
-					{ start: -profileA.sidewalkOuter, end: -profileA.sidewalkInner },
-					{ start: -profileB.sidewalkOuter, end: -profileB.sidewalkInner }
-				);
-			}
+		const intervalsA = getLaneIntervals(armA.lanes);
+		const intervalsB = getLaneIntervals(armB.lanes);
+		for (let k = 0; k < intervalsA.length; k++) {
+			const raw = flipped ? intervalsB[intervalsB.length - 1 - k] : intervalsB[k];
+			const counterpart = flipped
+				? { laneType: raw.laneType, start: -raw.end, end: -raw.start }
+				: raw;
+			const bands = getOrCreateBands(bandsByType, intervalsA[k].laneType);
+			addWedgePieces(bands, center, dirs, intervalsA[k], counterpart);
 		}
 	}
+}
+
+// A transition node: both segments stop short of the node and the gap is a
+// ruled taper between their cross-sections. The pavement plate and roadway
+// morph from one profile to the other; grass and medians cross the gap only
+// where the matching side carries the same strip — otherwise they stop
+// square at their own mouth and the taper paves over.
+function addTransition(
+	graph: Graph,
+	node: Node,
+	centerlines: Map<string, CenterlineSample[]>,
+	bandsByType: Map<LaneType, Paths>
+) {
+	interface TransitionArm {
+		stop: Point;
+		posDir: Point;
+		startsHere: boolean;
+		profile: ArmProfile;
+	}
+
+	const arms: TransitionArm[] = [];
+	for (const segmentId of node.connectedSegments) {
+		const segment = graph.segments.get(segmentId);
+		if (!segment || segment.lanes.length === 0) continue;
+
+		const centerline = centerlines.get(segmentId);
+		if (!centerline || centerline.length < 2) continue;
+
+		const isStart = segment.startNodeId === node.id;
+		const stopSample = isStart ? centerline[0] : centerline[centerline.length - 1];
+
+		arms.push({
+			stop: { x: stopSample.x, y: stopSample.y },
+			posDir: { x: stopSample.normalX, y: stopSample.normalY },
+			startsHere: isStart,
+			profile: getArmProfile(segment.lanes)
+		});
+	}
+	if (arms.length !== 2) return;
+
+	const [a, b] = arms;
+	// Frames continue head-to-tail only when one segment ends here and the
+	// other starts here; otherwise mirror b's frame so world sides match up.
+	const flipped = a.startsHere === b.startsHere;
+	const dirB = flipped ? { x: -b.posDir.x, y: -b.posDir.y } : b.posDir;
+	const positiveB = flipped ? b.profile.negative : b.profile.positive;
+	const negativeB = flipped ? b.profile.positive : b.profile.negative;
+
+	// Ruled quad between the two stop lines; offsets are signed
+	// cross-section positions.
+	const quad = (laneType: LaneType, a1: number, a2: number, b1: number, b2: number) => {
+		if (Math.abs(a2 - a1) < BAND_EPSILON && Math.abs(b2 - b1) < BAND_EPSILON) return;
+
+		const path: Path = [
+			toClipperPoint(a.stop.x + a.posDir.x * a1, a.stop.y + a.posDir.y * a1),
+			toClipperPoint(a.stop.x + a.posDir.x * a2, a.stop.y + a.posDir.y * a2),
+			toClipperPoint(b.stop.x + dirB.x * b2, b.stop.y + dirB.y * b2),
+			toClipperPoint(b.stop.x + dirB.x * b1, b.stop.y + dirB.y * b1)
+		];
+		getOrCreateBands(bandsByType, laneType).push(normalizeWinding(path));
+	};
+
+	quad(
+		'sidewalk',
+		-a.profile.halfWidth,
+		a.profile.halfWidth,
+		-b.profile.halfWidth,
+		b.profile.halfWidth
+	);
+
+	// The roadway leaves the center open only while a grass center runs
+	// through the whole transition (grass renders under asphalt). Medians
+	// draw on top of the roadway, so everywhere else one full-span quad
+	// paves the center — a median that stops at its mouth ends square
+	// against asphalt instead of leaving a sliver of plate behind.
+	const centerGrass = (side: SideProfile) => hasBand(side.grass) && side.grass.inner < BAND_EPSILON;
+	const grassCenterContinues =
+		centerGrass(a.profile.positive) &&
+		centerGrass(a.profile.negative) &&
+		centerGrass(positiveB) &&
+		centerGrass(negativeB);
+
+	if (grassCenterContinues) {
+		quad(
+			'road',
+			a.profile.positive.roadInner,
+			a.profile.positive.roadEdge,
+			positiveB.roadInner,
+			positiveB.roadEdge
+		);
+		quad(
+			'road',
+			-a.profile.negative.roadEdge,
+			-a.profile.negative.roadInner,
+			-negativeB.roadEdge,
+			-negativeB.roadInner
+		);
+	} else {
+		quad(
+			'road',
+			-a.profile.negative.roadEdge,
+			a.profile.positive.roadEdge,
+			-negativeB.roadEdge,
+			positiveB.roadEdge
+		);
+	}
+
+	const matched = (laneType: LaneType, bandA: SideBand, bandB: SideBand, side: 1 | -1) => {
+		if (!hasBand(bandA) || !hasBand(bandB)) return;
+		quad(laneType, bandA.inner * side, bandA.outer * side, bandB.inner * side, bandB.outer * side);
+	};
+	matched('grass', a.profile.positive.grass, positiveB.grass, 1);
+	matched('grass', a.profile.negative.grass, negativeB.grass, -1);
+	matched('median', a.profile.positive.median, positiveB.median, 1);
+	matched('median', a.profile.negative.median, negativeB.median, -1);
 }
 
 interface IntersectionArm {
 	stop: Point;
 	into: Point;
+	// perp(into) — points toward the corner shared with the next arm in the
+	// sorted order; the previous arm's corner sits at -side.
+	side: Point;
+	// World direction of the segment's positive-offset side.
+	crossDir: Point;
+	startsHere: boolean;
+	lanes: Lane[];
+	lanesKey: string;
 	halfWidth: number;
-	roadHalf: number;
+	hasRoad: boolean;
+	toward: SideProfile;
+	away: SideProfile;
 }
 
 // A patch node is built explicitly: every road already stops at its trimmed
-// stop line; a single pavement patch spans all the stop lines, and sidewalk
-// bands curve around the corners between adjacent arms.
+// stop line; an asphalt patch connects the road-bearing mouths, and sidewalk
+// bands wrap every corner between adjacent arms, blending between their real
+// sidewalk widths. Path arms join the junction through the sidewalk ring
+// rather than the asphalt patch.
 function addIntersection(
 	graph: Graph,
 	node: Node,
@@ -496,71 +669,120 @@ function addIntersection(
 		});
 		if (!into) continue;
 
-		const profile = getJoinProfile(segment.lanes);
+		// perp(into) lands on the segment's positive-offset side when the
+		// segment starts here, on the negative side when it ends here.
+		const profile = getArmProfile(segment.lanes);
+		const side = { x: into.y, y: -into.x };
 		arms.push({
 			stop: { x: stopSample.x, y: stopSample.y },
 			into,
-			halfWidth: segment.totalWidth / 2,
-			roadHalf: profile.sidewalkInner
+			side,
+			crossDir: isStart ? side : { x: -side.x, y: -side.y },
+			startsHere: isStart,
+			lanes: segment.lanes,
+			lanesKey: segment.lanesKey,
+			halfWidth: profile.halfWidth,
+			hasRoad: profile.hasRoad,
+			toward: isStart ? profile.positive : profile.negative,
+			away: isStart ? profile.negative : profile.positive
 		});
 	}
 
 	if (arms.length < 2) return;
 
+	// A sharp corner of one road type keeps its full cross-section: every
+	// lane turns the corner instead of stopping at a junction patch.
+	if (arms.length === 2 && arms[0].lanesKey === arms[1].lanesKey) {
+		addCornerBands(arms[0], arms[1], bandsByType);
+		return;
+	}
+
 	arms.sort((a, b) => Math.atan2(-a.into.y, -a.into.x) - Math.atan2(-b.into.y, -b.into.x));
 
-	const patch: Point[] = [];
-	const roadBands = getOrCreateBands(bandsByType, 'road');
+	// Full pavement plate: every arm's stop-line mouth connected by the outer
+	// corner curves. One solid polygon seals the junction interior gray by
+	// construction, whatever mix of roads and paths meets here; the asphalt
+	// patch and medians draw on top of it. Grass never enters a junction —
+	// verges stop square at their stop lines and the corners are pavement.
 	const sidewalkBands = getOrCreateBands(bandsByType, 'sidewalk');
-
+	const plate: Point[] = [];
 	for (let i = 0; i < arms.length; i++) {
 		const armA = arms[i];
 		const armB = arms[(i + 1) % arms.length];
 
-		// perp(outward) — the side of each arm facing this corner.
-		const sideA = { x: armA.into.y, y: -armA.into.x };
-		const sideB = { x: armB.into.y, y: -armB.into.x };
+		plate.push(offsetPoint(armA.stop, armA.side, -armA.halfWidth));
+		plate.push(
+			...sampleCornerCurve(
+				offsetPoint(armA.stop, armA.side, armA.halfWidth),
+				armA.into,
+				offsetPoint(armB.stop, armB.side, -armB.halfWidth),
+				armB.into
+			)
+		);
+	}
+	sidewalkBands.push(normalizeWinding(plate.map((point) => toClipperPoint(point.x, point.y))));
 
-		const innerA = {
-			x: armA.stop.x + sideA.x * armA.roadHalf,
-			y: armA.stop.y + sideA.y * armA.roadHalf
-		};
-		const innerB = {
-			x: armB.stop.x - sideB.x * armB.roadHalf,
-			y: armB.stop.y - sideB.y * armB.roadHalf
-		};
-		const innerCurve = sampleCornerCurve(innerA, armA.into, innerB, armB.into);
+	const roadArms = arms.filter((arm) => arm.hasRoad);
+	if (roadArms.length < 2) return;
 
-		if (armA.halfWidth - armA.roadHalf > 0.01 || armB.halfWidth - armB.roadHalf > 0.01) {
-			const outerA = {
-				x: armA.stop.x + sideA.x * armA.halfWidth,
-				y: armA.stop.y + sideA.y * armA.halfWidth
-			};
-			const outerB = {
-				x: armB.stop.x - sideB.x * armB.halfWidth,
-				y: armB.stop.y - sideB.y * armB.halfWidth
-			};
-			const outerCurve = sampleCornerCurve(outerA, armA.into, outerB, armB.into);
-
-			const band: Path = [];
-			for (const point of outerCurve) {
-				band.push(toClipperPoint(point.x, point.y));
-			}
-			for (let k = innerCurve.length - 1; k >= 0; k--) {
-				band.push(toClipperPoint(innerCurve[k].x, innerCurve[k].y));
-			}
-			sidewalkBands.push(normalizeWinding(band));
-		}
+	const patch: Point[] = [];
+	for (let i = 0; i < roadArms.length; i++) {
+		const armA = roadArms[i];
+		const armB = roadArms[(i + 1) % roadArms.length];
 
 		// Stop-line edge of arm A, then the corner curve over to arm B.
-		patch.push({
-			x: armA.stop.x - sideA.x * armA.roadHalf,
-			y: armA.stop.y - sideA.y * armA.roadHalf
-		});
-		patch.push(...innerCurve);
+		patch.push(offsetPoint(armA.stop, armA.side, -armA.away.roadEdge));
+		patch.push(
+			...sampleCornerCurve(
+				offsetPoint(armA.stop, armA.side, armA.toward.roadEdge),
+				armA.into,
+				offsetPoint(armB.stop, armB.side, -armB.away.roadEdge),
+				armB.into
+			)
+		);
 	}
 
+	const roadBands = getOrCreateBands(bandsByType, 'road');
 	roadBands.push(normalizeWinding(patch.map((point) => toClipperPoint(point.x, point.y))));
+}
+
+// Two arms of the same road type meeting at a sharp corner: every lane
+// interval crosses the corner as its own band between matched edge curves,
+// so the full cross-section (median and verges included) turns the bend.
+// Adjacent intervals share edge curves, so the bands tile without gaps.
+function addCornerBands(
+	armA: IntersectionArm,
+	armB: IntersectionArm,
+	bandsByType: Map<LaneType, Paths>
+) {
+	// Frames continue head-to-tail only when one segment ends here and the
+	// other starts here; otherwise mirror armB so world sides match up. This
+	// is topological on purpose — at a right angle the two positive sides
+	// are perpendicular and no geometric test can tell the cases apart.
+	const flipped = armA.startsHere === armB.startsHere;
+	const dirB = flipped ? { x: -armB.crossDir.x, y: -armB.crossDir.y } : armB.crossDir;
+
+	const edgeCurve = (offset: number) =>
+		sampleCornerCurve(
+			offsetPoint(armA.stop, armA.crossDir, offset),
+			armA.into,
+			offsetPoint(armB.stop, dirB, offset),
+			armB.into
+		);
+
+	for (const interval of getLaneIntervals(armA.lanes)) {
+		const low = edgeCurve(interval.start);
+		const high = edgeCurve(interval.end);
+
+		const band: Path = [];
+		for (const point of high) {
+			band.push(toClipperPoint(point.x, point.y));
+		}
+		for (let k = low.length - 1; k >= 0; k--) {
+			band.push(toClipperPoint(low[k].x, low[k].y));
+		}
+		getOrCreateBands(bandsByType, interval.laneType).push(normalizeWinding(band));
+	}
 }
 
 // Corner between two stop-line edge points: a quadratic curve whose control
@@ -576,7 +798,9 @@ function sampleCornerCurve(from: Point, intoA: Point, to: Point, intoB: Point): 
 	if (Math.abs(cross) > 0.001) {
 		const t = (dx * intoB.y - dy * intoB.x) / cross;
 		const u = (dx * intoA.y - dy * intoA.x) / cross;
-		const limit = distance * 4;
+		// Keep the control point near the chord: shallow-angle arms put the
+		// edge intersection far away, which balloons the curve across the map.
+		const limit = distance * 1.5;
 		if (t > 0 && u > 0 && t < limit && u < limit) {
 			control = { x: from.x + intoA.x * t, y: from.y + intoA.y * t };
 		}
@@ -619,6 +843,7 @@ function collectNodeArms(graph: Graph, node: Node): NodeArm[] {
 		arms.push({
 			normal: { x: -tangent.y, y: tangent.x },
 			outward: isStart ? tangent : { x: -tangent.x, y: -tangent.y },
+			startsHere: isStart,
 			lanes: segment.lanes,
 			lanesKey: segment.lanesKey
 		});
@@ -658,21 +883,99 @@ function getSegmentTangentAtNode(
 	return { x: 1, y: 0 };
 }
 
-// Radial extents used when joining two different cross-sections: everything
-// inside the outermost sidewalk strip is treated as pavement.
-function getJoinProfile(lanes: Lane[]): { sidewalkInner: number; sidewalkOuter: number } {
+// Per-side cross-section summary used to join arms at nodes: how far the
+// roadway reaches and where the outermost sidewalk and grass strips sit,
+// independently for each side of the centerline (one-way ramps and paths
+// are asymmetric or have no roadway at all).
+interface SideBand {
+	inner: number;
+	outer: number;
+}
+
+interface SideProfile {
+	roadInner: number;
+	roadEdge: number;
+	sidewalk: SideBand;
+	grass: SideBand;
+	median: SideBand;
+}
+
+interface ArmProfile {
+	halfWidth: number;
+	hasRoad: boolean;
+	positive: SideProfile;
+	negative: SideProfile;
+}
+
+const BAND_EPSILON = 0.01;
+
+function hasBand(band: SideBand): boolean {
+	return band.outer - band.inner > BAND_EPSILON;
+}
+
+function getArmProfile(lanes: Lane[]): ArmProfile {
 	const halfWidth = getTotalWidth(lanes) / 2;
-	let sidewalkInner = halfWidth;
+	const positive: SideProfile = {
+		roadInner: Infinity,
+		roadEdge: 0,
+		sidewalk: { inner: 0, outer: 0 },
+		grass: { inner: 0, outer: 0 },
+		median: { inner: 0, outer: 0 }
+	};
+	const negative: SideProfile = {
+		roadInner: Infinity,
+		roadEdge: 0,
+		sidewalk: { inner: 0, outer: 0 },
+		grass: { inner: 0, outer: 0 },
+		median: { inner: 0, outer: 0 }
+	};
+	let hasRoad = false;
 
 	for (const interval of getLaneIntervals(lanes)) {
-		if (interval.laneType !== 'sidewalk') continue;
-		const outerEdge = Math.max(Math.abs(interval.start), Math.abs(interval.end));
-		if (Math.abs(outerEdge - halfWidth) < 0.01) {
-			sidewalkInner = Math.min(Math.abs(interval.start), Math.abs(interval.end));
-		}
+		if (interval.laneType === 'road') hasRoad = true;
+		applyIntervalToSide(
+			positive,
+			interval.laneType,
+			Math.max(0, interval.start),
+			Math.max(0, interval.end)
+		);
+		applyIntervalToSide(
+			negative,
+			interval.laneType,
+			Math.max(0, -interval.end),
+			Math.max(0, -interval.start)
+		);
 	}
 
-	return { sidewalkInner, sidewalkOuter: halfWidth };
+	// Absent strips collapse to a zero-width band at the outer edge, which is
+	// where joins taper the other arm's strip out.
+	for (const side of [positive, negative]) {
+		if (!Number.isFinite(side.roadInner)) side.roadInner = 0;
+		if (!hasBand(side.sidewalk)) side.sidewalk = { inner: halfWidth, outer: halfWidth };
+		if (!hasBand(side.grass)) side.grass = { inner: halfWidth, outer: halfWidth };
+		if (!hasBand(side.median)) side.median = { inner: halfWidth, outer: halfWidth };
+	}
+
+	return { halfWidth, hasRoad, positive, negative };
+}
+
+function applyIntervalToSide(side: SideProfile, laneType: LaneType, inner: number, outer: number) {
+	if (outer - inner < BAND_EPSILON) return;
+
+	if (laneType === 'road') {
+		side.roadInner = Math.min(side.roadInner, inner);
+		side.roadEdge = Math.max(side.roadEdge, outer);
+	} else if (laneType === 'sidewalk' && outer > side.sidewalk.outer) {
+		side.sidewalk = { inner, outer };
+	} else if (laneType === 'grass' && outer > side.grass.outer) {
+		side.grass = { inner, outer };
+	} else if (laneType === 'median' && outer > side.median.outer) {
+		side.median = { inner, outer };
+	}
+}
+
+function offsetPoint(origin: Point, dir: Point, distance: number): Point {
+	return { x: origin.x + dir.x * distance, y: origin.y + dir.y * distance };
 }
 
 function getOrCreateBands(bandsByType: Map<LaneType, Paths>, laneType: LaneType): Paths {
@@ -782,42 +1085,6 @@ function normalizeWinding(path: Path): Path {
 		area += a.X * b.Y - b.X * a.Y;
 	}
 	return area < 0 ? path.reverse() : path;
-}
-
-// Medians (and grass verges) break where roads actually cross, but continue
-// through simple corner/continuation nodes of the same road type.
-function buildMedianBreakDiscs(graph: Graph): Paths {
-	const discs: Paths = [];
-
-	for (const node of graph.nodes.values()) {
-		if (!isMedianBreakNode(graph, node)) continue;
-
-		let maxRoadExtent = 0;
-		for (const segmentId of node.connectedSegments) {
-			const segment = graph.segments.get(segmentId);
-			if (!segment) continue;
-
-			for (const interval of getLaneIntervals(segment.lanes)) {
-				if (interval.laneType !== 'road') continue;
-				maxRoadExtent = Math.max(maxRoadExtent, Math.abs(interval.start), Math.abs(interval.end));
-			}
-		}
-
-		if (maxRoadExtent > 0) {
-			discs.push(buildDiscPath(node.x, node.y, maxRoadExtent + CURB_RADIUS.road));
-		}
-	}
-
-	return discs;
-}
-
-// Intersection trims already stop medians short of 3+ way nodes; discs are
-// only needed where two different cross-sections meet end-to-end.
-function isMedianBreakNode(graph: Graph, node: Node): boolean {
-	if (node.connectedSegments.length !== 2) return false;
-
-	const keys = node.connectedSegments.map((segmentId) => graph.segments.get(segmentId)?.lanesKey);
-	return keys[0] !== keys[1];
 }
 
 function buildDiscPath(cx: number, cy: number, radius: number): Path {
@@ -1032,23 +1299,14 @@ function toPoints(contour: Path): Point[] {
 	return contour.map((point) => ({ x: point.X / CLIPPER_SCALE, y: point.Y / CLIPPER_SCALE }));
 }
 
-// Extra shortening applied to a segment's median band where it meets a node
-// that breaks medians (two different road types meeting end-to-end).
-export function getMedianBreakTrim(graph: Graph, node: Node): number {
-	if (!isMedianBreakNode(graph, node)) return 0;
+// True where a node's two segments continue the same cross-section, so the
+// node piece carries every strip through (bend wedges or corner bands) and
+// segment strips can safely overlap into it.
+export function isContinuationNode(graph: Graph, node: Node): boolean {
+	if (node.connectedSegments.length !== 2) return false;
 
-	let maxRoadExtent = 0;
-	for (const segmentId of node.connectedSegments) {
-		const segment = graph.segments.get(segmentId);
-		if (!segment) continue;
-
-		for (const interval of getLaneIntervals(segment.lanes)) {
-			if (interval.laneType !== 'road') continue;
-			maxRoadExtent = Math.max(maxRoadExtent, Math.abs(interval.start), Math.abs(interval.end));
-		}
-	}
-
-	return maxRoadExtent > 0 ? maxRoadExtent + CURB_RADIUS.road : 0;
+	const keys = node.connectedSegments.map((segmentId) => graph.segments.get(segmentId)?.lanesKey);
+	return keys[0] !== undefined && keys[0] === keys[1];
 }
 
 // Geometry for a single node: the join wedges of a gentle bend or the
@@ -1065,7 +1323,7 @@ export function buildNodeLayers(
 	if (isPatchNode(graph, node)) {
 		addIntersection(graph, node, centerlines, bandsByType);
 	} else {
-		addNodeJoins(graph, node, bandsByType);
+		addNodeJoins(graph, node, centerlines, bandsByType);
 	}
 
 	const allBands: Paths = [];
@@ -1074,9 +1332,20 @@ export function buildNodeLayers(
 	}
 	if (allBands.length === 0) return [];
 
+	// Same dilate-erode sealing as the full build: without it, slivers
+	// between the patch, corner bands, and arm mouths leak the ground color.
+	let maxWidth = 0;
+	for (const segmentId of node.connectedSegments) {
+		const segment = graph.segments.get(segmentId);
+		if (!segment) continue;
+		maxWidth = Math.max(maxWidth, segment.totalWidth);
+	}
+	const discs: Paths =
+		maxWidth > 0 ? [buildDiscPath(node.x, node.y, maxWidth * JUNCTION_DISC_SCALE)] : [];
+
 	// The sidewalk layer doubles as the junction's full pavement plate — same
 	// layering trick as segment ribbons.
-	const plate = unionPaths(allBands);
+	const plate = applyCurbRounding(unionPaths(allBands), CURB_RADIUS.sidewalk, discs);
 
 	const layers: RoadLayer[] = [];
 
@@ -1087,7 +1356,7 @@ export function buildNodeLayers(
 		} else {
 			const bands = bandsByType.get(layerId);
 			if (!bands || bands.length === 0) continue;
-			paths = unionPaths(bands);
+			paths = applyCurbRounding(unionPaths(bands), CURB_RADIUS[layerId], discs);
 		}
 
 		const polygons = pathsToPolygons(paths);

@@ -4,9 +4,8 @@ import {
 	buildNodeLayers,
 	computeIntersectionTrims,
 	getLaneIntervals,
-	getMedianBreakTrim,
-	sampleTrimmedCenterline,
-	trimCenterline
+	isContinuationNode,
+	sampleTrimmedCenterline
 } from '../core/road-geometry';
 import type {
 	CenterlineSample,
@@ -105,8 +104,12 @@ export class RoadRenderer {
 			const endNode = graph.nodes.get(segment.endNodeId)!;
 			const joinStart = startNode.connectedSegments.length > 1;
 			const joinEnd = endNode.connectedSegments.length > 1;
-			const medianTrimStart = getMedianBreakTrim(graph, startNode);
-			const medianTrimEnd = getMedianBreakTrim(graph, endNode);
+			// At two-segment same-type nodes the node piece carries medians and
+			// grass through (bend wedges or corner bands), so those strips
+			// overlap it like the other layers; at junctions and transitions
+			// they must stop square at the stop line.
+			const continuityJoinStart = isContinuationNode(graph, startNode);
+			const continuityJoinEnd = isContinuationNode(graph, endNode);
 			const trim = trims.get(segment.id);
 
 			const key = `segment:${segment.id}`;
@@ -122,8 +125,8 @@ export class RoadRenderer {
 				trim?.end ?? 0,
 				joinStart,
 				joinEnd,
-				medianTrimStart,
-				medianTrimEnd
+				continuityJoinStart,
+				continuityJoinEnd
 			].join('|');
 
 			seen.add(key);
@@ -135,8 +138,8 @@ export class RoadRenderer {
 				samples,
 				joinStart,
 				joinEnd,
-				medianTrimStart,
-				medianTrimEnd,
+				continuityJoinStart,
+				continuityJoinEnd,
 				this.jitterFor(key)
 			);
 			this.rootGroup.add(group);
@@ -191,8 +194,8 @@ export class RoadRenderer {
 		samples: CenterlineSample[],
 		joinStart: boolean,
 		joinEnd: boolean,
-		medianTrimStart: number,
-		medianTrimEnd: number,
+		continuityJoinStart: boolean,
+		continuityJoinEnd: boolean,
 		jitter: number
 	): THREE.Group {
 		const group = new THREE.Group();
@@ -218,13 +221,18 @@ export class RoadRenderer {
 				continue;
 			}
 
-			let laneSamples = samples;
-			if (interval.laneType === 'median' && (medianTrimStart > 0 || medianTrimEnd > 0)) {
-				laneSamples = trimCenterline(samples, medianTrimStart, medianTrimEnd);
-				if (laneSamples.length < 2) continue;
-			}
+			// Grass and median strips only overlap into nodes that continue
+			// the cross-section; everywhere else they stop square.
 			group.add(
-				this.buildStrip(laneSamples, interval.start, interval.end, interval.laneType, 0, 0, jitter)
+				this.buildStrip(
+					samples,
+					interval.start,
+					interval.end,
+					interval.laneType,
+					continuityJoinStart ? JOIN_OVERLAP : 0,
+					continuityJoinEnd ? JOIN_OVERLAP : 0,
+					jitter
+				)
 			);
 		}
 
