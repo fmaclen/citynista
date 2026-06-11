@@ -5,15 +5,26 @@ import {
 	computeIntersectionTrims,
 	getLaneIntervals,
 	isContinuationNode,
-	sampleTrimmedCenterline
+	medianEndsAtNode,
+	sampleTrimmedCenterline,
+	transitionMorph,
+	trimCenterline
 } from '../core/road-geometry';
 import type {
 	CenterlineSample,
 	Point,
 	PolygonWithHoles,
 	RoadLayer,
-	RoadLayerId
+	RoadLayerId,
+	TransitionMorph
 } from '../core/road-geometry';
+
+// Per-end offset interpolation for a strip: from the node-side target
+// offsets back to the strip's own offsets over `length`.
+interface StripMorph {
+	start?: { length: number; offsetA: number; offsetB: number };
+	end?: { length: number; offsetA: number; offsetB: number };
+}
 import { getTotalWidth } from '../core/lane-template';
 import type { Lane } from '../core/types';
 
@@ -34,6 +45,10 @@ const LAYER_COLORS: Record<RoadLayerId, string> = {
 // Segment ribbons reach slightly into their node pieces so no hairline
 // cracks can open between them.
 const JOIN_OVERLAP = 0.5;
+// A terminating median pulls back from the stop line and ends in a rounded
+// nose: half a disc of the strip's own width, set back by a small gap.
+const MEDIAN_NOSE_GAP = 1.5;
+const MEDIAN_NOSE_SEGMENTS = 16;
 // Tiny per-piece elevation so coplanar pieces never z-fight; stays well
 // below the 0.01 gap between layers.
 const PIECE_JITTER_STEP = 0.0002;
@@ -110,6 +125,10 @@ export class RoadRenderer {
 			// they must stop square at the stop line.
 			const continuityJoinStart = isContinuationNode(graph, startNode);
 			const continuityJoinEnd = isContinuationNode(graph, endNode);
+			const noseStart = medianEndsAtNode(graph, startNode, segment.id);
+			const noseEnd = medianEndsAtNode(graph, endNode, segment.id);
+			const morphStart = transitionMorph(graph, startNode, segment.id);
+			const morphEnd = transitionMorph(graph, endNode, segment.id);
 			const trim = trims.get(segment.id);
 
 			const key = `segment:${segment.id}`;
@@ -126,7 +145,11 @@ export class RoadRenderer {
 				joinStart,
 				joinEnd,
 				continuityJoinStart,
-				continuityJoinEnd
+				continuityJoinEnd,
+				noseStart,
+				noseEnd,
+				morphStart?.key ?? '-',
+				morphEnd?.key ?? '-'
 			].join('|');
 
 			seen.add(key);
@@ -140,6 +163,10 @@ export class RoadRenderer {
 				joinEnd,
 				continuityJoinStart,
 				continuityJoinEnd,
+				noseStart,
+				noseEnd,
+				morphStart,
+				morphEnd,
 				this.jitterFor(key)
 			);
 			this.rootGroup.add(group);
@@ -196,6 +223,10 @@ export class RoadRenderer {
 		joinEnd: boolean,
 		continuityJoinStart: boolean,
 		continuityJoinEnd: boolean,
+		noseStart: boolean,
+		noseEnd: boolean,
+		morphStart: TransitionMorph | null,
+		morphEnd: TransitionMorph | null,
 		jitter: number
 	): THREE.Group {
 		const group = new THREE.Group();
@@ -205,38 +236,200 @@ export class RoadRenderer {
 		const startExt = joinStart ? JOIN_OVERLAP : 0;
 		const endExt = joinEnd ? JOIN_OVERLAP : 0;
 
+		// Morph zones at the two ends may not overlap each other; on short
+		// segments they shrink proportionally.
+		let total = 0;
+		for (let i = 1; i < samples.length; i++) {
+			total += Math.hypot(samples[i].x - samples[i - 1].x, samples[i].y - samples[i - 1].y);
+		}
+		let lengthStart = morphStart?.length ?? 0;
+		let lengthEnd = morphEnd?.length ?? 0;
+		if (lengthStart + lengthEnd > total) {
+			const scale = total / (lengthStart + lengthEnd);
+			lengthStart *= scale;
+			lengthEnd *= scale;
+		}
+
 		// Full-width pavement plate rendered as the sidewalk layer; the lane
 		// strips above carve out the visible sidewalk edges.
 		group.add(
-			this.buildStrip(samples, -halfWidth, halfWidth, 'sidewalk', startExt, endExt, jitter)
+			this.buildStrip(samples, -halfWidth, halfWidth, 'sidewalk', startExt, endExt, jitter, {
+				start: morphStart
+					? { length: lengthStart, offsetA: -morphStart.halfWidth, offsetB: morphStart.halfWidth }
+					: undefined,
+				end: morphEnd
+					? { length: lengthEnd, offsetA: -morphEnd.halfWidth, offsetB: morphEnd.halfWidth }
+					: undefined
+			})
 		);
 
-		for (const interval of getLaneIntervals(lanes)) {
+		const intervals = getLaneIntervals(lanes);
+		for (let k = 0; k < intervals.length; k++) {
+			const interval = intervals[k];
 			if (interval.laneType === 'sidewalk') continue;
+
+			const targetStart = morphStart ? morphStart.intervals[k] : undefined;
+			const targetEnd = morphEnd ? morphEnd.intervals[k] : undefined;
+			const stripMorph: StripMorph | undefined =
+				targetStart || targetEnd
+					? {
+							start: targetStart
+								? { length: lengthStart, offsetA: targetStart.start, offsetB: targetStart.end }
+								: undefined,
+							end: targetEnd
+								? { length: lengthEnd, offsetA: targetEnd.start, offsetB: targetEnd.end }
+								: undefined
+						}
+					: undefined;
 
 			if (interval.laneType === 'road') {
 				group.add(
-					this.buildStrip(samples, interval.start, interval.end, 'road', startExt, endExt, jitter)
+					this.buildStrip(
+						samples,
+						interval.start,
+						interval.end,
+						'road',
+						startExt,
+						endExt,
+						jitter,
+						stripMorph
+					)
 				);
 				continue;
 			}
 
-			// Grass and median strips only overlap into nodes that continue
-			// the cross-section; everywhere else they stop square.
+			// Terminating medians pull back and end in a rounded nose; the
+			// vacated stretch of the median column is paved over so the nose
+			// sits on roadway, not on bare plate. The fill still morphs with
+			// the roadway so it meets the other side's center at the blended
+			// width.
+			if (interval.laneType === 'median' && (noseStart || noseEnd)) {
+				const width = interval.end - interval.start;
+				const setback = MEDIAN_NOSE_GAP + width / 2;
+				const laneSamples = trimCenterline(samples, noseStart ? setback : 0, noseEnd ? setback : 0);
+				if (laneSamples.length < 2) continue;
+
+				group.add(
+					this.buildStrip(laneSamples, interval.start, interval.end, 'median', 0, 0, jitter)
+				);
+				const offsetCenter = (interval.start + interval.end) / 2;
+				if (noseStart) {
+					group.add(this.buildCap(laneSamples, 'start', offsetCenter, width / 2, jitter));
+					const fill = sliceCenterline(samples, 'start', setback + width / 2);
+					if (fill.length >= 2) {
+						group.add(
+							this.buildStrip(
+								fill,
+								interval.start,
+								interval.end,
+								'road',
+								startExt,
+								0,
+								jitter,
+								stripMorph?.start ? { start: stripMorph.start } : undefined
+							)
+						);
+					}
+				}
+				if (noseEnd) {
+					group.add(this.buildCap(laneSamples, 'end', offsetCenter, width / 2, jitter));
+					const fill = sliceCenterline(samples, 'end', setback + width / 2);
+					if (fill.length >= 2) {
+						group.add(
+							this.buildStrip(
+								fill,
+								interval.start,
+								interval.end,
+								'road',
+								0,
+								endExt,
+								jitter,
+								stripMorph?.end ? { end: stripMorph.end } : undefined
+							)
+						);
+					}
+				}
+				continue;
+			}
+
+			// A strip with no counterpart across the transition ends in a
+			// square cut where the morph zone begins — never a sliver.
+			const cutStart = morphStart && !targetStart ? lengthStart : 0;
+			const cutEnd = morphEnd && !targetEnd ? lengthEnd : 0;
+			let stripSamples = samples;
+			if (cutStart > 0 || cutEnd > 0) {
+				stripSamples = trimCenterline(samples, cutStart, cutEnd);
+				if (stripSamples.length < 2) continue;
+			}
+
+			// Grass and median strips overlap into nodes that continue the
+			// cross-section or morph it (matched strips meet their
+			// counterpart at the same offsets); at junctions and square cuts
+			// they stop dead.
 			group.add(
 				this.buildStrip(
-					samples,
+					stripSamples,
 					interval.start,
 					interval.end,
 					interval.laneType,
-					continuityJoinStart ? JOIN_OVERLAP : 0,
-					continuityJoinEnd ? JOIN_OVERLAP : 0,
-					jitter
+					continuityJoinStart || (morphStart && targetStart) ? JOIN_OVERLAP : 0,
+					continuityJoinEnd || (morphEnd && targetEnd) ? JOIN_OVERLAP : 0,
+					jitter,
+					stripMorph
 				)
 			);
 		}
 
 		return group;
+	}
+
+	// Half-disc closing a median strip's end, flush with the strip's edge.
+	private buildCap(
+		samples: CenterlineSample[],
+		at: 'start' | 'end',
+		offsetCenter: number,
+		radius: number,
+		jitter: number
+	): THREE.Mesh {
+		const tip = at === 'start' ? samples[0] : samples[samples.length - 1];
+		const inner = at === 'start' ? samples[1] : samples[samples.length - 2];
+
+		let tx = tip.x - inner.x;
+		let ty = tip.y - inner.y;
+		const length = Math.hypot(tx, ty);
+		if (length > 0.0001) {
+			tx /= length;
+			ty /= length;
+		}
+
+		const cx = tip.x + tip.normalX * offsetCenter;
+		const cy = tip.y + tip.normalY * offsetCenter;
+		const y = LAYER_Y.median + this.elevation + jitter;
+
+		// Fan from +normal through the outward tangent to -normal.
+		const vertices = new Float32Array((MEDIAN_NOSE_SEGMENTS + 2) * 3);
+		vertices[0] = cx;
+		vertices[1] = y;
+		vertices[2] = cy;
+		for (let i = 0; i <= MEDIAN_NOSE_SEGMENTS; i++) {
+			const angle = (i / MEDIAN_NOSE_SEGMENTS) * Math.PI;
+			const dx = tip.normalX * Math.cos(angle) + tx * Math.sin(angle);
+			const dy = tip.normalY * Math.cos(angle) + ty * Math.sin(angle);
+			vertices[(i + 1) * 3] = cx + dx * radius;
+			vertices[(i + 1) * 3 + 1] = y;
+			vertices[(i + 1) * 3 + 2] = cy + dy * radius;
+		}
+
+		const indices: number[] = [];
+		for (let i = 1; i <= MEDIAN_NOSE_SEGMENTS; i++) {
+			indices.push(0, i, i + 1);
+		}
+
+		const geometry = new THREE.BufferGeometry();
+		geometry.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
+		geometry.setIndex(indices);
+
+		return new THREE.Mesh(geometry, this.materialFor('median'));
 	}
 
 	private buildStrip(
@@ -246,20 +439,96 @@ export class RoadRenderer {
 		layerId: RoadLayerId,
 		extendStart: number,
 		extendEnd: number,
-		jitter: number
+		jitter: number,
+		morph?: StripMorph
 	): THREE.Mesh {
 		const points = extendSamples(samples, extendStart, extendEnd);
 		const y = LAYER_Y[layerId] + this.elevation + jitter;
 
+		// Distances along the strip, measured from the original (unextended)
+		// ends so extension points sit at clamped morph factor 0.
+		const cumulative: number[] = [0];
+		for (let i = 1; i < points.length; i++) {
+			cumulative.push(
+				cumulative[i - 1] + Math.hypot(points[i].x - points[i - 1].x, points[i].y - points[i - 1].y)
+			);
+		}
+		const startShift = extendStart > 0 ? extendStart : 0;
+		const innerTotal =
+			cumulative[cumulative.length - 1] - startShift - (extendEnd > 0 ? extendEnd : 0);
+
+		// The eased taper needs vertices through the morph zone — straight
+		// segments only have their two end samples.
+		if (morph) {
+			const boundaries: number[] = [];
+			const ZONE_STEPS = 10;
+			if (morph.start && morph.start.length > 0.0001) {
+				for (let k = 1; k <= ZONE_STEPS; k++) {
+					boundaries.push(startShift + (morph.start.length * k) / ZONE_STEPS);
+				}
+			}
+			if (morph.end && morph.end.length > 0.0001) {
+				for (let k = 1; k <= ZONE_STEPS; k++) {
+					boundaries.push(startShift + innerTotal - (morph.end.length * k) / ZONE_STEPS);
+				}
+			}
+			for (const at of boundaries) {
+				const last = cumulative[cumulative.length - 1];
+				if (at <= 0.001 || at >= last - 0.001) continue;
+
+				for (let i = 1; i < points.length; i++) {
+					if (cumulative[i] <= at + 0.001) continue;
+
+					const span = cumulative[i] - cumulative[i - 1];
+					const t = span > 0.0001 ? (at - cumulative[i - 1]) / span : 0;
+					const a = points[i - 1];
+					const b = points[i];
+					let nx = a.normalX + (b.normalX - a.normalX) * t;
+					let ny = a.normalY + (b.normalY - a.normalY) * t;
+					const nl = Math.hypot(nx, ny);
+					if (nl > 0.0001) {
+						nx /= nl;
+						ny /= nl;
+					}
+					points.splice(i, 0, {
+						x: a.x + (b.x - a.x) * t,
+						y: a.y + (b.y - a.y) * t,
+						normalX: nx,
+						normalY: ny
+					});
+					cumulative.splice(i, 0, at);
+					break;
+				}
+			}
+		}
+
 		const vertices = new Float32Array(points.length * 6);
 		for (let i = 0; i < points.length; i++) {
 			const p = points[i];
-			vertices[i * 6] = p.x + p.normalX * offsetA;
+
+			let oA = offsetA;
+			let oB = offsetB;
+			if (morph) {
+				const fromStart = cumulative[i] - startShift;
+				const fromEnd = innerTotal - fromStart;
+				if (morph.start && morph.start.length > 0.0001) {
+					const f = morphEase(fromStart, morph.start.length);
+					oA = morph.start.offsetA + (oA - morph.start.offsetA) * f;
+					oB = morph.start.offsetB + (oB - morph.start.offsetB) * f;
+				}
+				if (morph.end && morph.end.length > 0.0001) {
+					const f = morphEase(fromEnd, morph.end.length);
+					oA = morph.end.offsetA + (oA - morph.end.offsetA) * f;
+					oB = morph.end.offsetB + (oB - morph.end.offsetB) * f;
+				}
+			}
+
+			vertices[i * 6] = p.x + p.normalX * oA;
 			vertices[i * 6 + 1] = y;
-			vertices[i * 6 + 2] = p.y + p.normalY * offsetA;
-			vertices[i * 6 + 3] = p.x + p.normalX * offsetB;
+			vertices[i * 6 + 2] = p.y + p.normalY * oA;
+			vertices[i * 6 + 3] = p.x + p.normalX * oB;
 			vertices[i * 6 + 4] = y;
-			vertices[i * 6 + 5] = p.y + p.normalY * offsetB;
+			vertices[i * 6 + 5] = p.y + p.normalY * oB;
 		}
 
 		const indices: number[] = [];
@@ -357,6 +626,53 @@ function disposeGroup(group: THREE.Group) {
 			object.geometry.dispose();
 		}
 	});
+}
+
+// Eased morph factor: 0 at the node (target cross-section), 1 inside the
+// segment. The width change holds at the target for a short margin before
+// the node — the bend zone then has a constant cross-section and renders
+// like a same-road bend — and follows a smoothstep so tapers curve like
+// real road geometry instead of straight chamfers.
+function morphEase(distance: number, length: number) {
+	const margin = Math.min(2.5, length * 0.2);
+	const f = Math.min(1, Math.max(0, (distance - margin) / Math.max(0.0001, length - margin)));
+	return f * f * (3 - 2 * f);
+}
+
+// First (or last) `length` units of a centerline, with an interpolated
+// final sample so the cut lands exactly at the requested distance.
+function sliceCenterline(
+	samples: CenterlineSample[],
+	at: 'start' | 'end',
+	length: number
+): CenterlineSample[] {
+	const points = at === 'start' ? samples : [...samples].reverse();
+	const out: CenterlineSample[] = [points[0]];
+	let accumulated = 0;
+
+	for (let i = 1; i < points.length; i++) {
+		const previous = points[i - 1];
+		const current = points[i];
+		const span = Math.hypot(current.x - previous.x, current.y - previous.y);
+		if (span < 0.0001) continue;
+
+		if (accumulated + span >= length) {
+			const t = (length - accumulated) / span;
+			out.push({
+				x: previous.x + (current.x - previous.x) * t,
+				y: previous.y + (current.y - previous.y) * t,
+				normalX: current.normalX,
+				normalY: current.normalY
+			});
+			break;
+		}
+
+		out.push(current);
+		accumulated += span;
+	}
+
+	if (at === 'end') out.reverse();
+	return out;
 }
 
 function extendSamples(
