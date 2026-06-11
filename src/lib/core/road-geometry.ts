@@ -1071,17 +1071,25 @@ function addCornerBands(
 	const flipped = armA.startsHere === armB.startsHere;
 	const dirB = flipped ? { x: -armB.crossDir.x, y: -armB.crossDir.y } : armB.crossDir;
 
-	const edgeCurve = (offset: number) =>
-		sampleCornerCurve(
+	// Bands reach slightly past both stop lines into the segments, so no
+	// antialiasing hairline can open along the mouths; adjacent intervals
+	// still share these extended edges exactly.
+	const overlap = 0.5;
+	const edgeCurve = (offset: number) => {
+		const curve = sampleCornerCurve(
 			offsetPoint(armA.stop, armA.crossDir, offset),
 			armA.into,
 			offsetPoint(armB.stop, dirB, offset),
 			armB.into
 		);
+		curve.unshift(offsetPoint(offsetPoint(armA.stop, armA.into, -overlap), armA.crossDir, offset));
+		curve.push(offsetPoint(offsetPoint(armB.stop, armB.into, -overlap), dirB, offset));
+		return curve;
+	};
 
 	for (const interval of getLaneIntervals(armA.lanes)) {
-		const low = edgeCurve(interval.start);
-		const high = edgeCurve(interval.end);
+		const low = edgeCurve(interval.start - BAND_PAD);
+		const high = edgeCurve(interval.end + BAND_PAD);
 
 		const band: Path = [];
 		for (const point of high) {
@@ -1219,6 +1227,10 @@ interface ArmProfile {
 }
 
 const BAND_EPSILON = 0.01;
+// Node-piece bands are padded a hair wider than the triangulation epsilon
+// shrink (see pathsToPolygons), so layers tiling edge-to-edge overlap
+// rather than exposing the plate between them.
+const BAND_PAD = 0.08;
 
 function hasBand(band: SideBand): boolean {
 	return band.outer - band.inner > BAND_EPSILON;
@@ -1320,9 +1332,13 @@ function addWedgePieces(
 	bands: Paths,
 	center: Point,
 	dirs: Point[],
-	intervalA: OffsetInterval,
-	intervalB: OffsetInterval
+	rawA: OffsetInterval,
+	rawB: OffsetInterval
 ) {
+	// Pad past the triangulation shrink so adjacent layers overlap instead
+	// of opening hairline slots (layer order keeps the visible boundary).
+	const intervalA = { start: rawA.start - BAND_PAD, end: rawA.end + BAND_PAD };
+	const intervalB = { start: rawB.start - BAND_PAD, end: rawB.end + BAND_PAD };
 	addWedgePiece(
 		bands,
 		center,
