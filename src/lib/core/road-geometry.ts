@@ -221,11 +221,35 @@ function segmentOutwardAtNode(graph: Graph, node: Node, segment: Segment): Point
 	return isStart ? tangent : { x: -tangent.x, y: -tangent.y };
 }
 
-function pairIsSharp(graph: Graph, node: Node, a: Segment, b: Segment): boolean {
+// How far a pair node's path deviates from running straight through, in
+// radians: 0 for a continuation, π/2 for a right-angle corner.
+function pairBendDeviation(graph: Graph, node: Node, a: Segment, b: Segment): number {
 	const outwardA = segmentOutwardAtNode(graph, node, a);
 	const outwardB = segmentOutwardAtNode(graph, node, b);
-	if (!outwardA || !outwardB) return false;
-	return outwardA.x * outwardB.x + outwardA.y * outwardB.y > CORNER_PATCH_MIN_DOT;
+	if (!outwardA || !outwardB) return 0;
+
+	const dot = Math.max(-1, Math.min(1, outwardA.x * outwardB.x + outwardA.y * outwardB.y));
+	return Math.PI - Math.acos(dot);
+}
+
+// Below this deviation a bend is treated as straight: no fillet trim, the
+// ribbons simply butt.
+const MIN_BEND_DEVIATION = 0.03;
+// Fillet radius as a multiple of the node cross-section's half width.
+const BEND_FILLET_SCALE = 4;
+
+// Both sides of a bending pair pull back so the corner bands can run the
+// cross-section through the bend on curves — an angle-proportional fillet
+// (R·tan(θ/2)), capped at the old sharp-corner trim so hairpins stay sane.
+function pairFilletTrim(graph: Graph, node: Node, a: Segment, b: Segment): number {
+	const deviation = pairBendDeviation(graph, node, a, b);
+	if (deviation < MIN_BEND_DEVIATION) return 0;
+
+	const halfWidth = Math.min(getTotalWidth(a.lanes), getTotalWidth(b.lanes)) / 2;
+	return Math.min(
+		halfWidth + INTERSECTION_GAP,
+		Math.tan(Math.min(deviation, Math.PI * 0.49) / 2) * BEND_FILLET_SCALE * halfWidth
+	);
 }
 
 function isPatchNode(graph: Graph, node: Node): boolean {
@@ -233,14 +257,10 @@ function isPatchNode(graph: Graph, node: Node): boolean {
 	const majors = segments.filter(segmentHasRoad);
 	const counted = majors.length >= 2 ? majors : segments;
 
-	if (counted.length >= 3) return true;
-	if (counted.length !== 2) return false;
-	// Only same-type sharp corners take the junction treatment (corner
-	// bands). Different cross-sections always morph, whatever the angle —
-	// otherwise the rendering would flip between two looks the moment a
-	// dragged bend crosses the sharpness threshold.
-	if (counted[0].lanesKey !== counted[1].lanesKey) return false;
-	return pairIsSharp(graph, node, counted[0], counted[1]);
+	// Pair nodes are never junctions: bends of any angle get fillet trims
+	// and corner bands (same cross-section) or a morph (different), so the
+	// look changes continuously while dragging — no sharpness threshold.
+	return counted.length >= 3;
 }
 
 // Shallowest crossing angle the trim math uses: anything flatter is treated
@@ -492,10 +512,17 @@ export function computeIntersectionTrims(graph: Graph): Map<string, SegmentTrim>
 		// always pull back from roads, roads never yield to paths, and paths
 		// clear each other unless they continue one another.
 		const majorJunction = isPatchNode(graph, node);
-		// A continuing or transitioning pair never clears itself — only the
-		// transition trims above apply between its two members.
+		// A continuing or transitioning pair never clears itself; bends pull
+		// back by the angle-proportional fillet instead.
 		const pair = !majorJunction ? connectionPair(graph, node) : null;
 		const pairIds = pair ? new Set([pair[0].id, pair[1].id]) : null;
+		if (pair) {
+			const fillet = pairFilletTrim(graph, node, pair[0], pair[1]);
+			if (fillet > 0) {
+				applyTrim(pair[0].id, node, fillet);
+				applyTrim(pair[1].id, node, fillet);
+			}
+		}
 		const majors = arms.filter((arm) => arm.hasRoad);
 		const minors = arms.filter((arm) => !arm.hasRoad);
 		let minorJunction = majorJunction;
@@ -677,18 +704,6 @@ function buildBandPath(centerline: CenterlineSample[], start: number, end: numbe
 	return normalizeWinding(path);
 }
 
-interface NodeArm {
-	segmentId: string;
-	normal: Point;
-	outward: Point;
-	startsHere: boolean;
-	lanes: Lane[];
-	lanesKey: string;
-}
-
-const MIN_JOIN_ANGLE = 0.05;
-const WEDGE_ANGLE_STEP = Math.PI / 16;
-
 // How a node renders, driven by its connection pair: two roads continue,
 // corner, or transition into each other regardless of attached paths (which
 // get pavement aprons); everything else is a junction patch or a plain join.
@@ -703,21 +718,8 @@ function addNodeGeometry(
 
 	const pair = connectionPair(graph, node);
 	if (pair && segments.length > 2) {
-		const [pa, pb] = pair;
-		const sameKey = pa.lanesKey === pb.lanesKey;
-		const sharp = pairIsSharp(graph, node, pa, pb);
-
-		const pairIds = new Set([pa.id, pb.id]);
-		if (!sameKey) {
-			addTransitionJoin(graph, node, bandsByType, pairIds);
-		} else if (sharp) {
-			const arms = collectIntersectionArms(graph, node, centerlines, pairIds);
-			if (arms.length === 2) {
-				addCornerBands(arms[0], arms[1], bandsByType);
-			}
-		} else {
-			addNodeJoins(graph, node, centerlines, bandsByType, pairIds);
-		}
+		const pairIds = new Set([pair[0].id, pair[1].id]);
+		addPairJoin(graph, node, centerlines, bandsByType, pairIds);
 
 		for (const segment of segments) {
 			if (!pairIds.has(segment.id)) {
@@ -730,7 +732,7 @@ function addNodeGeometry(
 	if (isPatchNode(graph, node)) {
 		addIntersection(graph, node, centerlines, bandsByType);
 	} else {
-		addNodeJoins(graph, node, centerlines, bandsByType);
+		addPairJoin(graph, node, centerlines, bandsByType);
 	}
 }
 
@@ -771,150 +773,55 @@ function addApron(
 	getOrCreateBands(bandsByType, 'sidewalk').push(normalizeWinding(band));
 }
 
-// Bands butt-end exactly at their nodes, which leaves a wedge-shaped notch on
-// the outer side of every bend. Fill each lane layer's swept cross-section
-// between adjacent segments — the polygon equivalent of a round line join.
-// Nodes joining two different cross-sections get a tapered transition piece
-// between the trimmed mouths instead.
-function addNodeJoins(
+// A pair node (continuation or transition) renders its bend as a fillet:
+// both segments are already trimmed back proportionally to the bend angle
+// (pairFilletTrim), and corner bands run the node cross-section through the
+// gap on curves — every lane turns smoothly, whatever the angle. For
+// transitions the bands carry the anchor cross-section, which both ribbons
+// have morphed to by the time they reach their mouths. Straight pairs need
+// no geometry: the ribbons butt exactly.
+function addPairJoin(
 	graph: Graph,
 	node: Node,
 	centerlines: Map<string, CenterlineSample[]>,
 	bandsByType: Map<LaneType, Paths>,
 	only?: Set<string>
 ) {
-	if (!only && isTransitionNode(graph, node)) {
-		addTransitionJoin(graph, node, bandsByType);
-		return;
-	}
-
-	const arms = collectNodeArms(graph, node, only);
-	if (arms.length < 2) return;
-
-	arms.sort((a, b) => Math.atan2(a.outward.y, a.outward.x) - Math.atan2(b.outward.y, b.outward.x));
-
-	const center = { x: node.x, y: node.y };
-	const pairCount = arms.length === 2 ? 1 : arms.length;
-
-	for (let i = 0; i < pairCount; i++) {
-		const armA = arms[i];
-		const armB = arms[(i + 1) % arms.length];
-
-		// Frames continue head-to-tail only when one segment ends here and the
-		// other starts here; otherwise armB's frame is mirrored, so both its
-		// normal and its interval list flip.
-		const flipped = armA.startsHere === armB.startsHere;
-		const normalB = flipped ? { x: -armB.normal.x, y: -armB.normal.y } : armB.normal;
-
-		const rotation = rotationBetween(armA.normal, normalB);
-		if (Math.abs(rotation) < MIN_JOIN_ANGLE) continue;
-
-		const dirs = sampleArcDirections(armA.normal, rotation);
-
-		const intervalsA = getLaneIntervals(armA.lanes);
-		const intervalsB = getLaneIntervals(armB.lanes);
-		for (let k = 0; k < intervalsA.length; k++) {
-			const raw = flipped ? intervalsB[intervalsB.length - 1 - k] : intervalsB[k];
-			const counterpart = flipped
-				? { laneType: raw.laneType, start: -raw.end, end: -raw.start }
-				: raw;
-			const bands = getOrCreateBands(bandsByType, intervalsA[k].laneType);
-			addWedgePieces(bands, center, dirs, intervalsA[k], counterpart);
-		}
-	}
-}
-
-// At a transition node both ribbons have already morphed to the same
-// blended cross-section (see transitionMorph), so the node is locally a
-// continuation: fill the bend notch with swept wedges over the blended
-// strips, exactly like a same-key join. Straight transitions need nothing.
-function addTransitionJoin(
-	graph: Graph,
-	node: Node,
-	bandsByType: Map<LaneType, Paths>,
-	only?: Set<string>
-) {
 	const pair = connectionPair(graph, node);
 	if (!pair) return;
 
-	const morph = transitionMorph(graph, node, pair[0].id);
-	if (!morph) return;
+	if (pairBendDeviation(graph, node, pair[0], pair[1]) < MIN_BEND_DEVIATION) return;
 
-	const arms = collectNodeArms(graph, node, only ?? new Set([pair[0].id, pair[1].id]));
+	const arms = collectIntersectionArms(
+		graph,
+		node,
+		centerlines,
+		only ?? new Set([pair[0].id, pair[1].id])
+	);
 	if (arms.length !== 2) return;
 
-	// The morph targets live in pair[0]'s frame; sweep from that arm.
-	const armA = arms[0].segmentId === pair[0].id ? arms[0] : arms[1];
+	// Corner band intervals live in pair[0]'s frame; sweep from that arm.
+	const armA = arms[0].lanesKey === pair[0].lanesKey ? arms[0] : arms[1];
 	const armB = armA === arms[0] ? arms[1] : arms[0];
 
-	const flipped = armA.startsHere === armB.startsHere;
-	const normalB = flipped ? { x: -armB.normal.x, y: -armB.normal.y } : armB.normal;
-	const rotation = rotationBetween(armA.normal, normalB);
-	if (Math.abs(rotation) < MIN_JOIN_ANGLE) return;
-
-	// Sweep slightly past both mouths so the wedge overlaps the ribbons
-	// instead of meeting them edge-to-edge.
-	const sweep = Math.sign(rotation) * 0.06;
-	const cos = Math.cos(-sweep);
-	const sin = Math.sin(-sweep);
-	const from = {
-		x: armA.normal.x * cos - armA.normal.y * sin,
-		y: armA.normal.x * sin + armA.normal.y * cos
-	};
-	const dirs = sampleArcDirections(from, rotation + 2 * sweep);
-	const center = { x: node.x, y: node.y };
-
-	const plate = { laneType: 'sidewalk' as LaneType, start: -morph.halfWidth, end: morph.halfWidth };
-	addWedgePieces(getOrCreateBands(bandsByType, 'sidewalk'), center, dirs, plate, plate);
-
-	const intervals = getLaneIntervals(pair[0].lanes);
-	const targetFor = (k: number) => {
-		const target = morph.intervals[k];
-		if (!target || target.end - target.start < BAND_EPSILON) return null;
-		return { laneType: intervals[k].laneType, start: target.start, end: target.end };
-	};
-
-	// Grass renders under asphalt, so a continuing grass center needs the
-	// roadway split around it; otherwise the roadway spans its bounding
-	// width — a nosed median's column stays asphalt through the bend.
-	const grassCenterContinues = intervals.some((interval, k) => {
-		const target = targetFor(k);
-		return (
-			interval.laneType === 'grass' &&
-			target !== null &&
-			target.start < BAND_EPSILON &&
-			target.end > -BAND_EPSILON
-		);
-	});
-
-	const roadTargets: { laneType: LaneType; start: number; end: number }[] = [];
-	for (let k = 0; k < intervals.length; k++) {
-		if (intervals[k].laneType === 'sidewalk') continue;
-
-		const piece = targetFor(k);
-		if (!piece) continue;
-
-		if (piece.laneType === 'road') {
-			roadTargets.push(piece);
-			continue;
-		}
-		addWedgePieces(getOrCreateBands(bandsByType, piece.laneType), center, dirs, piece, piece);
-	}
-
-	if (roadTargets.length > 0) {
-		const roadPieces = grassCenterContinues
-			? roadTargets
-			: [
-					{
-						laneType: 'road' as LaneType,
-						start: Math.min(...roadTargets.map((p) => p.start)),
-						end: Math.max(...roadTargets.map((p) => p.end))
-					}
-				];
-		for (const piece of roadPieces) {
-			addWedgePieces(getOrCreateBands(bandsByType, 'road'), center, dirs, piece, piece);
+	let intervals = getLaneIntervals(pair[0].lanes);
+	if (pair[0].lanesKey !== pair[1].lanesKey) {
+		// The node cross-section is the anchor's (see transitionMorph),
+		// expressed in pair[0]'s frame.
+		const halfA = getTotalWidth(pair[0].lanes) / 2;
+		const halfB = getTotalWidth(pair[1].lanes) / 2;
+		const anchorIsA =
+			halfA < halfB - 0.01 ||
+			(Math.abs(halfA - halfB) <= 0.01 && pair[0].lanesKey <= pair[1].lanesKey);
+		if (!anchorIsA) {
+			intervals = getLaneIntervals(pair[1].lanes);
+			if (armA.startsHere === armB.startsHere) {
+				intervals = mirrorIntervals(intervals);
+			}
 		}
 	}
+
+	addCornerBands(armA, armB, bandsByType, intervals);
 }
 
 interface IntersectionArm {
@@ -999,13 +906,6 @@ function addIntersection(
 	const arms = collectIntersectionArms(graph, node, centerlines);
 	if (arms.length < 2) return;
 
-	// A sharp corner of one road type keeps its full cross-section: every
-	// lane turns the corner instead of stopping at a junction patch.
-	if (arms.length === 2 && arms[0].lanesKey === arms[1].lanesKey) {
-		addCornerBands(arms[0], arms[1], bandsByType);
-		return;
-	}
-
 	arms.sort((a, b) => Math.atan2(-a.into.y, -a.into.x) - Math.atan2(-b.into.y, -b.into.x));
 
 	// Full pavement plate: every arm's stop-line mouth connected by the outer
@@ -1062,7 +962,8 @@ function addIntersection(
 function addCornerBands(
 	armA: IntersectionArm,
 	armB: IntersectionArm,
-	bandsByType: Map<LaneType, Paths>
+	bandsByType: Map<LaneType, Paths>,
+	intervals: LaneInterval[] = getLaneIntervals(armA.lanes)
 ) {
 	// Frames continue head-to-tail only when one segment ends here and the
 	// other starts here; otherwise mirror armB so world sides match up. This
@@ -1087,7 +988,7 @@ function addCornerBands(
 		return curve;
 	};
 
-	for (const interval of getLaneIntervals(armA.lanes)) {
+	for (const interval of intervals) {
 		const low = edgeCurve(interval.start - BAND_PAD);
 		const high = edgeCurve(interval.end + BAND_PAD);
 
@@ -1139,37 +1040,6 @@ function normalizeVector(v: Point): Point | null {
 	const len = Math.sqrt(v.x * v.x + v.y * v.y);
 	if (len < 0.0001) return null;
 	return { x: v.x / len, y: v.y / len };
-}
-
-function collectNodeArms(graph: Graph, node: Node, only?: Set<string>): NodeArm[] {
-	const arms: NodeArm[] = [];
-
-	for (const segmentId of node.connectedSegments) {
-		if (only && !only.has(segmentId)) continue;
-
-		const segment = graph.segments.get(segmentId);
-		if (!segment) continue;
-
-		const startNode = graph.nodes.get(segment.startNodeId);
-		const endNode = graph.nodes.get(segment.endNodeId);
-		if (!startNode || !endNode) continue;
-
-		if (segment.lanes.length === 0) continue;
-
-		const isStart = segment.startNodeId === node.id;
-		const tangent = getSegmentTangentAtNode(segment, startNode, endNode, isStart);
-
-		arms.push({
-			segmentId: segment.id,
-			normal: { x: -tangent.y, y: tangent.x },
-			outward: isStart ? tangent : { x: -tangent.x, y: -tangent.y },
-			startsHere: isStart,
-			lanes: segment.lanes,
-			lanesKey: segment.lanesKey
-		});
-	}
-
-	return arms;
 }
 
 function getSegmentTangentAtNode(
@@ -1303,99 +1173,6 @@ function getOrCreateBands(bandsByType: Map<LaneType, Paths>, laneType: LaneType)
 	const created: Paths = [];
 	bandsByType.set(laneType, created);
 	return created;
-}
-
-function rotationBetween(a: Point, b: Point): number {
-	return Math.atan2(a.x * b.y - a.y * b.x, a.x * b.x + a.y * b.y);
-}
-
-function sampleArcDirections(from: Point, rotation: number): Point[] {
-	const steps = Math.max(1, Math.ceil(Math.abs(rotation) / WEDGE_ANGLE_STEP));
-	const startAngle = Math.atan2(from.y, from.x);
-	const dirs: Point[] = [];
-	for (let i = 0; i <= steps; i++) {
-		const angle = startAngle + (rotation * i) / steps;
-		dirs.push({ x: Math.cos(angle), y: Math.sin(angle) });
-	}
-	return dirs;
-}
-
-interface OffsetInterval {
-	start: number;
-	end: number;
-}
-
-// The swept region of a cross-section interval splits at the centerline: the
-// positive side sweeps along the arc directions, the negative side along the
-// opposite directions.
-function addWedgePieces(
-	bands: Paths,
-	center: Point,
-	dirs: Point[],
-	rawA: OffsetInterval,
-	rawB: OffsetInterval
-) {
-	// Pad past the triangulation shrink so adjacent layers overlap instead
-	// of opening hairline slots (layer order keeps the visible boundary).
-	const intervalA = { start: rawA.start - BAND_PAD, end: rawA.end + BAND_PAD };
-	const intervalB = { start: rawB.start - BAND_PAD, end: rawB.end + BAND_PAD };
-	addWedgePiece(
-		bands,
-		center,
-		dirs,
-		1,
-		{ inner: Math.max(0, intervalA.start), outer: Math.max(0, intervalA.end) },
-		{ inner: Math.max(0, intervalB.start), outer: Math.max(0, intervalB.end) }
-	);
-	addWedgePiece(
-		bands,
-		center,
-		dirs,
-		-1,
-		{ inner: Math.max(0, -intervalA.end), outer: Math.max(0, -intervalA.start) },
-		{ inner: Math.max(0, -intervalB.end), outer: Math.max(0, -intervalB.start) }
-	);
-}
-
-interface RadialRange {
-	inner: number;
-	outer: number;
-}
-
-function addWedgePiece(
-	bands: Paths,
-	center: Point,
-	dirs: Point[],
-	side: 1 | -1,
-	rangeA: RadialRange,
-	rangeB: RadialRange
-) {
-	if (rangeA.outer - rangeA.inner < 0.01 && rangeB.outer - rangeB.inner < 0.01) return;
-
-	const last = dirs.length - 1;
-	const path: Path = [];
-
-	for (let i = 0; i <= last; i++) {
-		const t = i / last;
-		const radius = rangeA.outer + (rangeB.outer - rangeA.outer) * t;
-		path.push(
-			toClipperPoint(center.x + dirs[i].x * radius * side, center.y + dirs[i].y * radius * side)
-		);
-	}
-
-	if (rangeA.inner < 0.01 && rangeB.inner < 0.01) {
-		path.push(toClipperPoint(center.x, center.y));
-	} else {
-		for (let i = last; i >= 0; i--) {
-			const t = i / last;
-			const radius = rangeA.inner + (rangeB.inner - rangeA.inner) * t;
-			path.push(
-				toClipperPoint(center.x + dirs[i].x * radius * side, center.y + dirs[i].y * radius * side)
-			);
-		}
-	}
-
-	bands.push(normalizeWinding(path));
 }
 
 // All paths fed into a nonzero-fill union must share a winding direction, or
