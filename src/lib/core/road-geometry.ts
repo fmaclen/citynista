@@ -273,6 +273,44 @@ function mirrorIntervals(intervals: LaneInterval[]): LaneInterval[] {
 		.reverse();
 }
 
+// Islands (grass and median strips) connect across types: a median flows
+// into a grass strip and vice versa, centered or not. Best same-type overlap
+// wins; otherwise the nearest island within reach (center distance no more
+// than the two widths combined, so verges never grab a far-away center
+// strip). Null means the strip has nothing to flow into and ends instead.
+function islandMatch(interval: LaneInterval, candidates: LaneInterval[]): LaneInterval | null {
+	const center = (i: { start: number; end: number }) => (i.start + i.end) / 2;
+	const width = (i: { start: number; end: number }) => i.end - i.start;
+
+	let best: LaneInterval | null = null;
+	let bestOverlap = 0;
+	for (const candidate of candidates) {
+		if (candidate.laneType !== interval.laneType) continue;
+		const overlap =
+			Math.min(interval.end, candidate.end) - Math.max(interval.start, candidate.start);
+		if (overlap > bestOverlap) {
+			bestOverlap = overlap;
+			best = candidate;
+		}
+	}
+	if (best) return best;
+
+	let nearest: LaneInterval | null = null;
+	let nearestDistance = Infinity;
+	for (const candidate of candidates) {
+		if (candidate.laneType !== 'grass' && candidate.laneType !== 'median') continue;
+		const distance = Math.abs(center(candidate) - center(interval));
+		if (distance < nearestDistance) {
+			nearest = candidate;
+			nearestDistance = distance;
+		}
+	}
+	if (nearest && nearestDistance <= width(interval) + width(nearest)) {
+		return nearest;
+	}
+	return null;
+}
+
 export interface TransitionMorph {
 	// Target offsets at the node for each of the segment's own lane
 	// intervals (indexed like getLaneIntervals). Null means the strip has no
@@ -342,8 +380,6 @@ export function transitionMorph(
 		start: interval.start,
 		end: interval.end
 	});
-	const isCenter = (interval: LaneInterval) =>
-		interval.start < BAND_EPSILON && interval.end > -BAND_EPSILON;
 	const bounding = (intervals: LaneInterval[]) => ({
 		start: Math.min(...intervals.map((i) => i.start)),
 		end: Math.max(...intervals.map((i) => i.end))
@@ -374,29 +410,8 @@ export function transitionMorph(
 			};
 		}
 
-		// Grass/median: best same-type overlap, then cross-type center
-		// strips; with no counterpart at all the strip ends square instead
-		// of pinching.
-		let best: LaneInterval | null = null;
-		let bestOverlap = 0;
-		for (const candidate of counterparts) {
-			const overlap =
-				Math.min(interval.end, candidate.end) - Math.max(interval.start, candidate.start);
-			if (overlap > bestOverlap) {
-				bestOverlap = overlap;
-				best = candidate;
-			}
-		}
-		if (best) return at(best);
-
-		if (isCenter(interval)) {
-			const anchorCenter = anchorIntervals.find(
-				(i) => (i.laneType === 'grass' || i.laneType === 'median') && isCenter(i)
-			);
-			if (anchorCenter) return at(anchorCenter);
-		}
-
-		return null;
+		const match = islandMatch(interval, anchorIntervals);
+		return match ? at(match) : null;
 	});
 
 	// The taper length scales with the largest edge displacement any strip
@@ -1601,10 +1616,10 @@ export function isContinuationNode(graph: Graph, node: Node): boolean {
 }
 
 // True where a segment's median strip terminates at this node — against a
-// junction's stop line or a transition whose other side carries no median —
-// so the strip should end in a rounded nose. Where the median continues
-// (continuation nodes, transitions onto another median road) or the road
-// just dead-ends, it keeps its plain end.
+// junction's stop line or a transition whose other side has no island it can
+// flow into — so the strip should end in a rounded nose. Where the median
+// continues (continuation nodes, transitions onto another median or grass
+// island) or the road just dead-ends, it keeps its plain end.
 export function medianEndsAtNode(graph: Graph, node: Node, segmentId: string): boolean {
 	if (validNodeSegments(graph, node).length < 2) return false;
 
@@ -1613,8 +1628,16 @@ export function medianEndsAtNode(graph: Graph, node: Node, segmentId: string): b
 		if (pair[0].lanesKey === pair[1].lanesKey) return false;
 		if (isPatchNode(graph, node)) return true;
 
+		const self = pair[0].id === segmentId ? pair[0] : pair[1];
 		const other = pair[0].id === segmentId ? pair[1] : pair[0];
-		return !other.lanes.some((lane) => lane.type === 'median');
+
+		const flipped = (self.startNodeId === node.id) === (other.startNodeId === node.id);
+		let otherIntervals = getLaneIntervals(other.lanes);
+		if (flipped) otherIntervals = mirrorIntervals(otherIntervals);
+
+		return getLaneIntervals(self.lanes).some(
+			(interval) => interval.laneType === 'median' && !islandMatch(interval, otherIntervals)
+		);
 	}
 
 	return true;
