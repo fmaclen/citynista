@@ -309,8 +309,26 @@ export class RoadRenderer {
 				const laneSamples = trimCenterline(samples, noseStart ? setback : 0, noseEnd ? setback : 0);
 				if (laneSamples.length < 2) continue;
 
+				// The nose only replaces the morph at its own end — a median
+				// nosed at a junction must still shift laterally toward a
+				// transition at the segment's other end.
+				const noseMorph: StripMorph | undefined = stripMorph
+					? {
+							start: noseStart ? undefined : stripMorph.start,
+							end: noseEnd ? undefined : stripMorph.end
+						}
+					: undefined;
 				group.add(
-					this.buildStrip(laneSamples, interval.start, interval.end, 'median', 0, 0, jitter)
+					this.buildStrip(
+						laneSamples,
+						interval.start,
+						interval.end,
+						'median',
+						0,
+						0,
+						jitter,
+						noseMorph
+					)
 				);
 				const offsetCenter = (interval.start + interval.end) / 2;
 				if (noseStart) {

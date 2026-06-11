@@ -251,9 +251,9 @@ const MIN_CROSSING_SIN = 0.15;
 // morphs its own strips toward a blended cross-section over this length, so
 // both sides arrive at the node with identical offsets. The taper length
 // scales with how much the width changes.
-const TRANSITION_TAPER = 3.5;
-const TRANSITION_MIN_LENGTH = 6;
-const TRANSITION_MAX_LENGTH = 28;
+const TRANSITION_TAPER = 10;
+const TRANSITION_MIN_LENGTH = 8;
+const TRANSITION_MAX_LENGTH = 60;
 
 // A continuation node whose connection pair joins two different
 // cross-sections — rendered by morphing both segments' ribbons.
@@ -308,10 +308,6 @@ export function transitionMorph(
 
 	const halfSelf = getTotalWidth(self.lanes) / 2;
 	const halfOther = getTotalWidth(other.lanes) / 2;
-	const length = Math.min(
-		TRANSITION_MAX_LENGTH,
-		Math.max(TRANSITION_MIN_LENGTH, Math.abs(halfSelf - halfOther) * TRANSITION_TAPER)
-	);
 
 	const selfIntervals = getLaneIntervals(self.lanes);
 
@@ -322,6 +318,12 @@ export function transitionMorph(
 		(Math.abs(halfSelf - halfOther) <= 0.01 && self.lanesKey <= other.lanesKey);
 
 	if (selfIsAnchor) {
+		// The anchor never morphs, so its length is only carried for the
+		// piece hash.
+		const length = Math.min(
+			TRANSITION_MAX_LENGTH,
+			Math.max(TRANSITION_MIN_LENGTH, Math.abs(halfSelf - halfOther) * TRANSITION_TAPER)
+		);
 		return {
 			intervals: selfIntervals.map((interval) => ({ start: interval.start, end: interval.end })),
 			halfWidth: halfSelf,
@@ -396,6 +398,25 @@ export function transitionMorph(
 
 		return null;
 	});
+
+	// The taper length scales with the largest edge displacement any strip
+	// undergoes — lateral shifts (off-center medians, turning-lane stacks)
+	// need just as much easing room as width changes, which this subsumes:
+	// the plate's outer edges displace by exactly the half-width difference.
+	let maxShift = Math.abs(halfSelf - halfOther);
+	for (let k = 0; k < targets.length; k++) {
+		const target = targets[k];
+		if (!target) continue;
+		maxShift = Math.max(
+			maxShift,
+			Math.abs(target.start - selfIntervals[k].start),
+			Math.abs(target.end - selfIntervals[k].end)
+		);
+	}
+	const length = Math.min(
+		TRANSITION_MAX_LENGTH,
+		Math.max(TRANSITION_MIN_LENGTH, maxShift * TRANSITION_TAPER)
+	);
 
 	return {
 		intervals: targets,
