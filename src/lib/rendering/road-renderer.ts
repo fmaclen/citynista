@@ -371,12 +371,22 @@ export class RoadRenderer {
 			}
 
 			// A strip with no counterpart across the transition ends in a
-			// square cut where the morph zone begins — never a sliver.
+			// square cut exactly where the morph zone begins — never a
+			// sliver, and never poking straight into the active taper
+			// (trimCenterline caps trims at 45% of the length, so it cannot
+			// be used here).
 			const cutStart = morphStart && !targetStart ? lengthStart : 0;
 			const cutEnd = morphEnd && !targetEnd ? lengthEnd : 0;
 			let stripSamples = samples;
 			if (cutStart > 0 || cutEnd > 0) {
-				stripSamples = trimCenterline(samples, cutStart, cutEnd);
+				const remaining = total - cutStart - cutEnd;
+				if (remaining < 0.1) continue;
+				if (cutStart > 0) {
+					stripSamples = sliceCenterline(stripSamples, 'end', total - cutStart);
+				}
+				if (cutEnd > 0) {
+					stripSamples = sliceCenterline(stripSamples, 'start', remaining);
+				}
 				if (stripSamples.length < 2) continue;
 			}
 
