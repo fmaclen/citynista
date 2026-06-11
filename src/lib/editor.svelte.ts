@@ -1,6 +1,7 @@
 import { getContext, setContext, untrack } from 'svelte';
 import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 import { Graph } from './core/graph.svelte';
+import type { GraphData } from './core/types';
 import { getDefaultTemplate } from './core/lane-template';
 import { resolveCrossings } from './core/crossings';
 import { SceneManager } from './rendering/scene.svelte';
@@ -322,6 +323,21 @@ export class Editor {
 		this.nodeRenderer.clear();
 		this.roadRenderer.clear();
 		this.graph.clear();
+		this.graph.save();
+	}
+
+	// Swap the whole working graph (fixture loads). Persists like any edit.
+	replaceGraph(data: GraphData) {
+		this.clearSelection();
+		this.setHoveredNode(null);
+		this.setHoveredSegment(null);
+		this.nodeRenderer.clear();
+		this.roadRenderer.clear();
+		this.graph.fromJSON(data);
+		for (const node of this.graph.nodes.values()) {
+			this.nodeRenderer.createNode(node);
+		}
+		this.rebuildRoads();
 		this.graph.save();
 	}
 

@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { setEditorContext } from '$lib/editor.svelte';
 	import EditorToolbar from '$lib/components/EditorToolbar.svelte';
+	import FixtureBar from '$lib/components/FixtureBar.svelte';
 	import FpsCounter from '$lib/components/FpsCounter.svelte';
 	import LaneEditor from '$lib/components/LaneEditor.svelte';
 	import { untrack } from 'svelte';
@@ -13,6 +14,18 @@
 
 		untrack(() => {
 			editor.init(containerElement);
+
+			// Boot straight into a shared fixture: works in dev and preview
+			// (fixtures are static assets), so the e2e harness and a browser
+			// session render the exact same graph.
+			const fixture = new URLSearchParams(window.location.search).get('fixture');
+			if (fixture) {
+				fetch(`/fixtures/${fixture}.json`)
+					.then((response) => (response.ok ? response.json() : null))
+					.then((data) => {
+						if (data) editor.replaceGraph(data);
+					});
+			}
 		});
 
 		return () => {
@@ -29,5 +42,8 @@
 	<EditorToolbar />
 	<FpsCounter />
 	<LaneEditor />
+	{#if import.meta.env.DEV}
+		<FixtureBar />
+	{/if}
 	<div bind:this={containerElement} class="h-full w-full"></div>
 </div>
