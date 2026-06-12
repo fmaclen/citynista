@@ -1993,7 +1993,7 @@ function toPoints(contour: Path): Point[] {
 // and segment strips can safely overlap into it. Attached paths don't break
 // continuity — the pair outranks them.
 export interface NodePaintPath {
-	color: 'lane' | 'center';
+	color: 'lane' | 'center' | 'walk';
 	dashed: boolean;
 	// Stroke width; the renderer's default lane-line width when absent.
 	width?: number;
@@ -2062,6 +2062,61 @@ export function buildNodePaint(
 	return paths;
 }
 
+// One crossing, segmented by the cross-section it spans: zebra bars over
+// drivable surfaces, a solid pedestrian-pavement band over grass and
+// medians — a crosswalk never stripes a planter.
+function crossingPaths(
+	innerCenter: Point,
+	outerCenter: Point,
+	lateral: Point,
+	intervals: LaneInterval[],
+	from: number,
+	to: number
+): NodePaintPath[] {
+	const drivable = (type: LaneType) => isRoadway(type) || type === 'turn';
+	const paths: NodePaintPath[] = [];
+	const mid = {
+		x: (innerCenter.x + outerCenter.x) / 2,
+		y: (innerCenter.y + outerCenter.y) / 2
+	};
+	const depth = Math.hypot(outerCenter.x - innerCenter.x, outerCenter.y - innerCenter.y);
+
+	for (const interval of intervals) {
+		const a = Math.max(from, interval.start);
+		const b = Math.min(to, interval.end);
+		if (b - a < 0.05) continue;
+		// Walkways are already pedestrian pavement.
+		if (laneSurface(interval.laneType) === 'walkway') continue;
+		if (drivable(interval.laneType)) {
+			for (
+				let offset = a + CROSSWALK_PITCH / 2;
+				offset <= b - CROSSWALK_PITCH / 2 + 0.01;
+				offset += CROSSWALK_PITCH
+			) {
+				paths.push({
+					color: 'lane',
+					dashed: false,
+					width: CROSSWALK_BAR_WIDTH,
+					points: [
+						offsetPoint(innerCenter, lateral, offset),
+						offsetPoint(outerCenter, lateral, offset)
+					]
+				});
+			}
+		} else {
+			// Exactly the covered strip — the patch must read as the path
+			// passing over the median or verge, no larger.
+			paths.push({
+				color: 'walk',
+				dashed: false,
+				width: depth,
+				points: [offsetPoint(mid, lateral, a), offsetPoint(mid, lateral, b)]
+			});
+		}
+	}
+	return paths;
+}
+
 // Zebra bars across every road mouth of a junction, in the reserved gap
 // just inside the stop lines. Merge nodes (through pair present) and pure
 // path junctions get none.
@@ -2077,11 +2132,14 @@ function buildJunctionCrosswalks(
 	const roadArms = arms.filter((arm) => arm.hasRoad);
 	if (roadArms.length < 3) return [];
 
+	// At a stop line every island has already ended — the crossing zone is
+	// pure pavement, so bars run continuously across the drivable span,
+	// median gaps included.
 	for (const arm of roadArms) {
-		const from = -arm.away.roadEdge;
-		const to = arm.toward.roadEdge;
 		const inner = offsetPoint(arm.stop, arm.into, CROSSWALK_INSET);
 		const outer = offsetPoint(arm.stop, arm.into, CROSSWALK_INSET + CROSSWALK_DEPTH);
+		const from = -arm.away.roadEdge;
+		const to = arm.toward.roadEdge;
 		for (
 			let offset = from + CROSSWALK_PITCH / 2;
 			offset <= to - CROSSWALK_PITCH / 2 + 0.01;
@@ -2117,39 +2175,27 @@ function buildPathCrossingZebras(
 	const arms = collectIntersectionArms(graph, node, centerlines, new Set([pair[0].id, pair[1].id]));
 	if (arms.length === 0) return [];
 	const axis = arms[0].into;
-	const lateral = arms[0].side;
+	const lateral = arms[0].crossDir;
 
-	// Roadway extent of the node cross-section, in the reference arm's
-	// frame (the anchor's stack, mirrored if needed — but only the roadway
-	// bounds matter, which are symmetric enough across the pair).
+	// Crossing extent: everything between the outer sidewalks — mid-block,
+	// the grass verges and medians physically continue through the
+	// crossing, so each gets pedestrian pavement while drivable strips get
+	// bars.
 	const intervals = getLaneIntervals(arms[0].lanes);
-	const roadways = intervals.filter((interval) => isRoadway(interval.laneType));
-	if (roadways.length === 0) return [];
-	const from = Math.min(...roadways.map((interval) => interval.start));
-	const to = Math.max(...roadways.map((interval) => interval.end));
+	const crossed = intervals.filter((interval) => laneSurface(interval.laneType) !== 'walkway');
+	if (!crossed.some((interval) => isRoadway(interval.laneType))) return [];
+	const from = Math.min(...crossed.map((interval) => interval.start));
+	const to = Math.max(...crossed.map((interval) => interval.end));
 
 	// One zebra per node however many paths land on it, sized to the
 	// widest of them.
-	const paths: NodePaintPath[] = [];
 	const length = Math.max(
 		2,
 		Math.min(4, Math.max(...minors.map((minor) => getTotalWidth(minor.lanes))))
 	);
 	const head = { x: node.x + axis.x * (length / 2), y: node.y + axis.y * (length / 2) };
 	const tail = { x: node.x - axis.x * (length / 2), y: node.y - axis.y * (length / 2) };
-	for (
-		let offset = from + CROSSWALK_PITCH / 2;
-		offset <= to - CROSSWALK_PITCH / 2 + 0.01;
-		offset += CROSSWALK_PITCH
-	) {
-		paths.push({
-			color: 'lane',
-			dashed: false,
-			width: CROSSWALK_BAR_WIDTH,
-			points: [offsetPoint(tail, lateral, offset), offsetPoint(head, lateral, offset)]
-		});
-	}
-	return paths;
+	return crossingPaths(tail, head, lateral, intervals, from, to);
 }
 
 export function isContinuationNode(graph: Graph, node: Node, segmentId?: string): boolean {

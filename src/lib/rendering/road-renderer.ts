@@ -53,7 +53,9 @@ const JOIN_OVERLAP = 0.5;
 // between opposing flows. Paint renders above every roadway color but
 // below medians, follows transition morphs, and stops short of junction
 // mouths — junction interiors stay unpainted until crosswalks exist.
-const PAINT_Y = 0.085;
+// Above every lane layer including medians, so crossings can carry
+// pedestrian pavement over them; still below the interaction layers.
+const PAINT_Y = 0.095;
 const PAINT_WIDTH = 0.16;
 const PAINT_DASH = 2.2;
 const PAINT_GAP = 2.6;
@@ -70,7 +72,7 @@ const TURN_POCKET_ENTRANCE = 10;
 // Islands pinched below this width by a transition end square at the
 // threshold instead of riding to the seam as a sliver.
 const ISLAND_MIN_WIDTH = 0.8;
-const PAINT_COLORS = { lane: '#C9C9C0', center: '#C3B47C' } as const;
+const PAINT_COLORS = { lane: '#C9C9C0', center: '#C3B47C', walk: '#9A9A94' } as const;
 type PaintColor = keyof typeof PAINT_COLORS;
 // Tiny per-piece elevation so coplanar pieces never z-fight; stays well
 // below the 0.01 gap between layers.
@@ -457,7 +459,7 @@ export class RoadRenderer {
 			);
 		}
 
-		const positions: Record<PaintColor, number[]> = { lane: [], center: [] };
+		const positions: Record<PaintColor, number[]> = { lane: [], center: [], walk: [] };
 		const halfWidth = getTotalWidth(lanes) / 2;
 
 		// Boundary targets at each end come from the morph itself: lane
@@ -719,7 +721,7 @@ export class RoadRenderer {
 	// Paint across node pieces: dashes walked along the corner-curve paths
 	// the geometry exports, so lines flow through bends.
 	private buildNodePaintMeshes(paths: NodePaintPath[], jitter: number): THREE.Mesh[] {
-		const positions: Record<PaintColor, number[]> = { lane: [], center: [] };
+		const positions: Record<PaintColor, number[]> = { lane: [], center: [], walk: [] };
 
 		for (const path of paths) {
 			const points = path.points;
@@ -789,7 +791,7 @@ export class RoadRenderer {
 
 	private paintMeshes(positions: Record<PaintColor, number[]>, jitter: number): THREE.Mesh[] {
 		const meshes: THREE.Mesh[] = [];
-		for (const color of ['lane', 'center'] as PaintColor[]) {
+		for (const color of ['lane', 'center', 'walk'] as PaintColor[]) {
 			if (positions[color].length === 0) continue;
 			const geometry = new THREE.BufferGeometry();
 			geometry.setAttribute(
