@@ -146,3 +146,72 @@ test.describe('Zoom-adaptive hit areas', () => {
 		await expect(page.getByRole('heading', { name: 'Lanes' })).toBeVisible();
 	});
 });
+
+test.describe('Shift-drag collinear snapping', () => {
+	test.beforeEach(async ({ page }) => {
+		await page.goto('/');
+		await page.evaluate(() => localStorage.removeItem('citynista-graph-v2'));
+		await page.reload();
+		await expect(page.locator('canvas')).toBeVisible();
+	});
+
+	const savedGraph = (page: import('@playwright/test').Page) =>
+		page.evaluate(() => {
+			const data = localStorage.getItem('citynista-graph-v2');
+			return data ? JSON.parse(data) : null;
+		});
+
+	test('a middle node snaps onto the line between far endpoints', async ({ page }) => {
+		const canvas = page.locator('canvas');
+		await page.getByRole('button', { name: 'Street' }).click();
+		await canvas.click({ position: { x: 300, y: 300 }, force: true });
+		await canvas.click({ position: { x: 450, y: 330 }, force: true });
+		await canvas.click({ position: { x: 600, y: 300 }, force: true });
+		await page.keyboard.press('Escape');
+		await page.keyboard.press('Escape');
+		await expect(page.getByTitle('Select')).toHaveAttribute('aria-pressed', 'true');
+
+		// Select the bent middle node and shift-drag it near the line
+		// between the two far endpoints.
+		await canvas.click({ position: { x: 450, y: 330 }, force: true });
+		await page.keyboard.down('Shift');
+		await page.mouse.move(450, 330);
+		await page.mouse.down();
+		await page.mouse.move(450, 305, { steps: 5 });
+		await page.mouse.up();
+		await page.keyboard.up('Shift');
+
+		const data = await savedGraph(page);
+		const ys = data.nodes.map((n: { y: number }) => n.y);
+		// All three nodes share the far endpoints' y: perfectly straight.
+		expect(Math.abs(ys[1] - ys[0])).toBeLessThan(0.01);
+		expect(Math.abs(ys[2] - ys[0])).toBeLessThan(0.01);
+	});
+
+	test('an end node snaps onto the continuation of the adjacent road', async ({ page }) => {
+		const canvas = page.locator('canvas');
+		await page.getByRole('button', { name: 'Street' }).click();
+		await canvas.click({ position: { x: 250, y: 300 }, force: true });
+		await canvas.click({ position: { x: 450, y: 300 }, force: true });
+		await canvas.click({ position: { x: 620, y: 360 }, force: true });
+		await page.keyboard.press('Escape');
+		await page.keyboard.press('Escape');
+		await expect(page.getByTitle('Select')).toHaveAttribute('aria-pressed', 'true');
+
+		// Select the dangling end and shift-drag near the horizontal
+		// extension of the first segment.
+		await canvas.click({ position: { x: 620, y: 360 }, force: true });
+		await page.keyboard.down('Shift');
+		await page.mouse.move(620, 360);
+		await page.mouse.down();
+		await page.mouse.move(640, 308, { steps: 5 });
+		await page.mouse.up();
+		await page.keyboard.up('Shift');
+
+		const data = await savedGraph(page);
+		const ys = data.nodes.map((n: { y: number }) => n.y);
+		// The end node lands exactly on the first road's line.
+		expect(Math.abs(ys[2] - ys[0])).toBeLessThan(0.01);
+		expect(Math.abs(ys[2] - ys[1])).toBeLessThan(0.01);
+	});
+});

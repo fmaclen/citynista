@@ -398,6 +398,92 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 		segment.setControlPoint(midX + perpX * offset, midY + perpY * offset);
 	};
 
+	// Shift-dragging near the line between two of the node's far endpoints
+	// snaps the node onto it and straightens that pair — one perfectly
+	// straight continuous road. Every pair of segments through the node is
+	// a candidate, so it works at junctions and merge nodes too: the other
+	// arms simply follow the node.
+	const snapNodeStraight = (node: Node): boolean => {
+		const ends: { segment: Segment; far: Node }[] = [];
+		for (const segmentId of node.connectedSegments) {
+			const segment = editor.graph.segments.get(segmentId);
+			if (!segment) continue;
+			const farId = segment.startNodeId === node.id ? segment.endNodeId : segment.startNodeId;
+			const far = editor.graph.nodes.get(farId);
+			if (!far) continue;
+			ends.push({ segment, far });
+		}
+		if (ends.length < 2) return false;
+
+		const threshold = STRAIGHT_SNAP_PX * worldPerPixel();
+		let best: { x: number; y: number; pair: [Segment, Segment] } | null = null;
+		let bestDistance = threshold;
+		for (let i = 0; i < ends.length; i++) {
+			for (let j = i + 1; j < ends.length; j++) {
+				const ax = ends[i].far.x;
+				const ay = ends[i].far.y;
+				const dx = ends[j].far.x - ax;
+				const dy = ends[j].far.y - ay;
+				const lengthSq = dx * dx + dy * dy;
+				if (lengthSq < 0.0001) continue;
+
+				const t = ((node.x - ax) * dx + (node.y - ay) * dy) / lengthSq;
+				if (t < 0.05 || t > 0.95) continue;
+				const px = ax + dx * t;
+				const py = ay + dy * t;
+				const distance = Math.hypot(node.x - px, node.y - py);
+				if (distance < bestDistance) {
+					bestDistance = distance;
+					best = { x: px, y: py, pair: [ends[i].segment, ends[j].segment] };
+				}
+			}
+		}
+		if (!best) return false;
+
+		node.x = best.x;
+		node.y = best.y;
+		editor.nodeRenderer.updateNode(node);
+		for (const segment of best.pair) {
+			segment.clearControlPoint();
+			controlFrames.delete(segment.id);
+		}
+		return true;
+	};
+
+	// Shift-dragging a dangling end node near the extension of a road at
+	// its far end snaps it onto that line and straightens the segment — a
+	// perfectly straight continuation.
+	const snapEndNodeToContinuation = (node: Node): boolean => {
+		if (node.connectedSegments.length !== 1) return false;
+		const segment = editor.graph.segments.get(node.connectedSegments[0]);
+		if (!segment) return false;
+		const farId = segment.startNodeId === node.id ? segment.endNodeId : segment.startNodeId;
+		const far = editor.graph.nodes.get(farId);
+		if (!far) return false;
+
+		const threshold = STRAIGHT_SNAP_PX * worldPerPixel();
+		let best: { x: number; y: number } | null = null;
+		let bestDistance = threshold;
+		for (const direction of approachDirectionsAt(segment, far)) {
+			const along = (node.x - far.x) * direction.x + (node.y - far.y) * direction.y;
+			if (along < 1) continue;
+			const candidate = { x: far.x + direction.x * along, y: far.y + direction.y * along };
+			const distance = Math.hypot(node.x - candidate.x, node.y - candidate.y);
+			if (distance < bestDistance) {
+				bestDistance = distance;
+				best = candidate;
+			}
+		}
+		if (!best) return false;
+
+		node.x = best.x;
+		node.y = best.y;
+		editor.nodeRenderer.updateNode(node);
+		segment.clearControlPoint();
+		controlFrames.delete(segment.id);
+		return true;
+	};
+
 	// A node with exactly two segments becomes a perfect tangent point: the
 	// shared tangent is the line between the two far endpoints, and each
 	// segment's control sits on it at a third of its chord.
@@ -529,13 +615,16 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 				}
 			}
 			restoreControlFrames();
-			// Shift while dragging a single two-segment node keeps the road
-			// perfectly tangent through it: both controls re-solve every
-			// frame along the line between the far endpoints.
+			// Shift while dragging a single node: near the collinear line it
+			// snaps onto it and straightens; otherwise a two-segment node
+			// keeps the road perfectly tangent through it, both controls
+			// re-solving every frame.
 			if (event.shiftKey && editor.selectedNodes.size === 1) {
 				const nodeId = [...editor.selectedNodes][0];
 				const node = editor.graph.nodes.get(nodeId);
-				if (node) smoothTangentThrough(node);
+				if (node && !snapNodeStraight(node) && !snapEndNodeToContinuation(node)) {
+					smoothTangentThrough(node);
+				}
 			}
 			applyChanges();
 		} else if (dragTarget.type === 'controlPoint') {
