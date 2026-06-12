@@ -3,14 +3,12 @@ import type { ModeHandlers } from './types';
 import type { Editor } from '../editor.svelte';
 import type { Segment } from '../core/segment.svelte';
 import type { Node } from '../core/node.svelte';
-import { distanceToQuadraticBezier, getQuadraticBezierTangent } from '../geometry/bezier';
+import { getQuadraticBezierTangent } from '../geometry/bezier';
 import { CONTROL_SIZE } from '../rendering/selection-renderer';
+import { nodeHitAt, segmentHitAt, rectContents } from './picking';
 
-// Hit areas and snap radii are sized in screen pixels and converted to
-// world units at the current zoom — a constant finger-size on screen, so
-// zooming in shrinks the node halo and short segments become selectable.
-const NODE_HIT_PX = 20;
-const SEGMENT_HIT_PX = 14;
+// Snap radii are sized in screen pixels and converted to world units at
+// the current zoom; hit areas live in modes/picking.
 const CONTROL_POINT_HIT_PX = 17;
 const STRAIGHT_SNAP_PX = 14;
 const MARQUEE_COLOR = 0x4a9eff;
@@ -92,29 +90,12 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 	// when both endpoints fall inside.
 	const applyMarquee = (endX: number, endZ: number) => {
 		if (!marqueeStart) return;
-
-		const minX = Math.min(marqueeStart.x, endX);
-		const maxX = Math.max(marqueeStart.x, endX);
-		const minZ = Math.min(marqueeStart.z, endZ);
-		const maxZ = Math.max(marqueeStart.z, endZ);
-		const inside = (x: number, y: number) => x >= minX && x <= maxX && y >= minZ && y <= maxZ;
-
-		for (const node of editor.graph.nodes.values()) {
-			if (inside(node.x, node.y)) {
-				editor.selectNode(node.id);
-			}
+		const contents = rectContents(editor, marqueeStart.x, marqueeStart.z, endX, endZ);
+		for (const nodeId of contents.nodeIds) {
+			editor.selectNode(nodeId);
 		}
-		for (const segment of editor.graph.segments.values()) {
-			const startNode = editor.graph.nodes.get(segment.startNodeId);
-			const endNode = editor.graph.nodes.get(segment.endNodeId);
-			if (
-				startNode &&
-				endNode &&
-				inside(startNode.x, startNode.y) &&
-				inside(endNode.x, endNode.y)
-			) {
-				editor.selectSegment(segment.id);
-			}
+		for (const segmentId of contents.segmentIds) {
+			editor.selectSegment(segmentId);
 		}
 	};
 	// Control points expressed in their segment's local frame at drag start,
@@ -171,67 +152,15 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 
 	const worldPerPixel = () => editor.sceneManager.worldPerPixel();
 
-	// Hit radii are the geometry itself — the node's ring, the road's own
-	// half width — with the pixel size only as a floor for when the
-	// geometry is smaller than a finger. Zoomed in, the whole road body is
-	// hoverable; zoomed out, targets keep a clickable minimum.
-	const nodeHitAt = (worldX: number, worldZ: number) => {
-		const floor = NODE_HIT_PX * worldPerPixel();
-		let best: Node | null = null;
-		let bestScore = 1;
-		for (const node of editor.graph.nodes.values()) {
-			const radius = Math.max(editor.nodeRingRadius(node), floor);
-			const score = Math.hypot(node.x - worldX, node.y - worldZ) / radius;
-			if (score < bestScore) {
-				bestScore = score;
-				best = node;
-			}
-		}
-		return { node: best, score: bestScore };
-	};
-
-	const segmentHitAt = (worldX: number, worldZ: number) => {
-		const floor = SEGMENT_HIT_PX * worldPerPixel();
-		let best: Segment | null = null;
-		let bestScore = 1;
-		for (const segment of editor.graph.segments.values()) {
-			const startNode = editor.graph.nodes.get(segment.startNodeId);
-			const endNode = editor.graph.nodes.get(segment.endNodeId);
-			if (!startNode || !endNode) continue;
-
-			const cx = segment.controlX ?? (startNode.x + endNode.x) / 2;
-			const cy = segment.controlY ?? (startNode.y + endNode.y) / 2;
-
-			const dist = distanceToQuadraticBezier(
-				worldX,
-				worldZ,
-				startNode.x,
-				startNode.y,
-				cx,
-				cy,
-				endNode.x,
-				endNode.y
-			);
-			const score = dist / Math.max(segment.totalWidth / 2, floor);
-			if (score < bestScore) {
-				bestScore = score;
-				best = segment;
-			}
-		}
-		return { segment: best, score: bestScore };
-	};
-
-	// Inside a node's ring the node wins outright — roads pass through
-	// their nodes, so any distance-based tiebreak hands the disc to the
-	// segment. Hit radii are geometry-true, so the visible gap between two
-	// rings is exactly where the segment is picked.
+	// Inside a node's ring the node wins outright; shared logic lives in
+	// modes/picking.
 	const pickAt = (
 		worldX: number,
 		worldZ: number
 	): { node: Node | null; segment: Segment | null } => {
-		const nodeHit = nodeHitAt(worldX, worldZ);
+		const nodeHit = nodeHitAt(editor, worldX, worldZ);
 		if (nodeHit.node) return { node: nodeHit.node, segment: null };
-		return { node: null, segment: segmentHitAt(worldX, worldZ).segment };
+		return { node: null, segment: segmentHitAt(editor, worldX, worldZ).segment };
 	};
 
 	const findControlPointAt = (worldX: number, worldZ: number) => {

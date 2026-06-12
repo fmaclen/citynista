@@ -12,6 +12,7 @@ import { getQuadraticBezierPoint, getQuadraticBezierTangent } from '../geometry/
 // them, which outlines the union of the highlighted area without any
 // boundary math.
 const HOVER_COLOR = 0x4a9eff;
+const DANGER_COLOR = 0xef4444;
 const SELECT_COLOR = 0xfacc15;
 const SELECT_OPACITY = 0.18;
 const HOVER_OPACITY = 0.12;
@@ -171,13 +172,15 @@ export class SelectionRenderer {
 		startNode: Node,
 		endNode: Node,
 		startRadius: number,
-		endRadius: number
+		endRadius: number,
+		danger = false
 	) {
 		if (!this.hover) {
 			this.hover = createHighlight(HOVER_COLOR, HOVER_OPACITY, 0);
 			this.scene.add(this.hover.ribbon, this.hover.startCap, this.hover.endCap);
 		}
 
+		this.hover.material.color.setHex(danger ? DANGER_COLOR : HOVER_COLOR);
 		updateHighlight(this.hover, segment, startNode, endNode, startRadius, endRadius, HOVER_Y, 0);
 		this.hover.ribbon.visible = true;
 		this.hover.startCap.visible = true;

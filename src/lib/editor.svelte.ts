@@ -11,6 +11,7 @@ import { SelectionRenderer } from './rendering/selection-renderer';
 import type { ModeHandlers, Mode, DrawStyle } from './modes/types';
 import { setupDrawMode } from './modes/draw';
 import { setupSelectMode } from './modes/select';
+import { setupBulldozeMode } from './modes/bulldoze';
 
 const EDITOR_CONTEXT_KEY = Symbol('editor');
 
@@ -204,6 +205,8 @@ export class Editor {
 
 		if (mode === 'draw') {
 			this.modeHandlers = setupDrawMode(this);
+		} else if (mode === 'bulldoze') {
+			this.modeHandlers = setupBulldozeMode(this);
 		} else {
 			this.modeHandlers = setupSelectMode(this);
 		}
@@ -278,7 +281,8 @@ export class Editor {
 				startNode,
 				endNode,
 				this.nodeRingRadius(startNode),
-				this.nodeRingRadius(endNode)
+				this.nodeRingRadius(endNode),
+				this.mode === 'bulldoze'
 			);
 		} else {
 			this.selectionRenderer.hideHover();
@@ -290,14 +294,16 @@ export class Editor {
 	// and the node under the cursor, toned by why they show (selection wins).
 	private refreshRevealedNodes() {
 		const revealed = new SvelteMap<string, NodeTone>();
+		// In bulldoze mode the hover means "about to be demolished".
+		const hoverTone: NodeTone = this.mode === 'bulldoze' ? 'danger' : 'hover';
 		if (this.hoveredNodeId) {
-			revealed.set(this.hoveredNodeId, 'hover');
+			revealed.set(this.hoveredNodeId, hoverTone);
 		}
 		if (this.hoveredSegmentId) {
 			const segment = this.graph.segments.get(this.hoveredSegmentId);
 			if (segment) {
-				revealed.set(segment.startNodeId, 'hover');
-				revealed.set(segment.endNodeId, 'hover');
+				revealed.set(segment.startNodeId, hoverTone);
+				revealed.set(segment.endNodeId, hoverTone);
 			}
 		}
 		for (const nodeId of this.selectedNodes) {

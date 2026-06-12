@@ -6,7 +6,7 @@ export interface ModeHandlers {
 	cleanup?: () => void;
 }
 
-export type Mode = 'draw' | 'select';
+export type Mode = 'draw' | 'select' | 'bulldoze';
 
 // Cities-style drawing styles: straight click-click, curved as
 // start/apex/end (the apex click is the quadratic control point), and

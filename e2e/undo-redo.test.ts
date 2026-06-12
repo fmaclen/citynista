@@ -86,3 +86,52 @@ test.describe('Undo/redo', () => {
 		expect((await savedGraph(page)).segments.length).toBe(1);
 	});
 });
+
+test.describe('Bulldoze', () => {
+	test.beforeEach(async ({ page }) => {
+		await page.goto('/');
+		await page.evaluate((key) => localStorage.removeItem(key), STORAGE_KEY);
+		await page.reload();
+		await expect(page.locator('canvas')).toBeVisible();
+	});
+
+	const savedGraph = (page: import('@playwright/test').Page) =>
+		page.evaluate((key) => {
+			const data = localStorage.getItem(key);
+			return data ? JSON.parse(data) : null;
+		}, STORAGE_KEY);
+
+	test('click demolishes a segment, marquee demolishes an area, undo restores', async ({
+		page
+	}) => {
+		const canvas = page.locator('canvas');
+		await page.getByRole('button', { name: 'Street' }).click();
+		await canvas.click({ position: { x: 200, y: 300 }, force: true });
+		await canvas.click({ position: { x: 400, y: 300 }, force: true });
+		await canvas.click({ position: { x: 600, y: 300 }, force: true });
+		await page.keyboard.press('Escape');
+		await page.keyboard.press('Escape');
+
+		expect((await savedGraph(page)).segments.length).toBe(2);
+
+		await page.getByTitle('Bulldoze (click or drag to demolish)').click();
+
+		// Click the middle of the first segment: that segment dies, the rest
+		// survives.
+		await canvas.click({ position: { x: 300, y: 300 }, force: true });
+		expect((await savedGraph(page)).segments.length).toBe(1);
+
+		// Red marquee over everything left.
+		await page.mouse.move(150, 200);
+		await page.mouse.down();
+		await page.mouse.move(700, 420, { steps: 4 });
+		await page.mouse.up();
+		expect((await savedGraph(page)).segments.length).toBe(0);
+		expect((await savedGraph(page)).nodes.length).toBe(0);
+
+		// Both demolitions are plain undo steps.
+		await page.keyboard.press('ControlOrMeta+z');
+		await page.keyboard.press('ControlOrMeta+z');
+		expect((await savedGraph(page)).segments.length).toBe(2);
+	});
+});

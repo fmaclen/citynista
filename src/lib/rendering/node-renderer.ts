@@ -8,10 +8,11 @@ import type { Node } from '../core/node.svelte';
 const DEFAULT_RADIUS = 6;
 const RING_THICKNESS = 1.2;
 const NODE_HOVER_COLOR = 0x4a9eff;
+const NODE_DANGER_COLOR = 0xef4444;
 const NODE_SELECTED_COLOR = 0xfacc15;
 const NODE_OPACITY = 0.9;
 
-export type NodeTone = 'hover' | 'selected';
+export type NodeTone = 'hover' | 'selected' | 'danger';
 const NODE_SEGMENTS = 48;
 const NODE_Y_OFFSET = 0.2;
 
@@ -114,9 +115,12 @@ export class NodeRenderer {
 		const mesh = this.meshes.get(nodeId);
 		if (!mesh) return;
 
-		const selected = this.selectedNodes.has(nodeId) || this.revealed.get(nodeId) === 'selected';
+		const tone = this.revealed.get(nodeId);
+		const selected = this.selectedNodes.has(nodeId) || tone === 'selected';
 		const material = mesh.material as THREE.MeshBasicMaterial;
-		material.color.setHex(selected ? NODE_SELECTED_COLOR : NODE_HOVER_COLOR);
+		material.color.setHex(
+			selected ? NODE_SELECTED_COLOR : tone === 'danger' ? NODE_DANGER_COLOR : NODE_HOVER_COLOR
+		);
 	}
 
 	// Nodes are hidden by default; only revealed ones render — selection

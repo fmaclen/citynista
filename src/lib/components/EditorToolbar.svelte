@@ -3,7 +3,7 @@
 	import type { DrawStyle } from '$lib/modes/types';
 	import { LANE_COLORS, LANE_TEMPLATES, getTotalWidth } from '$lib/core/lane-template';
 	import { Button } from '$lib/components/ui/button';
-	import { MousePointer2, Redo2, Slash, Spline, Undo2, Waves, Trash2 } from '@lucide/svelte';
+	import { MousePointer2, Redo2, Slash, Spline, Undo2, Tractor, Waves } from '@lucide/svelte';
 
 	const editor = getEditorContext();
 
@@ -125,8 +125,16 @@
 			<Redo2 class="h-4 w-4" />
 		</Button>
 
-		<Button variant="ghost" size="icon" onclick={() => editor.clearAll()} title="Clear All">
-			<Trash2 class="h-4 w-4" />
+		<div class="mx-1 h-6 w-px bg-border"></div>
+
+		<Button
+			variant={editor.mode === 'bulldoze' ? 'default' : 'ghost'}
+			size="icon"
+			onclick={() => (editor.mode = 'bulldoze')}
+			title="Bulldoze (click or drag to demolish)"
+			aria-pressed={editor.mode === 'bulldoze'}
+		>
+			<Tractor class="h-4 w-4" />
 		</Button>
 	</nav>
 </div>
