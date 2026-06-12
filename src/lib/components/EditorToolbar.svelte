@@ -15,6 +15,17 @@
 		{ id: 'smooth', label: 'Smooth (tangent-continuous)', icon: Waves }
 	];
 
+	// Toolbar buttons return focus to the page after acting, so mode keys
+	// (Escape, Tab, Delete) and shortcuts keep working right after a click —
+	// the keydown guards only pass events targeted at <body>.
+	function press(action: () => void) {
+		return (event: MouseEvent) => {
+			action();
+			const target = event.currentTarget;
+			if (target instanceof HTMLElement) target.blur();
+		};
+	}
+
 	function activatePreset(templateId: string) {
 		editor.currentLaneTemplateId = templateId;
 		editor.mode = 'draw';
@@ -47,7 +58,7 @@
 		<Button
 			variant={editor.mode === 'select' ? 'default' : 'ghost'}
 			size="icon"
-			onclick={() => (editor.mode = 'select')}
+			onclick={press(() => (editor.mode = 'select'))}
 			title="Select"
 			aria-pressed={editor.mode === 'select'}
 		>
@@ -67,7 +78,7 @@
 				aria-label={template.name}
 				aria-pressed={active}
 				title="Draw {template.name} — {totalWidth}m (key {i + 1})"
-				onclick={() => activatePreset(template.id)}
+				onclick={press(() => activatePreset(template.id))}
 			>
 				<div
 					class="absolute inset-y-0 left-1/2 flex -translate-x-1/2"
@@ -95,7 +106,7 @@
 				<Button
 					variant={editor.drawStyle === style.id ? 'default' : 'ghost'}
 					size="icon"
-					onclick={() => (editor.drawStyle = style.id)}
+					onclick={press(() => (editor.drawStyle = style.id))}
 					title="{style.label} (Tab cycles)"
 					aria-pressed={editor.drawStyle === style.id}
 				>
@@ -110,7 +121,7 @@
 			variant="ghost"
 			size="icon"
 			disabled={!editor.canUndo}
-			onclick={() => editor.undo()}
+			onclick={press(() => editor.undo())}
 			title="Undo (⌘Z)"
 		>
 			<Undo2 class="h-4 w-4" />
@@ -119,7 +130,7 @@
 			variant="ghost"
 			size="icon"
 			disabled={!editor.canRedo}
-			onclick={() => editor.redo()}
+			onclick={press(() => editor.redo())}
 			title="Redo (⇧⌘Z)"
 		>
 			<Redo2 class="h-4 w-4" />
@@ -130,7 +141,7 @@
 		<Button
 			variant={editor.mode === 'bulldoze' ? 'default' : 'ghost'}
 			size="icon"
-			onclick={() => (editor.mode = 'bulldoze')}
+			onclick={press(() => (editor.mode = 'bulldoze'))}
 			title="Bulldoze (click or drag to demolish)"
 			aria-pressed={editor.mode === 'bulldoze'}
 		>

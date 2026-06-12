@@ -133,5 +133,10 @@ test.describe('Bulldoze', () => {
 		await page.keyboard.press('ControlOrMeta+z');
 		await page.keyboard.press('ControlOrMeta+z');
 		expect((await savedGraph(page)).segments.length).toBe(2);
+
+		// Escape leaves bulldoze mode even right after clicking the toolbar
+		// button (which must not keep focus).
+		await page.keyboard.press('Escape');
+		await expect(page.getByTitle('Select')).toHaveAttribute('aria-pressed', 'true');
 	});
 });
