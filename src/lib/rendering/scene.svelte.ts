@@ -206,6 +206,15 @@ export class SceneManager {
 		}
 	}
 
+	// World units per screen pixel at the current zoom — hit areas and snap
+	// radii are sized in pixels and converted through this, so they stay a
+	// constant finger-size on screen at any zoom.
+	worldPerPixel(): number {
+		const height = this.container.clientHeight;
+		if (height <= 0) return 1;
+		return this.getFrustumWidth() / height;
+	}
+
 	screenToWorld(screenX: number, screenY: number): { x: number; z: number } {
 		const rect = this.renderer.domElement.getBoundingClientRect();
 		const x = ((screenX - rect.left) / rect.width) * 2 - 1;

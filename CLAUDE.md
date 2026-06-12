@@ -92,7 +92,8 @@ After drawing (and only then — moving segments in select mode never splits), `
 - **Never use `waitForTimeout()` in tests** - rely on Playwright's default timeouts and auto-waiting
 - Use positive and negative assertions to wait for things (e.g., `await expect(element).toBeVisible()`, `await expect(element).not.toBeVisible()`)
 - Playwright automatically waits for elements to be actionable before performing actions
-- For pointer interactions, world→screen at the default camera is `screen = center + world * (720 / 500)` at a 1280×720 viewport
+- For pointer interactions, world→screen at the default camera is `screen = center + world * (720 / 500)` at a 1280×720 viewport; wheel zoom multiplies by 1.1 per step and anchors at the viewport center
+- Hit areas are the geometry itself — a node's ring, a road's half width — with a screen-pixel floor (via `sceneManager.worldPerPixel()`) for when geometry is smaller than a finger: zoomed in the whole road body is hoverable, zoomed out targets keep a clickable minimum; between an overlapping node and segment, the nearer in proportion to its hit radius wins
 - Geometry can be debugged headlessly: `buildRoadLayers` runs under `bun` with a duck-typed graph (see git history for SVG-dump debug scripts)
 
 ## LLM Instructions

@@ -143,8 +143,9 @@ export class Editor {
 		}
 	}
 
-	// Node rings hug the widest road meeting at the node.
-	private nodeRingRadius(node: { connectedSegments: string[] }) {
+	// Node rings hug the widest road meeting at the node; the modes also use
+	// this as the node's hit radius.
+	nodeRingRadius(node: { connectedSegments: string[] }) {
 		let maxHalfWidth = 0;
 		for (const segmentId of node.connectedSegments) {
 			const segment = this.graph.segments.get(segmentId);

@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import type { ModeHandlers } from './types';
 import type { Editor } from '../editor.svelte';
 import type { Segment } from '../core/segment.svelte';
+import type { Node } from '../core/node.svelte';
 import { Graph } from '../core/graph.svelte';
 import { buildRoadLayers } from '../core/road-geometry';
 import { createLanesFrom, getLaneTemplate, getTotalWidth } from '../core/lane-template';
@@ -18,10 +19,14 @@ const GHOST_NODE_COLOR = 0x4a9eff;
 const GHOST_NODE_SNAPPED_COLOR = 0xfacc15;
 const GHOST_NODE_Y = 0.3;
 const MIN_PREVIEW_LENGTH = 1;
-const SEGMENT_SNAP_THRESHOLD = 12;
+// Snap radii are sized in screen pixels and converted to world units at the
+// current zoom, so snapping feels the same at any zoom and zooming in lets
+// clicks land between close nodes.
+const NODE_SNAP_PX = 20;
+const SEGMENT_SNAP_PX = 17;
 // A segment snap this close to one of its endpoints uses the node instead of
 // splitting off a sliver.
-const SEGMENT_END_SNAP_DISTANCE = 10;
+const SEGMENT_END_SNAP_PX = 14;
 // Shift snaps the pending direction to 22.5° increments — or exactly onto
 // the tangent of the road being extended when that is closer.
 const ANGLE_SNAP_INCREMENT = Math.PI / 8;
@@ -84,9 +89,12 @@ export function setupDrawMode(editor: Editor): ModeHandlers {
 	};
 	updateCursorRadius();
 
+	const worldPerPixel = () => editor.sceneManager.worldPerPixel();
+
 	const findSegmentSnap = (worldX: number, worldZ: number): SegmentSnap | null => {
 		let best: SegmentSnap | null = null;
-		let bestDistance = SEGMENT_SNAP_THRESHOLD;
+		let bestDistance = SEGMENT_SNAP_PX * worldPerPixel();
+		const endSnapDistance = SEGMENT_END_SNAP_PX * worldPerPixel();
 
 		for (const segment of editor.graph.segments.values()) {
 			const startNode = editor.graph.nodes.get(segment.startNodeId);
@@ -110,8 +118,8 @@ export function setupDrawMode(editor: Editor): ModeHandlers {
 
 			// Too close to an endpoint: treat as a node snap on that endpoint.
 			if (
-				Math.hypot(closest.x - startNode.x, closest.y - startNode.y) < SEGMENT_END_SNAP_DISTANCE ||
-				Math.hypot(closest.x - endNode.x, closest.y - endNode.y) < SEGMENT_END_SNAP_DISTANCE
+				Math.hypot(closest.x - startNode.x, closest.y - startNode.y) < endSnapDistance ||
+				Math.hypot(closest.x - endNode.x, closest.y - endNode.y) < endSnapDistance
 			) {
 				continue;
 			}
@@ -222,8 +230,25 @@ export function setupDrawMode(editor: Editor): ModeHandlers {
 		return { x: sx + tangent.x * reach, y: sy + tangent.y * reach };
 	};
 
+	// Node snapping covers the node's visible ring, pixel-floored — over a
+	// wide junction the whole disc snaps, zoomed out a minimum remains.
+	const findNodeSnap = (worldX: number, worldZ: number) => {
+		const floor = NODE_SNAP_PX * worldPerPixel();
+		let best: Node | null = null;
+		let bestScore = 1;
+		for (const node of editor.graph.nodes.values()) {
+			const radius = Math.max(editor.nodeRingRadius(node), floor);
+			const score = Math.hypot(node.x - worldX, node.y - worldZ) / radius;
+			if (score < bestScore) {
+				bestScore = score;
+				best = node;
+			}
+		}
+		return best;
+	};
+
 	const resolveSnap = (worldX: number, worldZ: number): SnapResult => {
-		const node = editor.graph.findNodeAt(worldX, worldZ);
+		const node = findNodeSnap(worldX, worldZ);
 		if (node) {
 			return { kind: 'node', nodeId: node.id, x: node.x, y: node.y };
 		}

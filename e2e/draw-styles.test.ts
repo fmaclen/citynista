@@ -107,3 +107,42 @@ test.describe('Draw styles', () => {
 		expect(data.segments.every((s: { controlX?: number }) => s.controlX !== undefined)).toBe(true);
 	});
 });
+
+test.describe('Zoom-adaptive hit areas', () => {
+	test.beforeEach(async ({ page }) => {
+		await page.goto('/');
+		await page.evaluate(() => localStorage.removeItem('citynista-graph-v2'));
+		await page.reload();
+		await expect(page.locator('canvas')).toBeVisible();
+	});
+
+	test('zooming in makes a short segment selectable next to its nodes', async ({ page }) => {
+		const canvas = page.locator('canvas');
+		await page.getByRole('button', { name: 'Street' }).click();
+
+		// A short segment: ~35px on screen at the default zoom, shorter than
+		// the combined node halos.
+		await canvas.click({ position: { x: 400, y: 300 }, force: true });
+		await canvas.click({ position: { x: 435, y: 300 }, force: true });
+		await page.keyboard.press('Escape');
+		await page.keyboard.press('Escape');
+		await expect(page.getByTitle('Select')).toHaveAttribute('aria-pressed', 'true');
+
+		// Zoom in hard; zoom anchors at the viewport center, so the segment
+		// (world midpoint -154.5, -41.7) lands at a computable screen spot
+		// while hit halos stay pixel-sized.
+		await page.mouse.move(640, 360);
+		for (let i = 0; i < 8; i++) {
+			await page.mouse.wheel(0, -100);
+		}
+
+		// scale = (720/500) * 1.1^8 ≈ 3.087 px per world unit.
+		const x = Math.round(640 - 154.5 * 3.087);
+		const y = Math.round(360 - 41.7 * 3.087);
+
+		// Click the middle of the (now long) segment: the lane editor panel
+		// opening proves a segment — not a node — was selected.
+		await canvas.click({ position: { x, y }, force: true });
+		await expect(page.getByRole('heading', { name: 'Lanes' })).toBeVisible();
+	});
+});

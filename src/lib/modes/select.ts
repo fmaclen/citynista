@@ -5,10 +5,13 @@ import type { Segment } from '../core/segment.svelte';
 import type { Node } from '../core/node.svelte';
 import { distanceToQuadraticBezier, getQuadraticBezierTangent } from '../geometry/bezier';
 
-const NODE_HIT_THRESHOLD = 15;
-const SEGMENT_HIT_THRESHOLD = 10;
-const CONTROL_POINT_HIT_THRESHOLD = 12;
-const STRAIGHT_SNAP_DISTANCE = 10;
+// Hit areas and snap radii are sized in screen pixels and converted to
+// world units at the current zoom — a constant finger-size on screen, so
+// zooming in shrinks the node halo and short segments become selectable.
+const NODE_HIT_PX = 20;
+const SEGMENT_HIT_PX = 14;
+const CONTROL_POINT_HIT_PX = 17;
+const STRAIGHT_SNAP_PX = 14;
 const MARQUEE_COLOR = 0x4a9eff;
 const MARQUEE_Y = 0.5;
 
@@ -165,11 +168,31 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 		}
 	};
 
-	const findNodeAt = (worldX: number, worldZ: number) => {
-		return editor.graph.findNodeAt(worldX, worldZ, NODE_HIT_THRESHOLD);
+	const worldPerPixel = () => editor.sceneManager.worldPerPixel();
+
+	// Hit radii are the geometry itself — the node's ring, the road's own
+	// half width — with the pixel size only as a floor for when the
+	// geometry is smaller than a finger. Zoomed in, the whole road body is
+	// hoverable; zoomed out, targets keep a clickable minimum.
+	const nodeHitAt = (worldX: number, worldZ: number) => {
+		const floor = NODE_HIT_PX * worldPerPixel();
+		let best: Node | null = null;
+		let bestScore = 1;
+		for (const node of editor.graph.nodes.values()) {
+			const radius = Math.max(editor.nodeRingRadius(node), floor);
+			const score = Math.hypot(node.x - worldX, node.y - worldZ) / radius;
+			if (score < bestScore) {
+				bestScore = score;
+				best = node;
+			}
+		}
+		return { node: best, score: bestScore };
 	};
 
-	const findSegmentAt = (worldX: number, worldZ: number) => {
+	const segmentHitAt = (worldX: number, worldZ: number) => {
+		const floor = SEGMENT_HIT_PX * worldPerPixel();
+		let best: Segment | null = null;
+		let bestScore = 1;
 		for (const segment of editor.graph.segments.values()) {
 			const startNode = editor.graph.nodes.get(segment.startNodeId);
 			const endNode = editor.graph.nodes.get(segment.endNodeId);
@@ -188,12 +211,28 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 				endNode.x,
 				endNode.y
 			);
-
-			if (dist < SEGMENT_HIT_THRESHOLD) {
-				return segment;
+			const score = dist / Math.max(segment.totalWidth / 2, floor);
+			if (score < bestScore) {
+				bestScore = score;
+				best = segment;
 			}
 		}
-		return null;
+		return { segment: best, score: bestScore };
+	};
+
+	// Between a node and a segment that both fall under the cursor, the
+	// nearer one in proportion to its own hit radius wins — clicking the
+	// body of a short segment selects it even inside a node's halo.
+	const pickAt = (
+		worldX: number,
+		worldZ: number
+	): { node: Node | null; segment: Segment | null } => {
+		const nodeHit = nodeHitAt(worldX, worldZ);
+		const segmentHit = segmentHitAt(worldX, worldZ);
+		if (nodeHit.node && (!segmentHit.segment || nodeHit.score <= segmentHit.score)) {
+			return { node: nodeHit.node, segment: null };
+		}
+		return { node: null, segment: segmentHit.segment };
 	};
 
 	const findControlPointAt = (worldX: number, worldZ: number) => {
@@ -210,7 +249,7 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 
 			const dx = worldX - cx;
 			const dz = worldZ - cy;
-			if (Math.sqrt(dx * dx + dz * dz) < CONTROL_POINT_HIT_THRESHOLD) {
+			if (Math.sqrt(dx * dx + dz * dz) < CONTROL_POINT_HIT_PX * worldPerPixel()) {
 				return segment;
 			}
 		}
@@ -299,7 +338,7 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 		);
 		const nearestX = startNode.x + chordX * t;
 		const nearestY = startNode.y + chordY * t;
-		if (Math.hypot(worldX - nearestX, worldZ - nearestY) < STRAIGHT_SNAP_DISTANCE) {
+		if (Math.hypot(worldX - nearestX, worldZ - nearestY) < STRAIGHT_SNAP_PX * worldPerPixel()) {
 			segment.clearControlPoint();
 			return;
 		}
@@ -415,7 +454,7 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 			return;
 		}
 
-		const node = findNodeAt(worldPos.x, worldPos.z);
+		const { node, segment: pickedSegment } = pickAt(worldPos.x, worldPos.z);
 		if (node) {
 			if (event.shiftKey) {
 				if (editor.selectedNodes.has(node.id)) {
@@ -436,7 +475,7 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 			return;
 		}
 
-		const segment = findSegmentAt(worldPos.x, worldPos.z);
+		const segment = pickedSegment;
 		if (segment) {
 			if (event.shiftKey) {
 				if (editor.selectedSegments.has(segment.id)) {
@@ -468,9 +507,9 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 		}
 
 		if (!isDragging || !dragTarget) {
-			const node = findNodeAt(worldPos.x, worldPos.z);
+			const { node, segment } = pickAt(worldPos.x, worldPos.z);
 			editor.setHoveredNode(node?.id ?? null);
-			editor.setHoveredSegment(node ? null : (findSegmentAt(worldPos.x, worldPos.z)?.id ?? null));
+			editor.setHoveredSegment(segment?.id ?? null);
 			return;
 		}
 

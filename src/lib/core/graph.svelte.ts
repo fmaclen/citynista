@@ -57,14 +57,16 @@ export class Graph {
 	}
 
 	findNodeAt(x: number, y: number, threshold: number = 15) {
+		let best: Node | null = null;
+		let bestDistance = threshold;
 		for (const node of this.nodes.values()) {
-			const dx = node.x - x;
-			const dy = node.y - y;
-			if (Math.sqrt(dx * dx + dy * dy) < threshold) {
-				return node;
+			const distance = Math.hypot(node.x - x, node.y - y);
+			if (distance < bestDistance) {
+				bestDistance = distance;
+				best = node;
 			}
 		}
-		return null;
+		return best;
 	}
 
 	clear() {
