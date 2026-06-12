@@ -4,6 +4,7 @@ export type LaneType =
 	| 'bike'
 	| 'parking'
 	| 'transit'
+	| 'turn'
 	| 'sidewalk'
 	| 'grass'
 	| 'median';

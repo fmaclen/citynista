@@ -80,24 +80,24 @@
 					"direction": "backward"
 				},
 				{
-					"type": "road",
-					"width": 3.5,
-					"direction": "backward"
-				},
-				{
 					"type": "median",
 					"width": 3,
 					"direction": "bidirectional"
 				},
 				{
-					"type": "road",
+					"type": "turn",
 					"width": 3.5,
-					"direction": "forward"
+					"direction": "backward"
 				},
 				{
 					"type": "road",
 					"width": 3.5,
-					"direction": "forward"
+					"direction": "backward"
+				},
+				{
+					"type": "road",
+					"width": 3.5,
+					"direction": "backward"
 				}
 			]
 		},
@@ -130,11 +130,6 @@
 					"type": "road",
 					"width": 3.5,
 					"direction": "forward"
-				},
-				{
-					"type": "road",
-					"width": 3.5,
-					"direction": "forward"
 				}
 			]
 		},
@@ -154,7 +149,7 @@
 					"direction": "backward"
 				},
 				{
-					"type": "road",
+					"type": "turn",
 					"width": 3.5,
 					"direction": "backward"
 				},

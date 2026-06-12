@@ -2,12 +2,14 @@ import * as THREE from 'three';
 import type { Graph } from '../core/graph.svelte';
 import {
 	buildNodeLayers,
+	buildNodePaint,
 	computeIntersectionTrims,
 	getLaneIntervals,
 	isContinuationNode,
 	sampleTrimmedCenterline,
 	transitionMorph
 } from '../core/road-geometry';
+import type { NodePaintPath } from '../core/road-geometry';
 import type {
 	CenterlineSample,
 	Point,
@@ -24,7 +26,13 @@ interface StripMorph {
 	end?: { length: number; offsetA: number; offsetB: number };
 }
 import { getTotalWidth } from '../core/lane-template';
-import { LANE_TYPE_LIST, laneColor, laneLayerY, laneSurface } from '../core/lane-types';
+import {
+	LANE_TYPE_LIST,
+	laneColor,
+	laneLayerY,
+	lanePaintBetween,
+	laneSurface
+} from '../core/lane-types';
 import type { Lane } from '../core/types';
 
 const LAYER_Y: Record<RoadLayerId, number> = Object.fromEntries(
@@ -38,6 +46,32 @@ const LAYER_COLORS: Record<RoadLayerId, string> = Object.fromEntries(
 // Segment ribbons reach slightly into their node pieces so no hairline
 // cracks can open between them.
 const JOIN_OVERLAP = 0.5;
+
+// Lane paint: thin stripes drawn on the lane boundaries the strips already
+// define. Dashed white between same-direction travel lanes, solid white
+// against accessory lanes (bike, parking, transit), solid muted yellow
+// between opposing flows. Paint renders above every roadway color but
+// below medians, follows transition morphs, and stops short of junction
+// mouths — junction interiors stay unpainted until crosswalks exist.
+const PAINT_Y = 0.085;
+const PAINT_WIDTH = 0.16;
+const PAINT_DASH = 2.2;
+const PAINT_GAP = 2.6;
+const PAINT_SOLID_STEP = 2.5;
+const PAINT_END_INSET = 0.2;
+// A branching lane line stops once it converges this close to the line it
+// merges into — the remaining sliver of lane is not usable, and real paint
+// leaves the same gap.
+const PAINT_BRANCH_GAP = 1.5;
+// A turn pocket's same-direction flank line holds back from the pocket's
+// open end — cars enter across the first stretch, so the paint starts
+// after it. The opposing-side line stays unbroken.
+const TURN_POCKET_ENTRANCE = 10;
+// Islands pinched below this width by a transition end square at the
+// threshold instead of riding to the seam as a sliver.
+const ISLAND_MIN_WIDTH = 0.8;
+const PAINT_COLORS = { lane: '#C9C9C0', center: '#C3B47C' } as const;
+type PaintColor = keyof typeof PAINT_COLORS;
 // Tiny per-piece elevation so coplanar pieces never z-fight; stays well
 // below the 0.01 gap between layers.
 const PIECE_JITTER_STEP = 0.0002;
@@ -58,6 +92,7 @@ export class RoadRenderer {
 	private rootGroup: THREE.Group;
 	private opacity: number;
 	private elevation: number;
+	private paintMaterials = new Map<PaintColor, THREE.MeshBasicMaterial>();
 	private materials = new Map<RoadLayerId, THREE.MeshBasicMaterial>();
 	private pieces = new Map<string, Piece>();
 	private jitters = new Map<string, number>();
@@ -177,10 +212,14 @@ export class RoadRenderer {
 			if (this.pieces.get(key)?.hash === hash) continue;
 
 			this.removePiece(key);
-			const group = this.buildLayerGroup(
-				buildNodeLayers(graph, node, centerlines),
-				this.jitterFor(key)
-			);
+			const jitterValue = this.jitterFor(key);
+			const group = this.buildLayerGroup(buildNodeLayers(graph, node, centerlines), jitterValue);
+			for (const mesh of this.buildNodePaintMeshes(
+				buildNodePaint(graph, node, centerlines),
+				jitterValue
+			)) {
+				group.add(mesh);
+			}
 			this.rootGroup.add(group);
 			this.pieces.set(key, { hash, group });
 		}
@@ -268,8 +307,11 @@ export class RoadRenderer {
 				// Overlap stubs past a node are only invisible for plain road
 				// (they hide under the asphalt patch or the neighbor's road);
 				// every other lane draws above road and would show them.
-				const stubSafeStart = continuityJoinStart || (interval.laneType === 'road' && !morphStart);
-				const stubSafeEnd = continuityJoinEnd || (interval.laneType === 'road' && !morphEnd);
+				// At transition seams both ribbons arrive at the anchor's
+				// offsets vertex-for-vertex, so a road stub hides inside the
+				// counterpart's roadway exactly like at continuations.
+				const stubSafeStart = continuityJoinStart || interval.laneType === 'road';
+				const stubSafeEnd = continuityJoinEnd || interval.laneType === 'road';
 				group.add(
 					this.buildStrip(
 						samples,
@@ -290,8 +332,35 @@ export class RoadRenderer {
 			// sliver, and never poking straight into the active taper
 			// (trimCenterline caps trims at 45% of the length, so it cannot
 			// be used here).
-			const cutStart = morphStart && !targetStart ? lengthStart : 0;
-			const cutEnd = morphEnd && !targetEnd ? lengthEnd : 0;
+			// A strip whose target pinches it below a usable width ends in a
+			// square cut where the pinch crosses the threshold — a median
+			// funneling into a narrow road must never ride to the seam as a
+			// sliver wall. The morph restarts from the eased cross-section
+			// at the cut, so the visible taper stays smooth.
+			const ownWidth = interval.end - interval.start;
+			const pinch = (target: { start: number; end: number } | null | undefined, length: number) => {
+				if (!target) return null;
+				const targetWidth = target.end - target.start;
+				if (targetWidth >= ISLAND_MIN_WIDTH || ownWidth <= targetWidth) return null;
+				let d = 0;
+				while (d < length) {
+					const width = targetWidth + (ownWidth - targetWidth) * morphEase(d, length);
+					if (width >= ISLAND_MIN_WIDTH) break;
+					d += 0.5;
+				}
+				const f = morphEase(d, length);
+				return {
+					at: d,
+					length: length - d,
+					offsetA: target.start + (interval.start - target.start) * f,
+					offsetB: target.end + (interval.end - target.end) * f
+				};
+			};
+			const pinchStart = morphStart ? pinch(targetStart, lengthStart) : null;
+			const pinchEnd = morphEnd ? pinch(targetEnd, lengthEnd) : null;
+
+			const cutStart = morphStart && !targetStart ? lengthStart : (pinchStart?.at ?? 0);
+			const cutEnd = morphEnd && !targetEnd ? lengthEnd : (pinchEnd?.at ?? 0);
 			let stripSamples = samples;
 			if (cutStart > 0 || cutEnd > 0) {
 				const remaining = total - cutStart - cutEnd;
@@ -304,6 +373,14 @@ export class RoadRenderer {
 				}
 				if (stripSamples.length < 2) continue;
 			}
+
+			const islandMorph: StripMorph | undefined =
+				pinchStart || pinchEnd
+					? {
+							start: pinchStart ?? stripMorph?.start,
+							end: pinchEnd ?? stripMorph?.end
+						}
+					: stripMorph;
 
 			// Grass and median strips overlap into nodes that continue the
 			// cross-section or morph it (matched strips meet their
@@ -318,12 +395,281 @@ export class RoadRenderer {
 					continuityJoinStart ? JOIN_OVERLAP : 0,
 					continuityJoinEnd ? JOIN_OVERLAP : 0,
 					jitter,
-					stripMorph
+					islandMorph
 				)
 			);
 		}
 
+		for (const mesh of this.buildPaint(
+			lanes,
+			intervals,
+			samples,
+			total,
+			morphStart,
+			morphEnd,
+			lengthStart,
+			lengthEnd,
+			continuityJoinStart,
+			continuityJoinEnd,
+			jitter
+		)) {
+			group.add(mesh);
+		}
+
 		return group;
+	}
+
+	// One mesh per paint color holding every stripe of the segment as quads
+	// walked along the centerline; boundary offsets follow the same morph
+	// ease as the strips, so paint tapers with its lane. A boundary whose
+	// neighbor strip has no counterpart across a transition cuts where the
+	// morph begins, like the strip itself.
+	private buildPaint(
+		lanes: Lane[],
+		intervals: ReturnType<typeof getLaneIntervals>,
+		samples: CenterlineSample[],
+		total: number,
+		morphStart: TransitionMorph | null,
+		morphEnd: TransitionMorph | null,
+		lengthStart: number,
+		lengthEnd: number,
+		continuityJoinStart: boolean,
+		continuityJoinEnd: boolean,
+		jitter: number
+	): THREE.Mesh[] {
+		const cumulative: number[] = [0];
+		for (let i = 1; i < samples.length; i++) {
+			cumulative.push(
+				cumulative[i - 1] +
+					Math.hypot(samples[i].x - samples[i - 1].x, samples[i].y - samples[i - 1].y)
+			);
+		}
+
+		const positions: Record<PaintColor, number[]> = { lane: [], center: [] };
+		const halfWidth = getTotalWidth(lanes) / 2;
+
+		// Boundary targets at each end come from the morph itself: lane
+		// lines stay straight wherever a lane exists on both sides and
+		// converge into their neighbor where one branches; a boundary that
+		// stops existing at the node cuts where the morph begins.
+		let boundary = -halfWidth;
+		for (let k = 0; k + 1 < lanes.length; k++) {
+			boundary += lanes[k].width;
+			const paint = lanePaintBetween(lanes[k], lanes[k + 1]);
+			if (!paint) continue;
+			const offset = boundary;
+
+			const startTarget = morphStart ? morphStart.laneBoundaries[k] : undefined;
+			const endTarget = morphEnd ? morphEnd.laneBoundaries[k] : undefined;
+
+			let from = continuityJoinStart || morphStart ? 0 : PAINT_END_INSET;
+			let to = total - (continuityJoinEnd || morphEnd ? 0 : PAINT_END_INSET);
+			if (startTarget === null) from = Math.max(from, lengthStart);
+			if (endTarget === null) to = Math.min(to, total - lengthEnd);
+
+			// A branching line ends early with a gap: once it has converged
+			// to within a sliver of the line it merges into, the lane is no
+			// longer usable and real paint just stops.
+			const branchCut = (target: number | null | undefined, length: number) => {
+				if (target == null || Math.abs(offset - target) <= PAINT_BRANCH_GAP + 0.5) return 0;
+				let d = 0;
+				while (d < length) {
+					const eased = target + (offset - target) * morphEase(d, length);
+					if (Math.abs(eased - target) >= PAINT_BRANCH_GAP) return d;
+					d += 0.5;
+				}
+				return length;
+			};
+			from = Math.max(from, branchCut(startTarget, lengthStart));
+			const endCut = branchCut(endTarget, lengthEnd);
+			if (endCut > 0) to = Math.min(to, total - endCut);
+
+			// The pocket's entrance is the transition end where it emerges
+			// from the median; the flank line starts after the entire taper
+			// plus the entrance stretch, so it is dead straight — never
+			// curved. Same-key continuations are untouched so chained
+			// pockets stay sealed.
+			const turnFlank =
+				paint.color === 'lane' && (lanes[k].type === 'turn' || lanes[k + 1].type === 'turn');
+			if (turnFlank) {
+				if (morphStart) from = Math.max(from, lengthStart + TURN_POCKET_ENTRANCE);
+				if (morphEnd) to = Math.min(to, total - lengthEnd - TURN_POCKET_ENTRANCE);
+			}
+			if (to - from < 0.5) continue;
+
+			const offsetAt = (d: number) => {
+				let value = offset;
+				if (startTarget != null && lengthStart > 0.0001) {
+					const f = morphEase(d, lengthStart);
+					value = startTarget + (value - startTarget) * f;
+				}
+				if (endTarget != null && lengthEnd > 0.0001) {
+					const f = morphEase(total - d, lengthEnd);
+					value = endTarget + (value - endTarget) * f;
+				}
+				return value;
+			};
+			const pointAt = (d: number) => {
+				let i = 1;
+				while (i < cumulative.length - 1 && cumulative[i] < d) i++;
+				const span = cumulative[i] - cumulative[i - 1];
+				const t = span > 0.0001 ? (d - cumulative[i - 1]) / span : 0;
+				const a = samples[i - 1];
+				const b = samples[i];
+				let nx = a.normalX + (b.normalX - a.normalX) * t;
+				let ny = a.normalY + (b.normalY - a.normalY) * t;
+				const length = Math.hypot(nx, ny);
+				if (length > 0.0001) {
+					nx /= length;
+					ny /= length;
+				}
+				const value = offsetAt(d);
+				return {
+					x: a.x + (b.x - a.x) * t + nx * value,
+					z: a.y + (b.y - a.y) * t + ny * value,
+					nx,
+					ny
+				};
+			};
+
+			const target = positions[paint.color];
+			const stepLength = paint.dashed ? PAINT_DASH : PAINT_SOLID_STEP;
+			const gap = paint.dashed ? PAINT_GAP : 0;
+			const half = PAINT_WIDTH / 2;
+			let d = from;
+			let previous = pointAt(d);
+			while (d < to - 0.05) {
+				const end = Math.min(d + stepLength, to);
+				if (end - d < 0.3) break;
+				const p1 = gap === 0 ? previous : pointAt(d);
+				const p2 = pointAt(end);
+				target.push(
+					p1.x - p1.nx * half,
+					0,
+					p1.z - p1.ny * half,
+					p1.x + p1.nx * half,
+					0,
+					p1.z + p1.ny * half,
+					p2.x - p2.nx * half,
+					0,
+					p2.z - p2.ny * half,
+					p1.x + p1.nx * half,
+					0,
+					p1.z + p1.ny * half,
+					p2.x + p2.nx * half,
+					0,
+					p2.z + p2.ny * half,
+					p2.x - p2.nx * half,
+					0,
+					p2.z - p2.ny * half
+				);
+				previous = p2;
+				d = end + gap;
+			}
+		}
+
+		return this.paintMeshes(positions, jitter);
+	}
+
+	// Paint across node pieces: dashes walked along the corner-curve paths
+	// the geometry exports, so lines flow through bends.
+	private buildNodePaintMeshes(paths: NodePaintPath[], jitter: number): THREE.Mesh[] {
+		const positions: Record<PaintColor, number[]> = { lane: [], center: [] };
+		const half = PAINT_WIDTH / 2;
+
+		for (const path of paths) {
+			const points = path.points;
+			if (points.length < 2) continue;
+			const cumulative: number[] = [0];
+			for (let i = 1; i < points.length; i++) {
+				cumulative.push(
+					cumulative[i - 1] +
+						Math.hypot(points[i].x - points[i - 1].x, points[i].y - points[i - 1].y)
+				);
+			}
+			const total = cumulative[cumulative.length - 1];
+			if (total < 0.1) continue;
+
+			const pointAt = (d: number) => {
+				let i = 1;
+				while (i < cumulative.length - 1 && cumulative[i] < d) i++;
+				const span = cumulative[i] - cumulative[i - 1];
+				const t = span > 0.0001 ? (d - cumulative[i - 1]) / span : 0;
+				const a = points[i - 1];
+				const b = points[i];
+				const dx = b.x - a.x;
+				const dy = b.y - a.y;
+				const length = Math.hypot(dx, dy);
+				const nx = length > 0.0001 ? -dy / length : 0;
+				const ny = length > 0.0001 ? dx / length : 1;
+				return { x: a.x + dx * t, z: a.y + dy * t, nx, ny };
+			};
+
+			const target = positions[path.color];
+			const stepLength = path.dashed ? PAINT_DASH : PAINT_SOLID_STEP;
+			const gap = path.dashed ? PAINT_GAP : 0;
+			let d = 0;
+			let previous = pointAt(d);
+			while (d < total - 0.05) {
+				const end = Math.min(d + stepLength, total);
+				const p1 = gap === 0 ? previous : pointAt(d);
+				const p2 = pointAt(end);
+				target.push(
+					p1.x - p1.nx * half,
+					0,
+					p1.z - p1.ny * half,
+					p1.x + p1.nx * half,
+					0,
+					p1.z + p1.ny * half,
+					p2.x - p2.nx * half,
+					0,
+					p2.z - p2.ny * half,
+					p1.x + p1.nx * half,
+					0,
+					p1.z + p1.ny * half,
+					p2.x + p2.nx * half,
+					0,
+					p2.z + p2.ny * half,
+					p2.x - p2.nx * half,
+					0,
+					p2.z - p2.ny * half
+				);
+				previous = p2;
+				d = end + gap;
+			}
+		}
+
+		return this.paintMeshes(positions, jitter);
+	}
+
+	private paintMeshes(positions: Record<PaintColor, number[]>, jitter: number): THREE.Mesh[] {
+		const meshes: THREE.Mesh[] = [];
+		for (const color of ['lane', 'center'] as PaintColor[]) {
+			if (positions[color].length === 0) continue;
+			const geometry = new THREE.BufferGeometry();
+			geometry.setAttribute(
+				'position',
+				new THREE.BufferAttribute(new Float32Array(positions[color]), 3)
+			);
+			const mesh = new THREE.Mesh(geometry, this.paintMaterialFor(color));
+			mesh.position.y = PAINT_Y + this.elevation + jitter;
+			meshes.push(mesh);
+		}
+		return meshes;
+	}
+
+	private paintMaterialFor(color: PaintColor): THREE.MeshBasicMaterial {
+		let material = this.paintMaterials.get(color);
+		if (!material) {
+			material = new THREE.MeshBasicMaterial({
+				color: new THREE.Color(PAINT_COLORS[color]),
+				side: THREE.DoubleSide,
+				transparent: this.opacity < 1,
+				opacity: this.opacity
+			});
+			this.paintMaterials.set(color, material);
+		}
+		return material;
 	}
 
 	private buildStrip(
@@ -512,6 +858,10 @@ export class RoadRenderer {
 			material.dispose();
 		}
 		this.materials.clear();
+		for (const material of this.paintMaterials.values()) {
+			material.dispose();
+		}
+		this.paintMaterials.clear();
 		this.scene.remove(this.rootGroup);
 	}
 }

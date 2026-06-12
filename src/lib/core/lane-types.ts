@@ -72,6 +72,17 @@ export const LANE_TYPE_SPECS: Record<LaneType, LaneTypeSpec> = {
 		directional: false,
 		accessory: true
 	},
+	// Turn pockets are island-class on purpose: a median tapers into a turn
+	// lane through the same center-strip matching as median↔grass, while
+	// the asphalt color keeps it reading as carriageway. Its paint (solid
+	// flanks) comes from lanePaintBetween, not its fill.
+	turn: {
+		label: 'Turn',
+		surface: 'island',
+		color: '#3D3D3D',
+		order: 2.5,
+		directional: true
+	},
 	median: { label: 'Median', surface: 'island', color: '#6E6E68', order: 7, directional: false }
 };
 
@@ -100,6 +111,37 @@ export function isAccessoryRoadway(type: LaneType): boolean {
 
 export function laneColor(type: LaneType): string {
 	return LANE_TYPE_SPECS[type].color;
+}
+
+// Paint on the boundary between two adjacent lanes: dashed white between
+// same-direction travel lanes, solid muted yellow between opposing flows,
+// solid white where a travel lane meets an accessory roadway. Boundaries
+// touching anything that isn't a roadway are curbs, not paint.
+export interface LanePaint {
+	color: 'lane' | 'center';
+	dashed: boolean;
+}
+
+export function lanePaintBetween(
+	a: { type: LaneType; direction: string },
+	b: { type: LaneType; direction: string }
+): LanePaint | null {
+	// Turn pockets are flanked by solid lines: yellow against opposing
+	// traffic, white against same-direction lanes; against medians and
+	// curbs the median's own edge is the marking.
+	if (a.type === 'turn' || b.type === 'turn') {
+		const other = a.type === 'turn' ? b : a;
+		if (other.type !== 'turn' && laneSurface(other.type) !== 'roadway') return null;
+		return { color: a.direction !== b.direction ? 'center' : 'lane', dashed: false };
+	}
+	if (laneSurface(a.type) !== 'roadway' || laneSurface(b.type) !== 'roadway') return null;
+	const plainA = a.type === 'road' || a.type === 'concrete';
+	const plainB = b.type === 'road' || b.type === 'concrete';
+	if (plainA && plainB) {
+		if (a.direction !== b.direction) return { color: 'center', dashed: false };
+		return { color: 'lane', dashed: true };
+	}
+	return { color: 'lane', dashed: false };
 }
 
 // Lane layers render between the ground plane and the interaction layers;

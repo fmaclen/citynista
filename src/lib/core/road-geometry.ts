@@ -5,7 +5,13 @@ import type { Node } from './node.svelte';
 import type { Segment } from './segment.svelte';
 import type { Lane, LaneType } from './types';
 import { getTotalWidth } from './lane-template';
-import { isIslandLike, isRoadway, laneSurface, LANE_TYPE_LIST } from './lane-types';
+import {
+	isIslandLike,
+	isRoadway,
+	lanePaintBetween,
+	laneSurface,
+	LANE_TYPE_LIST
+} from './lane-types';
 import { getQuadraticBezierPoint, getQuadraticBezierTangent } from '../geometry/bezier';
 
 export interface Point {
@@ -416,6 +422,11 @@ export interface TransitionMorph {
 	// counterpart at all — it ends in a square cut where the morph begins
 	// instead of pinching into a sliver.
 	intervals: ({ start: number; end: number } | null)[];
+	// Target offset at the node for each interior lane boundary (between
+	// lanes[j] and lanes[j+1]) — lane paint follows these so lines stay
+	// straight where a lane exists on both sides and converge into their
+	// neighbor where one branches. Null cuts the paint at the morph zone.
+	laneBoundaries: (number | null)[];
 	halfWidth: number;
 	length: number;
 	// Compact form for piece hashes.
@@ -461,8 +472,10 @@ export function transitionMorph(
 			TRANSITION_MAX_LENGTH,
 			Math.max(TRANSITION_MIN_LENGTH, Math.abs(halfSelf - halfOther) * TRANSITION_TAPER)
 		);
+		const bounds = laneBoundaryOffsets(self.lanes);
 		return {
 			intervals: selfIntervals.map((interval) => ({ start: interval.start, end: interval.end })),
+			laneBoundaries: bounds.slice(1, -1),
 			halfWidth: halfSelf,
 			length,
 			key: `${length}:${halfSelf}:anchor`
@@ -523,25 +536,19 @@ export function transitionMorph(
 		const match = islandMatch(interval, anchorIntervals);
 		if (match) return at(match);
 
-		// Unmatched islands ride within the anchor's roadway; unmatched
-		// verges ride within the anchor's outer zone on their side — every
-		// strip ends square at the seam line, none stops early.
 		const ownCenter = (interval.start + interval.end) / 2;
-		const ownWidth = interval.end - interval.start;
-		const rideInto = (zoneStart: number, zoneEnd: number) => {
-			const width = Math.min(ownWidth, zoneEnd - zoneStart);
-			if (width < 0.2) return null;
-			const center = Math.min(zoneEnd - width / 2, Math.max(zoneStart + width / 2, ownCenter));
-			return { start: center - width / 2, end: center + width / 2 };
-		};
-
 		const anchorRoadways = anchorIntervals.filter((i) => isRoadway(i.laneType));
 		if (surface === 'island') {
+			// An island with no counterpart pinches toward its centerline:
+			// the target is a zero-width point inside the anchor's roadway,
+			// and the strip ends square once the taper squeezes it below a
+			// usable width — a wind-down nose, never a full-width slab
+			// against the seam.
 			if (anchorRoadways.length === 0) return null;
-			return rideInto(
-				Math.min(...anchorRoadways.map((i) => i.start)),
-				Math.max(...anchorRoadways.map((i) => i.end))
-			);
+			const zoneStart = Math.min(...anchorRoadways.map((i) => i.start));
+			const zoneEnd = Math.max(...anchorRoadways.map((i) => i.end));
+			const center = Math.min(zoneEnd, Math.max(zoneStart, ownCenter));
+			return { start: center, end: center };
 		}
 
 		// Unmatched verges end square where the narrowing begins: their
@@ -569,12 +576,191 @@ export function transitionMorph(
 		Math.max(TRANSITION_MIN_LENGTH, maxShift * TRANSITION_TAPER)
 	);
 
+	const anchorLanes = flipped ? [...other.lanes].reverse() : other.lanes;
+	const laneBoundaries = laneBoundaryTargets(
+		self.lanes,
+		selfIntervals,
+		targets,
+		anchorLanes,
+		flipped
+	);
+
 	return {
 		intervals: targets,
+		laneBoundaries,
 		halfWidth: halfOther,
 		length,
-		key: `${length}:${halfOther}:${targets.map((t) => (t ? `${t.start},${t.end}` : 'x')).join(';')}`
+		key:
+			`${length}:${halfOther}:` +
+			`${targets.map((t) => (t ? `${t.start},${t.end}` : 'x')).join(';')}|` +
+			laneBoundaries.map((b) => (b === null ? 'x' : Math.round(b * 100))).join(',')
 	};
+}
+
+function laneBoundaryOffsets(lanes: Lane[]): number[] {
+	const bounds = [-getTotalWidth(lanes) / 2];
+	for (const lane of lanes) {
+		bounds.push(bounds[bounds.length - 1] + lane.width);
+	}
+	return bounds;
+}
+
+// Per-lane boundary targets at a transition: lane lines continue straight
+// wherever a lane exists on both sides, and an extra lane's line converges
+// into the line it branches from. Within a same-type run, lanes group by
+// direction and each group aligns from its OUTER edge — so added or
+// dropped lanes branch at the carriageway's center, turn-pocket style.
+// Boundaries at interval seams survive only if both strips' targets stay
+// adjacent at the node; anything unmatched cuts where the morph begins.
+function laneBoundaryTargets(
+	selfLanes: Lane[],
+	selfIntervals: LaneInterval[],
+	targets: ({ start: number; end: number } | null)[],
+	anchorLanes: Lane[],
+	flipDirections: boolean
+): (number | null)[] {
+	const selfBounds = laneBoundaryOffsets(selfLanes);
+	const anchorBounds = laneBoundaryOffsets(anchorLanes);
+	const anchorDirection = (lane: Lane) =>
+		!flipDirections || lane.direction === 'bidirectional'
+			? lane.direction
+			: lane.direction === 'forward'
+				? 'backward'
+				: 'forward';
+
+	interface Subgroup {
+		direction: string;
+		bounds: number[];
+	}
+	const subgroups = (entries: { direction: string; start: number; end: number }[]): Subgroup[] => {
+		const groups: Subgroup[] = [];
+		for (const entry of entries) {
+			const previous = groups[groups.length - 1];
+			if (previous && previous.direction === entry.direction) {
+				previous.bounds.push(entry.end);
+			} else {
+				groups.push({ direction: entry.direction, bounds: [entry.start, entry.end] });
+			}
+		}
+		return groups;
+	};
+
+	const result: (number | null)[] = [];
+	for (let j = 0; j + 1 < selfLanes.length; j++) {
+		const offset = selfBounds[j + 1];
+
+		let intervalIndex = selfIntervals.length - 1;
+		for (let i = 0; i < selfIntervals.length; i++) {
+			if (offset <= selfIntervals[i].end + 0.001) {
+				intervalIndex = i;
+				break;
+			}
+		}
+		const interval = selfIntervals[intervalIndex];
+		const target = targets[intervalIndex];
+
+		// Seam between two intervals: survives only if both targets remain
+		// adjacent at the node.
+		if (Math.abs(offset - interval.end) < 0.001) {
+			const next = targets[intervalIndex + 1];
+			result.push(target && next && Math.abs(target.end - next.start) <= 0.01 ? target.end : null);
+			continue;
+		}
+		if (!target) {
+			result.push(null);
+			continue;
+		}
+
+		// Interior boundary of a merged same-type run: align direction
+		// groups between the run's own lanes and the anchor lanes of the
+		// same type inside the target span.
+		const selfRun = selfLanes
+			.map((lane, index) => ({ lane, index }))
+			.filter(
+				({ lane, index }) =>
+					lane.type === interval.laneType &&
+					selfBounds[index] >= interval.start - 0.001 &&
+					selfBounds[index + 1] <= interval.end + 0.001
+			)
+			.map(({ lane, index }) => ({
+				direction: lane.direction,
+				start: selfBounds[index],
+				end: selfBounds[index + 1]
+			}));
+		const anchorRun = anchorLanes
+			.map((lane, index) => ({ lane, index }))
+			.filter(
+				({ lane, index }) =>
+					lane.type === interval.laneType &&
+					(anchorBounds[index] + anchorBounds[index + 1]) / 2 >= target.start - 0.01 &&
+					(anchorBounds[index] + anchorBounds[index + 1]) / 2 <= target.end + 0.01
+			)
+			.map(({ lane, index }) => ({
+				direction: anchorDirection(lane),
+				start: anchorBounds[index],
+				end: anchorBounds[index + 1]
+			}));
+
+		// Groups pair by direction when the sequences agree; with the same
+		// group count they pair positionally regardless — segments drawn in
+		// opposite directions carry mirrored labels, and the lines should
+		// continue either way.
+		const selfGroups = subgroups(selfRun);
+		const anchorGroups = subgroups(anchorRun);
+		if (selfGroups.length === 0 || selfGroups.length !== anchorGroups.length) {
+			result.push(null);
+			continue;
+		}
+
+		let value: number | null = null;
+		for (let g = 0; g < selfGroups.length; g++) {
+			const selfGroup = selfGroups[g];
+			const anchorGroup = anchorGroups[g];
+			const within = selfGroup.bounds.findIndex((b) => Math.abs(b - offset) < 0.001);
+			if (within <= 0 || within >= selfGroup.bounds.length - 1) {
+				if (within === 0 || within === selfGroup.bounds.length - 1) {
+					// Group edge: the seam between direction groups maps to
+					// the anchor's corresponding seam.
+					value =
+						within === 0
+							? anchorGroup.bounds[0]
+							: anchorGroup.bounds[anchorGroup.bounds.length - 1];
+					break;
+				}
+				continue;
+			}
+			// The group aligns from whichever edge keeps the shared lane
+			// lines stillest — the extra lane then branches at the other
+			// side; ties branch toward the carriageway's center.
+			const selfCount = selfGroup.bounds.length - 1;
+			const anchorCount = anchorGroup.bounds.length - 1;
+			const shared = Math.min(selfCount, anchorCount) - 1;
+			let displacementStart = 0;
+			let displacementEnd = 0;
+			for (let t = 1; t <= shared; t++) {
+				displacementStart += Math.abs(selfGroup.bounds[t] - anchorGroup.bounds[t]);
+				displacementEnd += Math.abs(
+					selfGroup.bounds[selfCount - t] - anchorGroup.bounds[anchorCount - t]
+				);
+			}
+			const alignStart =
+				displacementStart < displacementEnd - 0.001 ||
+				(Math.abs(displacementStart - displacementEnd) <= 0.001 && g === 0);
+			if (alignStart) {
+				value =
+					within <= anchorCount - 1 ? anchorGroup.bounds[within] : anchorGroup.bounds[anchorCount];
+			} else {
+				const fromEnd = selfCount - within;
+				value =
+					fromEnd <= anchorCount - 1
+						? anchorGroup.bounds[anchorCount - fromEnd]
+						: anchorGroup.bounds[0];
+			}
+			break;
+		}
+		result.push(value);
+	}
+	return result;
 }
 
 // At patch nodes every road stops short of the node: far enough back that
@@ -1178,6 +1364,7 @@ function addPairJoin(
 	const armB = armA === arms[0] ? arms[1] : arms[0];
 
 	let intervals = getLaneIntervals(pair[0].lanes);
+	let anchorKey = pair[0].lanesKey;
 	if (pair[0].lanesKey !== pair[1].lanesKey) {
 		// The node cross-section is the anchor's (see transitionMorph),
 		// expressed in pair[0]'s frame.
@@ -1187,6 +1374,7 @@ function addPairJoin(
 			halfA < halfB - 0.01 ||
 			(Math.abs(halfA - halfB) <= 0.01 && pair[0].lanesKey <= pair[1].lanesKey);
 		if (!anchorIsA) {
+			anchorKey = pair[1].lanesKey;
 			intervals = getLaneIntervals(pair[1].lanes);
 			if (armA.startsHere === armB.startsHere) {
 				intervals = mirrorIntervals(intervals);
@@ -1194,7 +1382,16 @@ function addPairJoin(
 		}
 	}
 
-	addCornerBands(armA, armB, bandsByType, intervals);
+	// The bands carry the anchor's materials; they only overlap into a
+	// mouth of the same cross-section, never over the other side's seam.
+	addCornerBands(
+		armA,
+		armB,
+		bandsByType,
+		intervals,
+		armA.lanesKey === anchorKey ? 0.5 : 0,
+		armB.lanesKey === anchorKey ? 0.5 : 0
+	);
 }
 
 interface IntersectionArm {
@@ -1357,7 +1554,9 @@ function addCornerBands(
 	armA: IntersectionArm,
 	armB: IntersectionArm,
 	bandsByType: Map<LaneType, Paths>,
-	intervals: LaneInterval[] = getLaneIntervals(armA.lanes)
+	intervals: LaneInterval[] = getLaneIntervals(armA.lanes),
+	overlapA = 0.5,
+	overlapB = 0.5
 ) {
 	// Frames continue head-to-tail only when one segment ends here and the
 	// other starts here; otherwise mirror armB so world sides match up. This
@@ -1366,10 +1565,11 @@ function addCornerBands(
 	const flipped = armA.startsHere === armB.startsHere;
 	const dirB = flipped ? { x: -armB.crossDir.x, y: -armB.crossDir.y } : armB.crossDir;
 
-	// Bands reach slightly past both stop lines into the segments, so no
+	// Bands reach slightly past the stop lines into the segments, so no
 	// antialiasing hairline can open along the mouths; adjacent intervals
-	// still share these extended edges exactly.
-	const overlap = 0.5;
+	// still share these extended edges exactly. The overlap is suppressed
+	// into a mouth whose material differs from the bands (a transition's
+	// wider side), so anchor-colored bands never paint over its seam.
 	const edgeCurve = (offset: number) => {
 		const curve = sampleCornerCurve(
 			offsetPoint(armA.stop, armA.crossDir, offset),
@@ -1377,8 +1577,14 @@ function addCornerBands(
 			offsetPoint(armB.stop, dirB, offset),
 			armB.into
 		);
-		curve.unshift(offsetPoint(offsetPoint(armA.stop, armA.into, -overlap), armA.crossDir, offset));
-		curve.push(offsetPoint(offsetPoint(armB.stop, armB.into, -overlap), dirB, offset));
+		if (overlapA > 0) {
+			curve.unshift(
+				offsetPoint(offsetPoint(armA.stop, armA.into, -overlapA), armA.crossDir, offset)
+			);
+		}
+		if (overlapB > 0) {
+			curve.push(offsetPoint(offsetPoint(armB.stop, armB.into, -overlapB), dirB, offset));
+		}
 		return curve;
 	};
 
@@ -1786,6 +1992,66 @@ function toPoints(contour: Path): Point[] {
 // the node piece carries every strip through (bend wedges or corner bands)
 // and segment strips can safely overlap into it. Attached paths don't break
 // continuity — the pair outranks them.
+export interface NodePaintPath {
+	color: 'lane' | 'center';
+	dashed: boolean;
+	points: Point[];
+}
+
+// Paint paths across a pair node's bend: the same corner curves the bands
+// follow, at the node cross-section's lane boundaries, so dashes flow
+// through fillets instead of pausing at every bend. Straight pairs need no
+// node paint (the ribbons butt) and junction interiors stay unpainted.
+export function buildNodePaint(
+	graph: Graph,
+	node: Node,
+	centerlines: Map<string, CenterlineSample[]>
+): NodePaintPath[] {
+	const pair = nodeThroughPair(graph, node);
+	if (!pair) return [];
+	if (pairBendDeviation(graph, node, pair[0], pair[1]) < MIN_BEND_DEVIATION) return [];
+
+	const arms = collectIntersectionArms(graph, node, centerlines, new Set([pair[0].id, pair[1].id]));
+	if (arms.length !== 2) return [];
+	const armA = arms[0].lanesKey === pair[0].lanesKey ? arms[0] : arms[1];
+	const armB = armA === arms[0] ? arms[1] : arms[0];
+	const flipped = armA.startsHere === armB.startsHere;
+	const dirB = flipped ? { x: -armB.crossDir.x, y: -armB.crossDir.y } : armB.crossDir;
+
+	// The node cross-section is the anchor's, expressed in armA's frame —
+	// the same selection addPairJoin makes for the corner bands.
+	let lanes = pair[0].lanes;
+	if (pair[0].lanesKey !== pair[1].lanesKey) {
+		const halfA = getTotalWidth(pair[0].lanes) / 2;
+		const halfB = getTotalWidth(pair[1].lanes) / 2;
+		const anchorIsA =
+			halfA < halfB - 0.01 ||
+			(Math.abs(halfA - halfB) <= 0.01 && pair[0].lanesKey <= pair[1].lanesKey);
+		if (!anchorIsA) {
+			lanes = flipped ? [...pair[1].lanes].reverse() : pair[1].lanes;
+		}
+	}
+
+	const paths: NodePaintPath[] = [];
+	const bounds = laneBoundaryOffsets(lanes);
+	for (let j = 0; j + 1 < lanes.length; j++) {
+		const paint = lanePaintBetween(lanes[j], lanes[j + 1]);
+		if (!paint) continue;
+		const offset = bounds[j + 1];
+		paths.push({
+			color: paint.color,
+			dashed: paint.dashed,
+			points: sampleCornerCurve(
+				offsetPoint(armA.stop, armA.crossDir, offset),
+				armA.into,
+				offsetPoint(armB.stop, dirB, offset),
+				armB.into
+			)
+		});
+	}
+	return paths;
+}
+
 export function isContinuationNode(graph: Graph, node: Node, segmentId?: string): boolean {
 	const pair = connectionPair(graph, node);
 	if (pair) return pair[0].lanesKey === pair[1].lanesKey;
