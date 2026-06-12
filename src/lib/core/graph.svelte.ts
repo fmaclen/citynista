@@ -110,9 +110,15 @@ export class Graph {
 		}
 	}
 
+	// Called after every successful save — the editor hooks its undo history
+	// here, since a save marks the end of a user operation.
+	onSaved?: (serialized: string) => void;
+
 	save() {
 		try {
-			localStorage.setItem(STORAGE_KEY, JSON.stringify(this.toJSON()));
+			const serialized = JSON.stringify(this.toJSON());
+			localStorage.setItem(STORAGE_KEY, serialized);
+			this.onSaved?.(serialized);
 		} catch (e) {
 			console.error('Failed to save graph:', e);
 		}

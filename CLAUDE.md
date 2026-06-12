@@ -38,6 +38,7 @@ The world is 2D on Three.js's XZ plane: graph coordinates are `(x, y)` where `y`
    - Owns the graph, scene, renderers, and mode switching (draw, select)
    - Tracks selection state (`selectedNodes`, `selectedSegments`)
    - `rebuildRoads()` re-renders the network; `resolveSegmentCrossings()` planarizes overlaps
+   - Undo/redo (⌘Z/⇧⌘Z, toolbar buttons): whole-graph snapshots captured via `graph.onSaved` — one save equals one undo step, so every operation that persists (draw click, finished drag, lane tweak, delete, fixture load) is undoable with no per-command code
    - Provides context via `setEditorContext()` / `getEditorContext()`
 
 2. **Graph** (`src/lib/core/graph.svelte.ts`): Data model

@@ -25,13 +25,25 @@ export class Editor {
 	drawStyle = $state<DrawStyle>('straight');
 	currentLaneTemplateId = $state(getDefaultTemplate().id);
 	fps = $state(0);
+	canUndo = $state(false);
+	canRedo = $state(false);
 	selectedNodes = new SvelteSet<string>();
 	selectedSegments = new SvelteSet<string>();
 
 	private modeHandlers: ModeHandlers | null = null;
 	private boundKeyDown: ((e: KeyboardEvent) => void) | null = null;
+	private boundHistoryKeyDown: ((e: KeyboardEvent) => void) | null = null;
 	private hoveredNodeId: string | null = null;
 	private hoveredSegmentId: string | null = null;
+
+	// Undo history as whole-graph snapshots, captured at the save boundary:
+	// every operation (a draw click, a finished drag, a lane tweak, a
+	// delete, a fixture load) ends in graph.save(), so one save equals one
+	// undo step with no per-command bookkeeping.
+	private undoStack: string[] = [];
+	private redoStack: string[] = [];
+	private presentState = '';
+	private restoringHistory = false;
 
 	constructor() {
 		// Track only the mode itself: setupMode reads selection state internally
@@ -56,9 +68,63 @@ export class Editor {
 		this.selectionRenderer = new SelectionRenderer(this.sceneManager.scene);
 
 		this.loadSavedData();
+		this.presentState = JSON.stringify(this.graph.toJSON());
+		this.graph.onSaved = (serialized) => this.recordHistory(serialized);
 		this.setupCanvasEvents();
+		this.setupHistoryKeys();
 		// The mode effect already ran before init; install the default mode now.
 		this.setupMode(this.mode);
+	}
+
+	private recordHistory(serialized: string) {
+		if (this.restoringHistory || serialized === this.presentState) return;
+		this.undoStack.push(this.presentState);
+		if (this.undoStack.length > 100) this.undoStack.shift();
+		this.redoStack.length = 0;
+		this.presentState = serialized;
+		this.canUndo = true;
+		this.canRedo = false;
+	}
+
+	undo() {
+		const previous = this.undoStack.pop();
+		if (previous === undefined) return;
+		this.redoStack.push(this.presentState);
+		this.restoreState(previous);
+	}
+
+	redo() {
+		const next = this.redoStack.pop();
+		if (next === undefined) return;
+		this.undoStack.push(this.presentState);
+		this.restoreState(next);
+	}
+
+	private restoreState(serialized: string) {
+		this.restoringHistory = true;
+		this.presentState = serialized;
+		// Mode-local state (a pending segment, a drag) may reference graph
+		// objects that no longer exist; reinstalling the mode resets it.
+		this.setupMode(this.mode);
+		this.replaceGraph(JSON.parse(serialized));
+		this.restoringHistory = false;
+		this.canUndo = this.undoStack.length > 0;
+		this.canRedo = this.redoStack.length > 0;
+	}
+
+	private setupHistoryKeys() {
+		this.boundHistoryKeyDown = (e: KeyboardEvent) => {
+			if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== 'z') return;
+			const target = e.target;
+			if (target instanceof HTMLElement && target.tagName !== 'BODY') return;
+			e.preventDefault();
+			if (e.shiftKey) {
+				this.redo();
+			} else {
+				this.undo();
+			}
+		};
+		window.addEventListener('keydown', this.boundHistoryKeyDown);
 	}
 
 	private loadSavedData() {
@@ -348,6 +414,9 @@ export class Editor {
 		}
 		if (this.boundKeyDown) {
 			window.removeEventListener('keydown', this.boundKeyDown);
+		}
+		if (this.boundHistoryKeyDown) {
+			window.removeEventListener('keydown', this.boundHistoryKeyDown);
 		}
 		this.sceneManager?.dispose();
 	}

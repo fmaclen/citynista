@@ -3,7 +3,7 @@
 	import type { DrawStyle } from '$lib/modes/types';
 	import { LANE_COLORS, LANE_TEMPLATES, getTotalWidth } from '$lib/core/lane-template';
 	import { Button } from '$lib/components/ui/button';
-	import { MousePointer2, Slash, Spline, Waves, Trash2 } from '@lucide/svelte';
+	import { MousePointer2, Redo2, Slash, Spline, Undo2, Waves, Trash2 } from '@lucide/svelte';
 
 	const editor = getEditorContext();
 
@@ -105,6 +105,25 @@
 		{/if}
 
 		<div class="mx-1 h-6 w-px bg-border"></div>
+
+		<Button
+			variant="ghost"
+			size="icon"
+			disabled={!editor.canUndo}
+			onclick={() => editor.undo()}
+			title="Undo (⌘Z)"
+		>
+			<Undo2 class="h-4 w-4" />
+		</Button>
+		<Button
+			variant="ghost"
+			size="icon"
+			disabled={!editor.canRedo}
+			onclick={() => editor.redo()}
+			title="Redo (⇧⌘Z)"
+		>
+			<Redo2 class="h-4 w-4" />
+		</Button>
 
 		<Button variant="ghost" size="icon" onclick={() => editor.clearAll()} title="Clear All">
 			<Trash2 class="h-4 w-4" />
