@@ -2134,8 +2134,10 @@ function buildJunctionCrosswalks(
 
 	// At a stop line every island has already ended — the crossing zone is
 	// pure pavement, so bars run continuously across the drivable span,
-	// median gaps included.
+	// median gaps included. An arm without sidewalks gets no crosswalk:
+	// there is nothing for pedestrians to cross between.
 	for (const arm of roadArms) {
+		if (!arm.lanes.some((lane) => laneSurface(lane.type) === 'walkway')) continue;
 		const inner = offsetPoint(arm.stop, arm.into, CROSSWALK_INSET);
 		const outer = offsetPoint(arm.stop, arm.into, CROSSWALK_INSET + CROSSWALK_DEPTH);
 		const from = -arm.away.roadEdge;
