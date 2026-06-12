@@ -87,17 +87,17 @@
 				{
 					"type": "turn",
 					"width": 3.5,
-					"direction": "backward"
+					"direction": "forward"
 				},
 				{
 					"type": "road",
 					"width": 3.5,
-					"direction": "backward"
+					"direction": "forward"
 				},
 				{
 					"type": "road",
 					"width": 3.5,
-					"direction": "backward"
+					"direction": "forward"
 				}
 			]
 		},

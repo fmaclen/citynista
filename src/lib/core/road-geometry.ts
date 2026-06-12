@@ -1995,8 +1995,17 @@ function toPoints(contour: Path): Point[] {
 export interface NodePaintPath {
 	color: 'lane' | 'center';
 	dashed: boolean;
+	// Stroke width; the renderer's default lane-line width when absent.
+	width?: number;
 	points: Point[];
 }
+
+// Continental crosswalk bars: elongated along traffic, spaced across the
+// crossing, drawn in the gap the trims have always reserved for them.
+const CROSSWALK_BAR_WIDTH = 0.55;
+const CROSSWALK_PITCH = 1.1;
+const CROSSWALK_DEPTH = 2.4;
+const CROSSWALK_INSET = 0.4;
 
 // Paint paths across a pair node's bend: the same corner curves the bands
 // follow, at the node cross-section's lane boundaries, so dashes flow
@@ -2008,11 +2017,13 @@ export function buildNodePaint(
 	centerlines: Map<string, CenterlineSample[]>
 ): NodePaintPath[] {
 	const pair = nodeThroughPair(graph, node);
-	if (!pair) return [];
-	if (pairBendDeviation(graph, node, pair[0], pair[1]) < MIN_BEND_DEVIATION) return [];
+	if (!pair) return buildJunctionCrosswalks(graph, node, centerlines);
+
+	const paths: NodePaintPath[] = buildPathCrossingZebras(graph, node, centerlines, pair);
+	if (pairBendDeviation(graph, node, pair[0], pair[1]) < MIN_BEND_DEVIATION) return paths;
 
 	const arms = collectIntersectionArms(graph, node, centerlines, new Set([pair[0].id, pair[1].id]));
-	if (arms.length !== 2) return [];
+	if (arms.length !== 2) return paths;
 	const armA = arms[0].lanesKey === pair[0].lanesKey ? arms[0] : arms[1];
 	const armB = armA === arms[0] ? arms[1] : arms[0];
 	const flipped = armA.startsHere === armB.startsHere;
@@ -2032,7 +2043,6 @@ export function buildNodePaint(
 		}
 	}
 
-	const paths: NodePaintPath[] = [];
 	const bounds = laneBoundaryOffsets(lanes);
 	for (let j = 0; j + 1 < lanes.length; j++) {
 		const paint = lanePaintBetween(lanes[j], lanes[j + 1]);
@@ -2047,6 +2057,96 @@ export function buildNodePaint(
 				offsetPoint(armB.stop, dirB, offset),
 				armB.into
 			)
+		});
+	}
+	return paths;
+}
+
+// Zebra bars across every road mouth of a junction, in the reserved gap
+// just inside the stop lines. Merge nodes (through pair present) and pure
+// path junctions get none.
+function buildJunctionCrosswalks(
+	graph: Graph,
+	node: Node,
+	centerlines: Map<string, CenterlineSample[]>
+): NodePaintPath[] {
+	if (!isPatchNode(graph, node)) return [];
+
+	const paths: NodePaintPath[] = [];
+	const arms = collectIntersectionArms(graph, node, centerlines);
+	const roadArms = arms.filter((arm) => arm.hasRoad);
+	if (roadArms.length < 3) return [];
+
+	for (const arm of roadArms) {
+		const from = -arm.away.roadEdge;
+		const to = arm.toward.roadEdge;
+		const inner = offsetPoint(arm.stop, arm.into, CROSSWALK_INSET);
+		const outer = offsetPoint(arm.stop, arm.into, CROSSWALK_INSET + CROSSWALK_DEPTH);
+		for (
+			let offset = from + CROSSWALK_PITCH / 2;
+			offset <= to - CROSSWALK_PITCH / 2 + 0.01;
+			offset += CROSSWALK_PITCH
+		) {
+			paths.push({
+				color: 'lane',
+				dashed: false,
+				width: CROSSWALK_BAR_WIDTH,
+				points: [offsetPoint(inner, arm.side, offset), offsetPoint(outer, arm.side, offset)]
+			});
+		}
+	}
+	return paths;
+}
+
+// A path attached to a continuing road crosses it on a zebra: bars
+// elongated along the traffic direction, spanning the roadway, centered on
+// the node where the path meets the road.
+function buildPathCrossingZebras(
+	graph: Graph,
+	node: Node,
+	centerlines: Map<string, CenterlineSample[]>,
+	pair: [Segment, Segment]
+): NodePaintPath[] {
+	// Only true pair nodes — a merge node's minors join ramps, not
+	// crossings.
+	if (!connectionPair(graph, node)) return [];
+
+	const minors = validNodeSegments(graph, node).filter((segment) => !segmentHasRoad(segment));
+	if (minors.length === 0) return [];
+
+	const arms = collectIntersectionArms(graph, node, centerlines, new Set([pair[0].id, pair[1].id]));
+	if (arms.length === 0) return [];
+	const axis = arms[0].into;
+	const lateral = arms[0].side;
+
+	// Roadway extent of the node cross-section, in the reference arm's
+	// frame (the anchor's stack, mirrored if needed — but only the roadway
+	// bounds matter, which are symmetric enough across the pair).
+	const intervals = getLaneIntervals(arms[0].lanes);
+	const roadways = intervals.filter((interval) => isRoadway(interval.laneType));
+	if (roadways.length === 0) return [];
+	const from = Math.min(...roadways.map((interval) => interval.start));
+	const to = Math.max(...roadways.map((interval) => interval.end));
+
+	// One zebra per node however many paths land on it, sized to the
+	// widest of them.
+	const paths: NodePaintPath[] = [];
+	const length = Math.max(
+		2,
+		Math.min(4, Math.max(...minors.map((minor) => getTotalWidth(minor.lanes))))
+	);
+	const head = { x: node.x + axis.x * (length / 2), y: node.y + axis.y * (length / 2) };
+	const tail = { x: node.x - axis.x * (length / 2), y: node.y - axis.y * (length / 2) };
+	for (
+		let offset = from + CROSSWALK_PITCH / 2;
+		offset <= to - CROSSWALK_PITCH / 2 + 0.01;
+		offset += CROSSWALK_PITCH
+	) {
+		paths.push({
+			color: 'lane',
+			dashed: false,
+			width: CROSSWALK_BAR_WIDTH,
+			points: [offsetPoint(tail, lateral, offset), offsetPoint(head, lateral, offset)]
 		});
 	}
 	return paths;

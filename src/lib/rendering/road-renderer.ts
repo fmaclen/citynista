@@ -151,6 +151,8 @@ export class RoadRenderer {
 			const continuityJoinEnd = isContinuationNode(graph, endNode, segment.id);
 			const morphStart = transitionMorph(graph, startNode, segment.id);
 			const morphEnd = transitionMorph(graph, endNode, segment.id);
+			const turnSignStart = turnBranchSign(graph, startNode, segment, samples, true);
+			const turnSignEnd = turnBranchSign(graph, endNode, segment, samples, false);
 			const trim = trims.get(segment.id);
 
 			const key = `segment:${segment.id}`;
@@ -169,7 +171,9 @@ export class RoadRenderer {
 				continuityJoinStart,
 				continuityJoinEnd,
 				morphStart?.key ?? '-',
-				morphEnd?.key ?? '-'
+				morphEnd?.key ?? '-',
+				turnSignStart,
+				turnSignEnd
 			].join('|');
 
 			seen.add(key);
@@ -185,6 +189,8 @@ export class RoadRenderer {
 				continuityJoinEnd,
 				morphStart,
 				morphEnd,
+				turnSignStart,
+				turnSignEnd,
 				this.jitterFor(key)
 			);
 			this.rootGroup.add(group);
@@ -247,6 +253,8 @@ export class RoadRenderer {
 		continuityJoinEnd: boolean,
 		morphStart: TransitionMorph | null,
 		morphEnd: TransitionMorph | null,
+		turnSignStart: number,
+		turnSignEnd: number,
 		jitter: number
 	): THREE.Group {
 		const group = new THREE.Group();
@@ -411,6 +419,8 @@ export class RoadRenderer {
 			lengthEnd,
 			continuityJoinStart,
 			continuityJoinEnd,
+			turnSignStart,
+			turnSignEnd,
 			jitter
 		)) {
 			group.add(mesh);
@@ -435,6 +445,8 @@ export class RoadRenderer {
 		lengthEnd: number,
 		continuityJoinStart: boolean,
 		continuityJoinEnd: boolean,
+		turnSignStart: number,
+		turnSignEnd: number,
 		jitter: number
 	): THREE.Mesh[] {
 		const cumulative: number[] = [0];
@@ -568,6 +580,139 @@ export class RoadRenderer {
 			}
 		}
 
+		// Turn arrows: repeated glyphs along each turn pocket, bending toward
+		// the carriageway center, placed from the junction end inward.
+		const sampleAt = (d: number) => {
+			let i = 1;
+			while (i < cumulative.length - 1 && cumulative[i] < d) i++;
+			const span = cumulative[i] - cumulative[i - 1];
+			const t = span > 0.0001 ? (d - cumulative[i - 1]) / span : 0;
+			const a = samples[i - 1];
+			const b = samples[i];
+			let nx = a.normalX + (b.normalX - a.normalX) * t;
+			let ny = a.normalY + (b.normalY - a.normalY) * t;
+			const nl = Math.hypot(nx, ny);
+			if (nl > 0.0001) {
+				nx /= nl;
+				ny /= nl;
+			}
+			const dx = b.x - a.x;
+			const dy = b.y - a.y;
+			const dl = Math.hypot(dx, dy);
+			return {
+				x: a.x + dx * t,
+				z: a.y + dy * t,
+				tx: dl > 0.0001 ? dx / dl : 1,
+				ty: dl > 0.0001 ? dy / dl : 0,
+				nx,
+				ny
+			};
+		};
+
+		const drawArrow = (d: number, offset: number, travelSign: number, bendSign: number) => {
+			const p = sampleAt(d);
+			const tx = p.tx * travelSign;
+			const ty = p.ty * travelSign;
+			// The glyph bends toward the branch at the pocket's junction
+			// (the sign comes from the actual topology); without one it
+			// falls back to the driver's left.
+			const bx = bendSign !== 0 ? p.nx * bendSign : ty;
+			const by = bendSign !== 0 ? p.ny * bendSign : -tx;
+			// The bend carries the glyph's mass sideways; shifting the stem
+			// the other way centers the whole glyph in the lane.
+			const baseX = p.x + p.nx * offset - bx * 0.9;
+			const baseZ = p.z + p.ny * offset - by * 0.9;
+			const target = positions.lane;
+			const w = 0.18;
+
+			const quad = (
+				ax: number,
+				az: number,
+				bx2: number,
+				bz2: number,
+				sideX: number,
+				sideY: number
+			) => {
+				target.push(
+					ax - sideX * w,
+					0,
+					az - sideY * w,
+					ax + sideX * w,
+					0,
+					az + sideY * w,
+					bx2 - sideX * w,
+					0,
+					bz2 - sideY * w,
+					ax + sideX * w,
+					0,
+					az + sideY * w,
+					bx2 + sideX * w,
+					0,
+					bz2 + sideY * w,
+					bx2 - sideX * w,
+					0,
+					bz2 - sideY * w
+				);
+			};
+
+			// Stem along travel, elbow toward the turn, arrowhead at the tip.
+			const stemTailX = baseX - tx * 1.7;
+			const stemTailZ = baseZ - ty * 1.7;
+			const elbowX = baseX + tx * 0.7;
+			const elbowZ = baseZ + ty * 0.7;
+			quad(stemTailX, stemTailZ, elbowX, elbowZ, p.nx, p.ny);
+			const tipX = elbowX + bx * 1.0;
+			const tipZ = elbowZ + by * 1.0;
+			quad(elbowX, elbowZ, tipX, tipZ, tx, ty);
+			// Fill the outer corner of the elbow, where the two stroke
+			// rectangles would otherwise leave a notch.
+			quad(elbowX - bx * w, elbowZ - by * w, elbowX + bx * w, elbowZ + by * w, tx, ty);
+			target.push(
+				tipX + bx * 0.85,
+				0,
+				tipZ + by * 0.85,
+				tipX + tx * 0.55,
+				0,
+				tipZ + ty * 0.55,
+				tipX - tx * 0.55,
+				0,
+				tipZ - ty * 0.55
+			);
+		};
+
+		let laneStart = -halfWidth;
+		for (const lane of lanes) {
+			const laneEnd = laneStart + lane.width;
+			if (lane.type === 'turn') {
+				const center = (laneStart + laneEnd) / 2;
+				const travelSign = lane.direction === 'backward' ? -1 : 1;
+				const usableFrom = (morphStart ? lengthStart : 0) + 4;
+				const usableTo = total - (morphEnd ? lengthEnd : 0) - 4;
+				if (usableTo - usableFrom > 3) {
+					const spots: { d: number; bend: number }[] = [];
+					if (morphStart && !morphEnd) {
+						spots.push(
+							{ d: usableTo - 1, bend: turnSignEnd },
+							{ d: usableTo - 9, bend: turnSignEnd }
+						);
+					} else if (morphEnd && !morphStart) {
+						spots.push(
+							{ d: usableFrom + 1, bend: turnSignStart },
+							{ d: usableFrom + 9, bend: turnSignStart }
+						);
+					} else {
+						spots.push({ d: (usableFrom + usableTo) / 2, bend: turnSignEnd || turnSignStart });
+					}
+					for (const { d, bend } of spots) {
+						if (d >= usableFrom && d <= usableTo) {
+							drawArrow(d, center, travelSign, bend);
+						}
+					}
+				}
+			}
+			laneStart = laneEnd;
+		}
+
 		return this.paintMeshes(positions, jitter);
 	}
 
@@ -575,7 +720,6 @@ export class RoadRenderer {
 	// the geometry exports, so lines flow through bends.
 	private buildNodePaintMeshes(paths: NodePaintPath[], jitter: number): THREE.Mesh[] {
 		const positions: Record<PaintColor, number[]> = { lane: [], center: [] };
-		const half = PAINT_WIDTH / 2;
 
 		for (const path of paths) {
 			const points = path.points;
@@ -606,6 +750,7 @@ export class RoadRenderer {
 			};
 
 			const target = positions[path.color];
+			const half = (path.width ?? PAINT_WIDTH) / 2;
 			const stepLength = path.dashed ? PAINT_DASH : PAINT_SOLID_STEP;
 			const gap = path.dashed ? PAINT_GAP : 0;
 			let d = 0;
@@ -864,6 +1009,44 @@ export class RoadRenderer {
 		this.paintMaterials.clear();
 		this.scene.remove(this.rootGroup);
 	}
+}
+
+// Which side of the segment the branching roads sit on at this node, as a
+// sign on the centerline normal: turn arrows bend toward the branch. The
+// continuation arm is nearly collinear and contributes ~nothing; zero
+// means no branch (or perfectly balanced ones).
+function turnBranchSign(
+	graph: Graph,
+	node: { id: string; x: number; y: number; connectedSegments: string[] },
+	segment: { id: string },
+	samples: CenterlineSample[],
+	atStart: boolean
+): number {
+	const stop = atStart ? samples[0] : samples[samples.length - 1];
+	const inner = atStart ? samples[1] : samples[samples.length - 2];
+	let tx = atStart ? inner.x - stop.x : stop.x - inner.x;
+	let ty = atStart ? inner.y - stop.y : stop.y - inner.y;
+	const tl = Math.hypot(tx, ty);
+	if (tl < 0.0001) return 0;
+	tx /= tl;
+	ty /= tl;
+
+	let sum = 0;
+	for (const otherId of node.connectedSegments) {
+		if (otherId === segment.id) continue;
+		const other = graph.segments.get(otherId);
+		if (!other || !other.lanes.some((lane) => laneSurface(lane.type) === 'roadway')) continue;
+		const farId = other.startNodeId === node.id ? other.endNodeId : other.startNodeId;
+		const far = graph.nodes.get(farId);
+		if (!far) continue;
+		const vx = far.x - node.x;
+		const vy = far.y - node.y;
+		const vl = Math.hypot(vx, vy);
+		if (vl < 0.0001) continue;
+		sum += (tx * vy - ty * vx) / vl;
+	}
+	if (Math.abs(sum) < 0.2) return 0;
+	return Math.sign(sum);
 }
 
 // Materials are shared per layer, so only geometries are disposed here.
