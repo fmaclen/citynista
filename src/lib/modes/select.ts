@@ -24,6 +24,10 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 	let dragStartX = 0;
 	let dragStartZ = 0;
 	let marqueeStart: { x: number; z: number } | null = null;
+	// Shift+click on a selected node means "deselect" only if no drag
+	// follows — a shift+drag instead smooths the node's tangent live.
+	let pendingShiftToggle: string | null = null;
+	let dragDistance = 0;
 
 	const marqueeFillMaterial = new THREE.MeshBasicMaterial({
 		color: MARQUEE_COLOR,
@@ -226,18 +230,11 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 		segment.setControlPoint(cx + dx * factor, cy + dz * factor);
 	};
 
-	// The direction a smooth continuation of the neighboring road would enter
-	// this segment with at the given node, or null when the node has no other
-	// segment. With several neighbors, the one closest to a straight-through
-	// continuation wins.
-	const approachDirectionAt = (segment: Segment, node: Node, otherNode: Node) => {
-		const chordLength = Math.hypot(otherNode.x - node.x, otherNode.y - node.y);
-		if (chordLength < 0.0001) return null;
-		const chordX = (otherNode.x - node.x) / chordLength;
-		const chordY = (otherNode.y - node.y) / chordLength;
-
-		let best: { x: number; y: number } | null = null;
-		let bestDot = Infinity;
+	// Every direction a smooth continuation of a neighboring road would
+	// enter this segment with at the given node — one candidate per
+	// neighbor, so the handle can snap to any of them.
+	const approachDirectionsAt = (segment: Segment, node: Node) => {
+		const directions: { x: number; y: number }[] = [];
 
 		for (const segmentId of node.connectedSegments) {
 			if (segmentId === segment.id) continue;
@@ -263,24 +260,21 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 			const length = Math.hypot(tangent.x, tangent.y);
 			if (length < 0.0001) continue;
 
-			// Outward along the neighbor, away from the node.
+			// Inward along the neighbor's continuation, into this segment.
 			const outX = (atStart ? tangent.x : -tangent.x) / length;
 			const outY = (atStart ? tangent.y : -tangent.y) / length;
-
-			const dot = outX * chordX + outY * chordY;
-			if (dot < bestDot) {
-				bestDot = dot;
-				best = { x: -outX, y: -outY };
-			}
+			directions.push({ x: -outX, y: -outY });
 		}
 
-		return best;
+		return directions;
 	};
 
-	// Shift while dragging the control point: snap to the "perfect curve"
-	// whose tangents line up with the neighboring segments at both ends —
-	// the control point sits where the two approach rays intersect. Near the
-	// straight line between the nodes it snaps to no curvature at all.
+	// Shift while dragging the control point snaps to the nearest "perfect
+	// curve": straight when near the chord, otherwise the candidate closest
+	// to the cursor among every combination of neighbor tangents — ray
+	// intersections (tangent-continuous at both ends) and single rays
+	// (tangent-continuous at one end, cursor sliding along the ray). Keep
+	// dragging the other way and the next neighbor's tangent catches.
 	const snapControlPoint = (segmentId: string, worldX: number, worldZ: number) => {
 		const segment = editor.graph.segments.get(segmentId);
 		if (!segment) return;
@@ -310,32 +304,49 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 			return;
 		}
 
-		const fromStart = approachDirectionAt(segment, startNode, endNode);
-		const fromEnd = approachDirectionAt(segment, endNode, startNode);
+		const fromStarts = approachDirectionsAt(segment, startNode);
+		const fromEnds = approachDirectionsAt(segment, endNode);
 		const reach = chordLength * 5;
+		const candidates: { x: number; y: number }[] = [];
 
-		if (fromStart && fromEnd) {
-			const denominator = fromStart.x * fromEnd.y - fromStart.y * fromEnd.x;
-			if (Math.abs(denominator) > 0.0001) {
-				const qx = endNode.x - startNode.x;
-				const qy = endNode.y - startNode.y;
-				const a = (qx * fromEnd.y - qy * fromEnd.x) / denominator;
-				const b = (qx * fromStart.y - qy * fromStart.x) / denominator;
+		for (const fromStart of fromStarts) {
+			for (const fromEnd of fromEnds) {
+				const denominator = fromStart.x * fromEnd.y - fromStart.y * fromEnd.x;
+				if (Math.abs(denominator) <= 0.0001) continue;
+				const a = (chordX * fromEnd.y - chordY * fromEnd.x) / denominator;
+				const b = (chordX * fromStart.y - chordY * fromStart.x) / denominator;
 				if (a > 0.01 && b > 0.01 && a < reach && b < reach) {
-					segment.setControlPoint(startNode.x + fromStart.x * a, startNode.y + fromStart.y * a);
-					return;
+					candidates.push({
+						x: startNode.x + fromStart.x * a,
+						y: startNode.y + fromStart.y * a
+					});
 				}
 			}
 		}
+		for (const [origin, directions] of [
+			[startNode, fromStarts],
+			[endNode, fromEnds]
+		] as const) {
+			for (const direction of directions) {
+				const along = Math.max(
+					0,
+					Math.min(reach, (worldX - origin.x) * direction.x + (worldZ - origin.y) * direction.y)
+				);
+				candidates.push({ x: origin.x + direction.x * along, y: origin.y + direction.y * along });
+			}
+		}
 
-		const single = fromStart ?? fromEnd;
-		if (single) {
-			const origin = fromStart ? startNode : endNode;
-			const along = Math.max(
-				0,
-				Math.min(reach, (worldX - origin.x) * single.x + (worldZ - origin.y) * single.y)
-			);
-			segment.setControlPoint(origin.x + single.x * along, origin.y + single.y * along);
+		if (candidates.length > 0) {
+			let best = candidates[0];
+			let bestDistance = Infinity;
+			for (const candidate of candidates) {
+				const distance = Math.hypot(worldX - candidate.x, worldZ - candidate.y);
+				if (distance < bestDistance) {
+					bestDistance = distance;
+					best = candidate;
+				}
+			}
+			segment.setControlPoint(best.x, best.y);
 			return;
 		}
 
@@ -346,6 +357,38 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 		const midY = (startNode.y + endNode.y) / 2;
 		const offset = (worldX - midX) * perpX + (worldZ - midY) * perpY;
 		segment.setControlPoint(midX + perpX * offset, midY + perpY * offset);
+	};
+
+	// A node with exactly two segments becomes a perfect tangent point: the
+	// shared tangent is the line between the two far endpoints, and each
+	// segment's control sits on it at a third of its chord.
+	const smoothTangentThrough = (node: Node) => {
+		if (node.connectedSegments.length !== 2) return;
+
+		const ends: { segment: Segment; far: Node }[] = [];
+		for (const segmentId of node.connectedSegments) {
+			const segment = editor.graph.segments.get(segmentId);
+			if (!segment) return;
+			const farId = segment.startNodeId === node.id ? segment.endNodeId : segment.startNodeId;
+			const far = editor.graph.nodes.get(farId);
+			if (!far) return;
+			ends.push({ segment, far });
+		}
+
+		const dirX = ends[1].far.x - ends[0].far.x;
+		const dirY = ends[1].far.y - ends[0].far.y;
+		const length = Math.hypot(dirX, dirY);
+		if (length < 0.0001) return;
+
+		for (const [index, { segment, far }] of ends.entries()) {
+			const sign = index === 0 ? -1 : 1;
+			const chord = Math.hypot(far.x - node.x, far.y - node.y);
+			const reach = chord * 0.35;
+			segment.setControlPoint(
+				node.x + (dirX / length) * sign * reach,
+				node.y + (dirY / length) * sign * reach
+			);
+		}
 	};
 
 	const applyChanges = () => {
@@ -376,15 +419,18 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 		if (node) {
 			if (event.shiftKey) {
 				if (editor.selectedNodes.has(node.id)) {
-					editor.deselectNode(node.id);
-					return;
+					// Deselect only if this turns out to be a click, not a
+					// shift+drag (which smooths the node's tangent instead).
+					pendingShiftToggle = node.id;
+				} else {
+					editor.selectNode(node.id);
 				}
-				editor.selectNode(node.id);
 			} else if (!editor.selectedNodes.has(node.id)) {
 				editor.clearSelection();
 				editor.selectNode(node.id);
 			}
 			isDragging = true;
+			dragDistance = 0;
 			dragTarget = { type: 'nodes' };
 			captureControlFrames();
 			return;
@@ -432,6 +478,9 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 		const dz = worldPos.z - dragStartZ;
 
 		if (dragTarget.type === 'nodes') {
+			dragDistance += Math.hypot(dx, dz);
+			if (dragDistance > 1) pendingShiftToggle = null;
+
 			for (const nodeId of editor.selectedNodes) {
 				const node = editor.graph.nodes.get(nodeId);
 				if (node) {
@@ -441,6 +490,14 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 				}
 			}
 			restoreControlFrames();
+			// Shift while dragging a single two-segment node keeps the road
+			// perfectly tangent through it: both controls re-solve every
+			// frame along the line between the far endpoints.
+			if (event.shiftKey && editor.selectedNodes.size === 1) {
+				const nodeId = [...editor.selectedNodes][0];
+				const node = editor.graph.nodes.get(nodeId);
+				if (node) smoothTangentThrough(node);
+			}
 			applyChanges();
 		} else if (dragTarget.type === 'controlPoint') {
 			if (event.shiftKey) {
@@ -486,6 +543,13 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 			hideMarquee();
 			marqueeStart = null;
 			return;
+		}
+
+		// A shift+click on a selected node that never turned into a drag is
+		// the deselect gesture.
+		if (pendingShiftToggle !== null) {
+			editor.deselectNode(pendingShiftToggle);
+			pendingShiftToggle = null;
 		}
 
 		// Moving things never splits segments — crossings only become

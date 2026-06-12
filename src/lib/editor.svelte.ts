@@ -8,7 +8,7 @@ import { SceneManager } from './rendering/scene.svelte';
 import { NodeRenderer, type NodeTone } from './rendering/node-renderer';
 import { RoadRenderer } from './rendering/road-renderer';
 import { SelectionRenderer } from './rendering/selection-renderer';
-import type { ModeHandlers, Mode } from './modes/types';
+import type { ModeHandlers, Mode, DrawStyle } from './modes/types';
 import { setupDrawMode } from './modes/draw';
 import { setupSelectMode } from './modes/select';
 
@@ -22,6 +22,7 @@ export class Editor {
 	selectionRenderer!: SelectionRenderer;
 
 	mode = $state<Mode>('select');
+	drawStyle = $state<DrawStyle>('straight');
 	currentLaneTemplateId = $state(getDefaultTemplate().id);
 	fps = $state(0);
 	selectedNodes = new SvelteSet<string>();

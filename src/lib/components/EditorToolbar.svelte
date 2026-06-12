@@ -1,12 +1,19 @@
 <script lang="ts">
 	import { getEditorContext } from '$lib/editor.svelte';
+	import type { DrawStyle } from '$lib/modes/types';
 	import { LANE_COLORS, LANE_TEMPLATES, getTotalWidth } from '$lib/core/lane-template';
 	import { Button } from '$lib/components/ui/button';
-	import { MousePointer2, Trash2 } from '@lucide/svelte';
+	import { MousePointer2, Slash, Spline, Waves, Trash2 } from '@lucide/svelte';
 
 	const editor = getEditorContext();
 
 	const maxPresetWidth = Math.max(...LANE_TEMPLATES.map((t) => getTotalWidth(t.lanes)));
+
+	const DRAW_STYLES: { id: DrawStyle; label: string; icon: typeof Slash }[] = [
+		{ id: 'straight', label: 'Straight', icon: Slash },
+		{ id: 'curved', label: 'Curved (start, apex, end)', icon: Spline },
+		{ id: 'smooth', label: 'Smooth (tangent-continuous)', icon: Waves }
+	];
 
 	function activatePreset(templateId: string) {
 		editor.currentLaneTemplateId = templateId;
@@ -80,6 +87,22 @@
 				</span>
 			</button>
 		{/each}
+
+		{#if editor.mode === 'draw'}
+			<div class="mx-1 h-6 w-px bg-border"></div>
+
+			{#each DRAW_STYLES as style (style.id)}
+				<Button
+					variant={editor.drawStyle === style.id ? 'default' : 'ghost'}
+					size="icon"
+					onclick={() => (editor.drawStyle = style.id)}
+					title="{style.label} (Tab cycles)"
+					aria-pressed={editor.drawStyle === style.id}
+				>
+					<style.icon class="h-4 w-4" />
+				</Button>
+			{/each}
+		{/if}
 
 		<div class="mx-1 h-6 w-px bg-border"></div>
 
