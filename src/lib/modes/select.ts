@@ -4,6 +4,7 @@ import type { Editor } from '../editor.svelte';
 import type { Segment } from '../core/segment.svelte';
 import type { Node } from '../core/node.svelte';
 import { distanceToQuadraticBezier, getQuadraticBezierTangent } from '../geometry/bezier';
+import { CONTROL_SIZE } from '../rendering/selection-renderer';
 
 // Hit areas and snap radii are sized in screen pixels and converted to
 // world units at the current zoom — a constant finger-size on screen, so
@@ -220,19 +221,17 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 		return { segment: best, score: bestScore };
 	};
 
-	// Between a node and a segment that both fall under the cursor, the
-	// nearer one in proportion to its own hit radius wins — clicking the
-	// body of a short segment selects it even inside a node's halo.
+	// Inside a node's ring the node wins outright — roads pass through
+	// their nodes, so any distance-based tiebreak hands the disc to the
+	// segment. Hit radii are geometry-true, so the visible gap between two
+	// rings is exactly where the segment is picked.
 	const pickAt = (
 		worldX: number,
 		worldZ: number
 	): { node: Node | null; segment: Segment | null } => {
 		const nodeHit = nodeHitAt(worldX, worldZ);
-		const segmentHit = segmentHitAt(worldX, worldZ);
-		if (nodeHit.node && (!segmentHit.segment || nodeHit.score <= segmentHit.score)) {
-			return { node: nodeHit.node, segment: null };
-		}
-		return { node: null, segment: segmentHit.segment };
+		if (nodeHit.node) return { node: nodeHit.node, segment: null };
+		return { node: null, segment: segmentHitAt(worldX, worldZ).segment };
 	};
 
 	const findControlPointAt = (worldX: number, worldZ: number) => {
@@ -247,9 +246,10 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 			const cx = segment.controlX ?? (startNode.x + endNode.x) / 2;
 			const cy = segment.controlY ?? (startNode.y + endNode.y) / 2;
 
-			const dx = worldX - cx;
-			const dz = worldZ - cy;
-			if (Math.sqrt(dx * dx + dz * dz) < CONTROL_POINT_HIT_PX * worldPerPixel()) {
+			// The diamond is drawn in world units; its hit area covers the
+			// visible shape with the pixel size only as a floor.
+			const radius = Math.max(CONTROL_SIZE * 0.8, CONTROL_POINT_HIT_PX * worldPerPixel());
+			if (Math.hypot(worldX - cx, worldZ - cy) < radius) {
 				return segment;
 			}
 		}
