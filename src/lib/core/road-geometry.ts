@@ -278,6 +278,10 @@ function angleBetween(a: Point, b: Point): number {
 // node a regular junction.
 const THROUGH_MAX_DEVIATION = 0.3;
 const MERGE_MAX_ANGLE = 1.0;
+// An arm far narrower than the through road merges at any angle: a driveway
+// landing on an avenue is a curb cut, never a junction that interrupts the
+// avenue.
+const MERGE_ANY_ANGLE_RATIO = 0.25;
 
 interface MergeInfo {
 	through: [Segment, Segment];
@@ -289,12 +293,16 @@ function mergeInfo(graph: Graph, node: Node): MergeInfo | null {
 	const majors = validNodeSegments(graph, node).filter(segmentHasRoad);
 	if (majors.length < 3) return null;
 
+	// The through pair may change cross-section at the node — real data
+	// re-tags lane counts block by block, and a narrow arm attaching right
+	// at such a change must not turn the road into a junction. Same-key
+	// pairs win ties so an exact continuation is never passed over.
 	let through: [Segment, Segment] | null = null;
 	let bestDeviation = THROUGH_MAX_DEVIATION;
 	for (let i = 0; i < majors.length; i++) {
 		for (let j = i + 1; j < majors.length; j++) {
-			if (majors[i].lanesKey !== majors[j].lanesKey) continue;
-			const deviation = pairBendDeviation(graph, node, majors[i], majors[j]);
+			const sameKey = majors[i].lanesKey === majors[j].lanesKey;
+			const deviation = pairBendDeviation(graph, node, majors[i], majors[j]) - (sameKey ? 0.01 : 0);
 			if (deviation < bestDeviation) {
 				bestDeviation = deviation;
 				through = [majors[i], majors[j]];
@@ -316,7 +324,8 @@ function mergeInfo(graph: Graph, node: Node): MergeInfo | null {
 		const outward = segmentOutwardAtNode(graph, node, major);
 		if (!outward) return null;
 		const approach = Math.min(angleBetween(outward, outwardA), angleBetween(outward, outwardB));
-		if (approach > MERGE_MAX_ANGLE) return null;
+		const curbCut = major.totalWidth <= throughHalf * 2 * MERGE_ANY_ANGLE_RATIO;
+		if (approach > MERGE_MAX_ANGLE && !curbCut) return null;
 		mergers.push(major);
 	}
 	// Two mergers that continue each other are a road crossing the through
@@ -339,12 +348,18 @@ const TRANSITION_TAPER = 10;
 const TRANSITION_MIN_LENGTH = 8;
 const TRANSITION_MAX_LENGTH = 60;
 
-// A continuation node whose connection pair joins two different
-// cross-sections — rendered by morphing both segments' ribbons.
+// The two segments that continue through a node: the connection pair, or a
+// merge node's through pair.
+function nodeThroughPair(graph: Graph, node: Node): [Segment, Segment] | null {
+	if (isPatchNode(graph, node)) return mergeInfo(graph, node)?.through ?? null;
+	return connectionPair(graph, node);
+}
+
+// A node whose through pair joins two different cross-sections — rendered
+// by morphing both segments' ribbons.
 function isTransitionNode(graph: Graph, node: Node): boolean {
-	const pair = connectionPair(graph, node);
-	if (!pair || isPatchNode(graph, node)) return false;
-	return pair[0].lanesKey !== pair[1].lanesKey;
+	const pair = nodeThroughPair(graph, node);
+	return pair !== null && pair[0].lanesKey !== pair[1].lanesKey;
 }
 
 function mirrorIntervals(intervals: LaneInterval[]): LaneInterval[] {
@@ -422,7 +437,7 @@ export function transitionMorph(
 ): TransitionMorph | null {
 	if (!isTransitionNode(graph, node)) return null;
 
-	const pair = connectionPair(graph, node)!;
+	const pair = nodeThroughPair(graph, node)!;
 	if (pair[0].id !== segmentId && pair[1].id !== segmentId) return null;
 
 	const self = pair[0].id === segmentId ? pair[0] : pair[1];
@@ -661,13 +676,17 @@ export function computeIntersectionTrims(graph: Graph): Map<string, SegmentTrim>
 				if (!applies) continue;
 
 				const cos = arm.outward.x * other.outward.x + arm.outward.y * other.outward.y;
-				let required = other.halfWidth + INTERSECTION_GAP;
+				// Breathing room past the crossing edge scales with the arm
+				// that's stopping: a driveway mouth doesn't reserve a full
+				// crosswalk's worth of avenue.
+				const gap = Math.min(INTERSECTION_GAP, arm.halfWidth);
+				let required = other.halfWidth + gap;
 				if (cos > 0 && arm.halfWidth <= other.halfWidth + 0.01) {
 					const sin = Math.max(
 						Math.abs(arm.outward.x * other.outward.y - arm.outward.y * other.outward.x),
 						MIN_CROSSING_SIN
 					);
-					required = (other.halfWidth + INTERSECTION_GAP + arm.halfWidth * cos) / sin;
+					required = (other.halfWidth + gap + arm.halfWidth * cos) / sin;
 				}
 				trim = Math.max(trim, required);
 			}
@@ -707,10 +726,17 @@ export function trimCenterline(
 	}
 	const total = cumulative[cumulative.length - 1];
 
-	// Keep at least a sliver of road between two close intersections.
-	const maxTrim = total * 0.45;
-	const from = Math.min(trimStart, maxTrim);
-	const to = total - Math.min(trimEnd, maxTrim);
+	// Between two close intersections there may not be room for both
+	// pullbacks: scale them to share the available length instead of
+	// slicing the segment into a sliver (or nothing).
+	const middle = Math.min(total * 0.2, 2);
+	let from = trimStart;
+	let to = total - trimEnd;
+	if (trimStart + trimEnd > total - middle) {
+		const fit = (total - middle) / (trimStart + trimEnd);
+		from = trimStart * fit;
+		to = total - trimEnd * fit;
+	}
 	if (to - from < 0.1) return [];
 
 	const samples: CenterlineSample[] = [sampleAtDistance(base, cumulative, from)];
@@ -874,10 +900,7 @@ function addMergeNode(
 	bandsByType: Map<LaneType, Paths>
 ) {
 	if (pairBendDeviation(graph, node, merge.through[0], merge.through[1]) >= MIN_BEND_DEVIATION) {
-		const arms = collectIntersectionArms(graph, node, centerlines, merge.throughIds);
-		if (arms.length === 2) {
-			addCornerBands(arms[0], arms[1], bandsByType);
-		}
+		addPairJoin(graph, node, centerlines, bandsByType, merge.throughIds, merge.through);
 	}
 
 	for (const merger of merge.mergers) {
@@ -1134,9 +1157,10 @@ function addPairJoin(
 	node: Node,
 	centerlines: Map<string, CenterlineSample[]>,
 	bandsByType: Map<LaneType, Paths>,
-	only?: Set<string>
+	only?: Set<string>,
+	pairOverride?: [Segment, Segment]
 ) {
-	const pair = connectionPair(graph, node);
+	const pair = pairOverride ?? connectionPair(graph, node);
 	if (!pair) return;
 
 	if (pairBendDeviation(graph, node, pair[0], pair[1]) < MIN_BEND_DEVIATION) return;
@@ -1766,9 +1790,12 @@ export function isContinuationNode(graph: Graph, node: Node, segmentId?: string)
 	const pair = connectionPair(graph, node);
 	if (pair) return pair[0].lanesKey === pair[1].lanesKey;
 	// At a merge node only the through pair continues; its mergers stop at
-	// their mouths like junction arms.
+	// their mouths like junction arms, and a cross-section change renders
+	// as a transition (morph) instead of a continuation.
 	if (segmentId === undefined) return false;
-	return mergeInfo(graph, node)?.throughIds.has(segmentId) ?? false;
+	const merge = mergeInfo(graph, node);
+	if (!merge || !merge.throughIds.has(segmentId)) return false;
+	return merge.through[0].lanesKey === merge.through[1].lanesKey;
 }
 
 // Geometry for a single node: the join wedges of a gentle bend or the
