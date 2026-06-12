@@ -112,8 +112,8 @@ export class RoadRenderer {
 			// grass through (bend wedges or corner bands), so those strips
 			// overlap it like the other layers; at junctions and transitions
 			// they must stop square at the stop line.
-			const continuityJoinStart = isContinuationNode(graph, startNode);
-			const continuityJoinEnd = isContinuationNode(graph, endNode);
+			const continuityJoinStart = isContinuationNode(graph, startNode, segment.id);
+			const continuityJoinEnd = isContinuationNode(graph, endNode, segment.id);
 			const morphStart = transitionMorph(graph, startNode, segment.id);
 			const morphEnd = transitionMorph(graph, endNode, segment.id);
 			const trim = trims.get(segment.id);

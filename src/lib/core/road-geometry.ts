@@ -265,6 +265,72 @@ function isPatchNode(graph: Graph, node: Node): boolean {
 // as this, so near-tangent arms don't trim back across the whole map.
 const MIN_CROSSING_SIN = 0.15;
 
+function angleBetween(a: Point, b: Point): number {
+	const dot = Math.max(-1, Math.min(1, a.x * b.x + a.y * b.y));
+	return Math.acos(dot);
+}
+
+// At a node where three or more roads meet, a near-collinear same-section
+// pair can act as a through road: it continues uninterrupted (median and
+// verges included) while narrower arms joining at shallow angles blend into
+// its flank with gores instead of forcing a junction. Any extra arm that is
+// steep, as wide as the through road, or one half of a crossing keeps the
+// node a regular junction.
+const THROUGH_MAX_DEVIATION = 0.3;
+const MERGE_MAX_ANGLE = 1.0;
+
+interface MergeInfo {
+	through: [Segment, Segment];
+	throughIds: Set<string>;
+	mergers: Segment[];
+}
+
+function mergeInfo(graph: Graph, node: Node): MergeInfo | null {
+	const majors = validNodeSegments(graph, node).filter(segmentHasRoad);
+	if (majors.length < 3) return null;
+
+	let through: [Segment, Segment] | null = null;
+	let bestDeviation = THROUGH_MAX_DEVIATION;
+	for (let i = 0; i < majors.length; i++) {
+		for (let j = i + 1; j < majors.length; j++) {
+			if (majors[i].lanesKey !== majors[j].lanesKey) continue;
+			const deviation = pairBendDeviation(graph, node, majors[i], majors[j]);
+			if (deviation < bestDeviation) {
+				bestDeviation = deviation;
+				through = [majors[i], majors[j]];
+			}
+		}
+	}
+	if (!through) return null;
+
+	const throughIds = new Set([through[0].id, through[1].id]);
+	const outwardA = segmentOutwardAtNode(graph, node, through[0]);
+	const outwardB = segmentOutwardAtNode(graph, node, through[1]);
+	if (!outwardA || !outwardB) return null;
+	const throughHalf = Math.min(through[0].totalWidth, through[1].totalWidth) / 2;
+
+	const mergers: Segment[] = [];
+	for (const major of majors) {
+		if (throughIds.has(major.id)) continue;
+		if (major.totalWidth / 2 > throughHalf - 0.01) return null;
+		const outward = segmentOutwardAtNode(graph, node, major);
+		if (!outward) return null;
+		const approach = Math.min(angleBetween(outward, outwardA), angleBetween(outward, outwardB));
+		if (approach > MERGE_MAX_ANGLE) return null;
+		mergers.push(major);
+	}
+	// Two mergers that continue each other are a road crossing the through
+	// road, not a pair of independent ramps.
+	for (let i = 0; i < mergers.length; i++) {
+		for (let j = i + 1; j < mergers.length; j++) {
+			if (pairBendDeviation(graph, node, mergers[i], mergers[j]) < THROUGH_MAX_DEVIATION) {
+				return null;
+			}
+		}
+	}
+	return { through, throughIds, mergers };
+}
+
 // Where two different cross-sections continue into each other, each segment
 // morphs its own strips toward a blended cross-section over this length, so
 // both sides arrive at the node with identical offsets. The taper length
@@ -547,8 +613,10 @@ export function computeIntersectionTrims(graph: Graph): Map<string, SegmentTrim>
 		// always pull back from roads, roads never yield to paths, and paths
 		// clear each other unless they continue one another.
 		const majorJunction = isPatchNode(graph, node);
+		const merge = majorJunction ? mergeInfo(graph, node) : null;
 		// A continuing or transitioning pair never clears itself; bends pull
-		// back by the angle-proportional fillet instead.
+		// back by the angle-proportional fillet instead. The through pair of a
+		// merge node behaves the same: its mergers never cut it.
 		const pair = !majorJunction ? connectionPair(graph, node) : null;
 		const pairIds = pair ? new Set([pair[0].id, pair[1].id]) : null;
 		if (pair) {
@@ -556,6 +624,13 @@ export function computeIntersectionTrims(graph: Graph): Map<string, SegmentTrim>
 			if (fillet > 0) {
 				applyTrim(pair[0].id, node, fillet);
 				applyTrim(pair[1].id, node, fillet);
+			}
+		}
+		if (merge) {
+			const fillet = pairFilletTrim(graph, node, merge.through[0], merge.through[1]);
+			if (fillet > 0) {
+				applyTrim(merge.through[0].id, node, fillet);
+				applyTrim(merge.through[1].id, node, fillet);
 			}
 		}
 		const majors = arms.filter((arm) => arm.hasRoad);
@@ -571,6 +646,7 @@ export function computeIntersectionTrims(graph: Graph): Map<string, SegmentTrim>
 		}
 
 		for (const arm of arms) {
+			if (merge?.throughIds.has(arm.segmentId)) continue;
 			let trim = 0;
 			for (const other of arms) {
 				if (other.segmentId === arm.segmentId) continue;
@@ -765,10 +841,247 @@ function addNodeGeometry(
 	}
 
 	if (isPatchNode(graph, node)) {
-		addIntersection(graph, node, centerlines, bandsByType);
+		const merge = mergeInfo(graph, node);
+		if (merge) {
+			addMergeNode(graph, node, merge, centerlines, bandsByType);
+		} else {
+			addIntersection(graph, node, centerlines, bandsByType);
+			// Paths land on the junction with straight aprons, outside the
+			// plate's corner ring — a narrow far-back path mouth between two
+			// wide road mouths would warp the corner curves.
+			if (segments.filter(segmentHasRoad).length >= 2) {
+				for (const segment of segments) {
+					if (!segmentHasRoad(segment)) {
+						addApron(graph, node, segment, centerlines, bandsByType);
+					}
+				}
+			}
+		}
 	} else {
 		addPairJoin(graph, node, centerlines, bandsByType);
 	}
+}
+
+// A merge node renders its through pair as a continuation — corner bands
+// carry the cross-section through any bend — while each shallow arm lands
+// on the through road's flank with a gore. Paths join with aprons like at
+// any continuation.
+function addMergeNode(
+	graph: Graph,
+	node: Node,
+	merge: MergeInfo,
+	centerlines: Map<string, CenterlineSample[]>,
+	bandsByType: Map<LaneType, Paths>
+) {
+	if (pairBendDeviation(graph, node, merge.through[0], merge.through[1]) >= MIN_BEND_DEVIATION) {
+		const arms = collectIntersectionArms(graph, node, centerlines, merge.throughIds);
+		if (arms.length === 2) {
+			addCornerBands(arms[0], arms[1], bandsByType);
+		}
+	}
+
+	for (const merger of merge.mergers) {
+		addGore(graph, node, merge, merger, centerlines, bandsByType);
+	}
+
+	for (const segment of validNodeSegments(graph, node)) {
+		if (!segmentHasRoad(segment)) {
+			addApron(graph, node, segment, centerlines, bandsByType);
+		}
+	}
+}
+
+// A merging arm blends into the through road's flank: tangent corner curves
+// run from both corners of its mouth onto the through roadway edge,
+// enclosing a gore of asphalt, and the same construction from the mouth's
+// full width forms a slim plate rim around the wedge — it continues the
+// merger's sidewalks along the gore and merges into the through sidewalk
+// where they overlap, leaving the rest of the pocket green. Gore edges tuck
+// slightly into the through ribbon so the shared boundary can't open an
+// antialiasing hairline.
+const GORE_EDGE_TUCK = 0.3;
+const GORE_RIM_EXTRA_REACH = 3;
+
+function addGore(
+	graph: Graph,
+	node: Node,
+	merge: MergeInfo,
+	merger: Segment,
+	centerlines: Map<string, CenterlineSample[]>,
+	bandsByType: Map<LaneType, Paths>
+) {
+	const mergerArms = collectIntersectionArms(graph, node, centerlines, new Set([merger.id]));
+	const throughArms = collectIntersectionArms(graph, node, centerlines, merge.throughIds);
+	if (mergerArms.length !== 1 || throughArms.length !== 2) return;
+	const arm = mergerArms[0];
+
+	const startNode = graph.nodes.get(merger.startNodeId);
+	const endNode = graph.nodes.get(merger.endNodeId);
+	if (!startNode || !endNode || startNode === endNode) return;
+
+	// The trimmed-away tail of the merger's own centerline, mouth first, so
+	// the gore's edges follow the segment's true curvature instead of a
+	// straight tangent ray. It starts slightly before the mouth to underlap
+	// the merger's strips like a junction mouth.
+	const full = sampleCenterline(merger, startNode, endNode);
+	const cumulative: number[] = [0];
+	for (let i = 1; i < full.length; i++) {
+		cumulative.push(
+			cumulative[i - 1] + Math.hypot(full[i].x - full[i - 1].x, full[i].y - full[i - 1].y)
+		);
+	}
+	const total = cumulative[cumulative.length - 1];
+	let mouthAt = 0;
+	let bestDistance = Infinity;
+	for (let i = 1; i < full.length; i++) {
+		const dx = full[i].x - full[i - 1].x;
+		const dy = full[i].y - full[i - 1].y;
+		const lengthSq = dx * dx + dy * dy;
+		if (lengthSq < 0.0001) continue;
+		const t = Math.max(
+			0,
+			Math.min(
+				1,
+				((arm.stop.x - full[i - 1].x) * dx + (arm.stop.y - full[i - 1].y) * dy) / lengthSq
+			)
+		);
+		const px = full[i - 1].x + dx * t;
+		const py = full[i - 1].y + dy * t;
+		const distance = Math.hypot(arm.stop.x - px, arm.stop.y - py);
+		if (distance < bestDistance) {
+			bestDistance = distance;
+			mouthAt = cumulative[i - 1] + Math.sqrt(lengthSq) * t;
+		}
+	}
+	const endsHere = merger.endNodeId === node.id;
+	const portion = endsHere
+		? centerlinePortion(full, cumulative, Math.max(0, mouthAt - 0.5), total)
+		: centerlinePortion(full, cumulative, 0, Math.min(total, mouthAt + 0.5)).reverse();
+	if (portion.length < 2) return;
+
+	// The downstream through arm is the one the merger's travel direction
+	// continues along.
+	const dotInto = (t: IntersectionArm) => t.into.x * arm.into.x + t.into.y * arm.into.y;
+	const [down, up] =
+		dotInto(throughArms[0]) <= dotInto(throughArms[1])
+			? [throughArms[0], throughArms[1]]
+			: [throughArms[1], throughArms[0]];
+
+	const downOut = { x: -down.into.x, y: -down.into.y };
+	const perp = { x: -downOut.y, y: downOut.x };
+	const lat = (arm.stop.x - node.x) * perp.x + (arm.stop.y - node.y) * perp.y;
+	const sideDir = lat >= 0 ? perp : { x: -perp.x, y: -perp.y };
+
+	const mouthDistance = Math.hypot(arm.stop.x - node.x, arm.stop.y - node.y);
+	const maxReach = mouthDistance * 1.5 + 8;
+	// How close (laterally) an edge runs to the through roadway before the
+	// tangent flare curve takes over from the segment's own shape.
+	const flare = arm.halfWidth + INTERSECTION_GAP / 2;
+
+	const edgeOffset = (t: IntersectionArm) => {
+		const positive = t.side.x * sideDir.x + t.side.y * sideDir.y >= 0;
+		const profile = positive ? t.toward : t.away;
+		const magnitude = profile.roadEdge - GORE_EDGE_TUCK;
+		return positive ? magnitude : -magnitude;
+	};
+
+	// Walk the edge polyline until it gets within flare distance of the
+	// through roadway edge; the rest is replaced by the tangent curve.
+	const cutEdge = (poly: Point[], t: IntersectionArm) => {
+		const edge = offsetPoint(t.stop, t.side, edgeOffset(t));
+		let end = poly.length - 1;
+		for (let i = 0; i < poly.length; i++) {
+			const h = (poly[i].x - edge.x) * sideDir.x + (poly[i].y - edge.y) * sideDir.y;
+			if (h < flare) {
+				end = i;
+				break;
+			}
+		}
+		const kept = poly.slice(0, Math.max(end, 1));
+		const last = kept[kept.length - 1];
+		const prev = kept.length >= 2 ? kept[kept.length - 2] : null;
+		const tangent = prev
+			? (normalizeVector({ x: last.x - prev.x, y: last.y - prev.y }) ?? arm.into)
+			: arm.into;
+		return { kept, last, tangent };
+	};
+
+	// Land past where the edge's tangent ray crosses the through edge, so the
+	// flare curve stays tangent to both; near-parallel rays fall back to a
+	// short fixed reach.
+	const goreCurve = (cut: { last: Point; tangent: Point }, t: IntersectionArm, road: boolean) => {
+		const outward = { x: -t.into.x, y: -t.into.y };
+		const edgeStop = offsetPoint(t.stop, t.side, edgeOffset(t));
+		const cross = cut.tangent.x * outward.y - cut.tangent.y * outward.x;
+		let along = 0;
+		if (Math.abs(cross) > 0.001) {
+			const dx = edgeStop.x - cut.last.x;
+			const dy = edgeStop.y - cut.last.y;
+			const ahead = (dx * outward.y - dy * outward.x) / cross;
+			const hit = (cut.tangent.y * dx - cut.tangent.x * dy) / cross;
+			if (ahead > 0) along = Math.max(0, hit);
+		}
+		// The rim reaches a little past the asphalt so the wedge's nose sits on
+		// plate, never on ground.
+		const extra = road ? 0 : GORE_RIM_EXTRA_REACH;
+		const reach = Math.min(along + arm.halfWidth + INTERSECTION_GAP / 2 + extra, maxReach);
+		const landing = offsetPoint(edgeStop, outward, reach);
+		return { curve: sampleCornerCurve(cut.last, cut.tangent, landing, t.into), edgeStop };
+	};
+
+	const profile = getArmProfile(merger.lanes);
+	const advance = (p: Point) => (p.x - node.x) * downOut.x + (p.y - node.y) * downOut.y;
+
+	const buildGore = (road: boolean, layer: LaneType) => {
+		const offsetPolyline = (offset: number) =>
+			portion.map((s) => ({ x: s.x + s.normalX * offset, y: s.y + s.normalY * offset }));
+		const polyPositive = offsetPolyline(road ? profile.positive.roadEdge : profile.halfWidth);
+		const polyNegative = offsetPolyline(-(road ? profile.negative.roadEdge : profile.halfWidth));
+		const [polyD, polyU] =
+			advance(polyPositive[0]) >= advance(polyNegative[0])
+				? [polyPositive, polyNegative]
+				: [polyNegative, polyPositive];
+
+		const cutD = cutEdge(polyD, down);
+		const cutU = cutEdge(polyU, up);
+		const downCurve = goreCurve(cutD, down, road);
+		const upCurve = goreCurve(cutU, up, road);
+
+		// Mouth edge, down-side edge along the segment's shape, flare onto the
+		// through edge, back along the through flank, and up the other side.
+		const points: Point[] = [
+			cutU.kept[0],
+			...cutD.kept,
+			...downCurve.curve,
+			downCurve.edgeStop,
+			upCurve.edgeStop,
+			...upCurve.curve.slice().reverse(),
+			...cutU.kept.slice(1).reverse()
+		];
+		getOrCreateBands(bandsByType, layer).push(
+			normalizeWinding(points.map((p) => toClipperPoint(p.x, p.y)))
+		);
+	};
+
+	buildGore(false, 'sidewalk');
+	buildGore(true, 'road');
+}
+
+function centerlinePortion(
+	full: CenterlineSample[],
+	cumulative: number[],
+	from: number,
+	to: number
+): CenterlineSample[] {
+	if (to - from < 0.1) return [];
+	const samples: CenterlineSample[] = [sampleAtDistance(full, cumulative, from)];
+	for (let i = 0; i < full.length; i++) {
+		if (cumulative[i] > from && cumulative[i] < to) {
+			samples.push(full[i]);
+		}
+	}
+	samples.push(sampleAtDistance(full, cumulative, to));
+	return samples;
 }
 
 // Pavement apron connecting a path's mouth to the roadway it attaches to: a
@@ -939,8 +1252,16 @@ function addIntersection(
 	centerlines: Map<string, CenterlineSample[]>,
 	bandsByType: Map<LaneType, Paths>
 ) {
-	const arms = collectIntersectionArms(graph, node, centerlines);
+	let arms = collectIntersectionArms(graph, node, centerlines);
 	if (arms.length < 2) return;
+
+	// The plate ring connects road mouths only when this is a road junction:
+	// paths land on top of it via aprons instead of pulling its corner
+	// curves out of shape.
+	const roadArmCount = arms.filter((arm) => arm.hasRoad).length;
+	if (roadArmCount >= 2) {
+		arms = arms.filter((arm) => arm.hasRoad);
+	}
 
 	arms.sort((a, b) => Math.atan2(-a.into.y, -a.into.x) - Math.atan2(-b.into.y, -b.into.x));
 
@@ -1441,9 +1762,13 @@ function toPoints(contour: Path): Point[] {
 // the node piece carries every strip through (bend wedges or corner bands)
 // and segment strips can safely overlap into it. Attached paths don't break
 // continuity — the pair outranks them.
-export function isContinuationNode(graph: Graph, node: Node): boolean {
+export function isContinuationNode(graph: Graph, node: Node, segmentId?: string): boolean {
 	const pair = connectionPair(graph, node);
-	return pair !== null && pair[0].lanesKey === pair[1].lanesKey;
+	if (pair) return pair[0].lanesKey === pair[1].lanesKey;
+	// At a merge node only the through pair continues; its mergers stop at
+	// their mouths like junction arms.
+	if (segmentId === undefined) return false;
+	return mergeInfo(graph, node)?.throughIds.has(segmentId) ?? false;
 }
 
 // Geometry for a single node: the join wedges of a gentle bend or the
