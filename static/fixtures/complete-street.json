@@ -1,0 +1,51 @@
+{
+	"nodes": [
+		{ "id": "node-0", "x": -260, "y": 0 },
+		{ "id": "node-1", "x": -30, "y": 0 },
+		{ "id": "node-2", "x": 130, "y": 0 },
+		{ "id": "node-3", "x": 240, "y": 60 }
+	],
+	"segments": [
+		{
+			"id": "segment-0",
+			"startNodeId": "node-0",
+			"endNodeId": "node-1",
+			"lanes": [
+				{ "type": "sidewalk", "width": 2.5, "direction": "bidirectional" },
+				{ "type": "bike", "width": 1.8, "direction": "backward" },
+				{ "type": "parking", "width": 2.2, "direction": "bidirectional" },
+				{ "type": "road", "width": 3.5, "direction": "backward" },
+				{ "type": "road", "width": 3.5, "direction": "backward" },
+				{ "type": "median", "width": 2, "direction": "bidirectional" },
+				{ "type": "transit", "width": 3.5, "direction": "forward" },
+				{ "type": "road", "width": 3.5, "direction": "forward" },
+				{ "type": "parking", "width": 2.2, "direction": "bidirectional" },
+				{ "type": "bike", "width": 1.8, "direction": "forward" },
+				{ "type": "grass", "width": 1.5, "direction": "bidirectional" },
+				{ "type": "sidewalk", "width": 2.5, "direction": "bidirectional" }
+			]
+		},
+		{
+			"id": "segment-1",
+			"startNodeId": "node-1",
+			"endNodeId": "node-2",
+			"lanes": [
+				{ "type": "sidewalk", "width": 2, "direction": "bidirectional" },
+				{ "type": "concrete", "width": 3.5, "direction": "backward" },
+				{ "type": "concrete", "width": 3.5, "direction": "forward" },
+				{ "type": "sidewalk", "width": 2, "direction": "bidirectional" }
+			]
+		},
+		{
+			"id": "segment-2",
+			"startNodeId": "node-2",
+			"endNodeId": "node-3",
+			"lanes": [
+				{ "type": "sidewalk", "width": 2, "direction": "bidirectional" },
+				{ "type": "road", "width": 3, "direction": "backward" },
+				{ "type": "road", "width": 3, "direction": "forward" },
+				{ "type": "sidewalk", "width": 2, "direction": "bidirectional" }
+			]
+		}
+	]
+}

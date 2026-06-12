@@ -6,6 +6,7 @@
 		createLanesFrom,
 		getTotalWidth
 	} from '$lib/core/lane-template';
+	import { LANE_TYPE_LIST, LANE_TYPE_SPECS } from '$lib/core/lane-types';
 	import type { LaneType } from '$lib/core/types';
 	import * as Select from '$lib/components/ui/select';
 	import { Button } from '$lib/components/ui/button';
@@ -26,12 +27,10 @@
 	);
 	const lanes = $derived(uniform ? segments[0].lanes : []);
 
-	const LANE_TYPES: { value: LaneType; label: string }[] = [
-		{ value: 'road', label: 'Road' },
-		{ value: 'sidewalk', label: 'Sidewalk' },
-		{ value: 'grass', label: 'Grass' },
-		{ value: 'median', label: 'Median' }
-	];
+	const LANE_TYPES: { value: LaneType; label: string }[] = LANE_TYPE_LIST.map((value) => ({
+		value,
+		label: LANE_TYPE_SPECS[value].label
+	}));
 
 	const MIN_LANE_WIDTH = 0.5;
 	const MAX_LANE_WIDTH = 30;
@@ -50,7 +49,7 @@
 		for (const segment of segments) {
 			const lane = segment.lanes[index];
 			lane.type = option.value;
-			lane.direction = option.value === 'road' ? 'forward' : 'bidirectional';
+			lane.direction = LANE_TYPE_SPECS[option.value].directional ? 'forward' : 'bidirectional';
 		}
 		commit();
 	}
@@ -214,7 +213,7 @@
 							onchange={(e) => setWidth(i, e.currentTarget.value)}
 						/>
 
-						{#if lane.type === 'road'}
+						{#if LANE_TYPE_SPECS[lane.type].directional}
 							<Button
 								variant="ghost"
 								size="icon"

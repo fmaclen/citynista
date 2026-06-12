@@ -1,4 +1,12 @@
-export type LaneType = 'road' | 'sidewalk' | 'grass' | 'median';
+export type LaneType =
+	| 'road'
+	| 'concrete'
+	| 'bike'
+	| 'parking'
+	| 'transit'
+	| 'sidewalk'
+	| 'grass'
+	| 'median';
 export type LaneDirection = 'forward' | 'backward' | 'bidirectional';
 
 export interface Lane {

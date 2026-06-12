@@ -1,11 +1,9 @@
 import type { Lane, LaneTemplate, LaneType } from './types';
+import { LANE_TYPE_SPECS } from './lane-types';
 
-export const LANE_COLORS: Record<LaneType, string> = {
-	road: '#3D3D3D',
-	sidewalk: '#9A9A94',
-	grass: '#52A06B',
-	median: '#6E6E68'
-};
+export const LANE_COLORS = Object.fromEntries(
+	Object.entries(LANE_TYPE_SPECS).map(([type, spec]) => [type, spec.color])
+) as Record<LaneType, string>;
 
 // Templates are presets: drawing (or applying one in the lane editor) copies
 // its lanes onto the segment, which owns them from then on.

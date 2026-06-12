@@ -5,10 +5,8 @@ import {
 	computeIntersectionTrims,
 	getLaneIntervals,
 	isContinuationNode,
-	medianEndsAtNode,
 	sampleTrimmedCenterline,
-	transitionMorph,
-	trimCenterline
+	transitionMorph
 } from '../core/road-geometry';
 import type {
 	CenterlineSample,
@@ -26,29 +24,20 @@ interface StripMorph {
 	end?: { length: number; offsetA: number; offsetB: number };
 }
 import { getTotalWidth } from '../core/lane-template';
+import { LANE_TYPE_LIST, laneColor, laneLayerY, laneSurface } from '../core/lane-types';
 import type { Lane } from '../core/types';
 
-const LAYER_Y: Record<RoadLayerId, number> = {
-	sidewalk: 0.02,
-	grass: 0.03,
-	road: 0.04,
-	median: 0.05
-};
+const LAYER_Y: Record<RoadLayerId, number> = Object.fromEntries(
+	LANE_TYPE_LIST.map((type) => [type, laneLayerY(type)])
+) as Record<RoadLayerId, number>;
 
-const LAYER_COLORS: Record<RoadLayerId, string> = {
-	sidewalk: '#9A9A94',
-	grass: '#52A06B',
-	road: '#3D3D3D',
-	median: '#6E6E68'
-};
+const LAYER_COLORS: Record<RoadLayerId, string> = Object.fromEntries(
+	LANE_TYPE_LIST.map((type) => [type, laneColor(type)])
+) as Record<RoadLayerId, string>;
 
 // Segment ribbons reach slightly into their node pieces so no hairline
 // cracks can open between them.
 const JOIN_OVERLAP = 0.5;
-// A terminating median pulls back from the stop line and ends in a rounded
-// nose: half a disc of the strip's own width, set back by a small gap.
-const MEDIAN_NOSE_GAP = 1.5;
-const MEDIAN_NOSE_SEGMENTS = 16;
 // Tiny per-piece elevation so coplanar pieces never z-fight; stays well
 // below the 0.01 gap between layers.
 const PIECE_JITTER_STEP = 0.0002;
@@ -125,8 +114,6 @@ export class RoadRenderer {
 			// they must stop square at the stop line.
 			const continuityJoinStart = isContinuationNode(graph, startNode);
 			const continuityJoinEnd = isContinuationNode(graph, endNode);
-			const noseStart = medianEndsAtNode(graph, startNode, segment.id);
-			const noseEnd = medianEndsAtNode(graph, endNode, segment.id);
 			const morphStart = transitionMorph(graph, startNode, segment.id);
 			const morphEnd = transitionMorph(graph, endNode, segment.id);
 			const trim = trims.get(segment.id);
@@ -146,8 +133,6 @@ export class RoadRenderer {
 				joinEnd,
 				continuityJoinStart,
 				continuityJoinEnd,
-				noseStart,
-				noseEnd,
 				morphStart?.key ?? '-',
 				morphEnd?.key ?? '-'
 			].join('|');
@@ -163,8 +148,6 @@ export class RoadRenderer {
 				joinEnd,
 				continuityJoinStart,
 				continuityJoinEnd,
-				noseStart,
-				noseEnd,
 				morphStart,
 				morphEnd,
 				this.jitterFor(key)
@@ -223,8 +206,6 @@ export class RoadRenderer {
 		joinEnd: boolean,
 		continuityJoinStart: boolean,
 		continuityJoinEnd: boolean,
-		noseStart: boolean,
-		noseEnd: boolean,
 		morphStart: TransitionMorph | null,
 		morphEnd: TransitionMorph | null,
 		jitter: number
@@ -266,7 +247,8 @@ export class RoadRenderer {
 		const intervals = getLaneIntervals(lanes);
 		for (let k = 0; k < intervals.length; k++) {
 			const interval = intervals[k];
-			if (interval.laneType === 'sidewalk') continue;
+			const surface = laneSurface(interval.laneType);
+			if (surface === 'walkway') continue;
 
 			const targetStart = morphStart ? morphStart.intervals[k] : undefined;
 			const targetEnd = morphEnd ? morphEnd.intervals[k] : undefined;
@@ -282,91 +264,24 @@ export class RoadRenderer {
 						}
 					: undefined;
 
-			if (interval.laneType === 'road') {
+			if (surface === 'roadway') {
+				// Overlap stubs past a node are only invisible for plain road
+				// (they hide under the asphalt patch or the neighbor's road);
+				// every other lane draws above road and would show them.
+				const stubSafeStart = continuityJoinStart || (interval.laneType === 'road' && !morphStart);
+				const stubSafeEnd = continuityJoinEnd || (interval.laneType === 'road' && !morphEnd);
 				group.add(
 					this.buildStrip(
 						samples,
 						interval.start,
 						interval.end,
-						'road',
-						startExt,
-						endExt,
+						interval.laneType,
+						stubSafeStart ? startExt : 0,
+						stubSafeEnd ? endExt : 0,
 						jitter,
 						stripMorph
 					)
 				);
-				continue;
-			}
-
-			// Terminating medians pull back and end in a rounded nose; the
-			// vacated stretch of the median column is paved over so the nose
-			// sits on roadway, not on bare plate. The fill still morphs with
-			// the roadway so it meets the other side's center at the blended
-			// width.
-			if (interval.laneType === 'median' && (noseStart || noseEnd)) {
-				const width = interval.end - interval.start;
-				const setback = MEDIAN_NOSE_GAP + width / 2;
-				const laneSamples = trimCenterline(samples, noseStart ? setback : 0, noseEnd ? setback : 0);
-				if (laneSamples.length < 2) continue;
-
-				// The nose only replaces the morph at its own end — a median
-				// nosed at a junction must still shift laterally toward a
-				// transition at the segment's other end.
-				const noseMorph: StripMorph | undefined = stripMorph
-					? {
-							start: noseStart ? undefined : stripMorph.start,
-							end: noseEnd ? undefined : stripMorph.end
-						}
-					: undefined;
-				group.add(
-					this.buildStrip(
-						laneSamples,
-						interval.start,
-						interval.end,
-						'median',
-						0,
-						0,
-						jitter,
-						noseMorph
-					)
-				);
-				const offsetCenter = (interval.start + interval.end) / 2;
-				if (noseStart) {
-					group.add(this.buildCap(laneSamples, 'start', offsetCenter, width / 2, jitter));
-					const fill = sliceCenterline(samples, 'start', setback + width / 2);
-					if (fill.length >= 2) {
-						group.add(
-							this.buildStrip(
-								fill,
-								interval.start,
-								interval.end,
-								'road',
-								startExt,
-								0,
-								jitter,
-								stripMorph?.start ? { start: stripMorph.start } : undefined
-							)
-						);
-					}
-				}
-				if (noseEnd) {
-					group.add(this.buildCap(laneSamples, 'end', offsetCenter, width / 2, jitter));
-					const fill = sliceCenterline(samples, 'end', setback + width / 2);
-					if (fill.length >= 2) {
-						group.add(
-							this.buildStrip(
-								fill,
-								interval.start,
-								interval.end,
-								'road',
-								0,
-								endExt,
-								jitter,
-								stripMorph?.end ? { end: stripMorph.end } : undefined
-							)
-						);
-					}
-				}
 				continue;
 			}
 
@@ -400,8 +315,8 @@ export class RoadRenderer {
 					interval.start,
 					interval.end,
 					interval.laneType,
-					continuityJoinStart || (morphStart && targetStart) ? JOIN_OVERLAP : 0,
-					continuityJoinEnd || (morphEnd && targetEnd) ? JOIN_OVERLAP : 0,
+					continuityJoinStart ? JOIN_OVERLAP : 0,
+					continuityJoinEnd ? JOIN_OVERLAP : 0,
 					jitter,
 					stripMorph
 				)
@@ -409,55 +324,6 @@ export class RoadRenderer {
 		}
 
 		return group;
-	}
-
-	// Half-disc closing a median strip's end, flush with the strip's edge.
-	private buildCap(
-		samples: CenterlineSample[],
-		at: 'start' | 'end',
-		offsetCenter: number,
-		radius: number,
-		jitter: number
-	): THREE.Mesh {
-		const tip = at === 'start' ? samples[0] : samples[samples.length - 1];
-		const inner = at === 'start' ? samples[1] : samples[samples.length - 2];
-
-		let tx = tip.x - inner.x;
-		let ty = tip.y - inner.y;
-		const length = Math.hypot(tx, ty);
-		if (length > 0.0001) {
-			tx /= length;
-			ty /= length;
-		}
-
-		const cx = tip.x + tip.normalX * offsetCenter;
-		const cy = tip.y + tip.normalY * offsetCenter;
-		const y = LAYER_Y.median + this.elevation + jitter;
-
-		// Fan from +normal through the outward tangent to -normal.
-		const vertices = new Float32Array((MEDIAN_NOSE_SEGMENTS + 2) * 3);
-		vertices[0] = cx;
-		vertices[1] = y;
-		vertices[2] = cy;
-		for (let i = 0; i <= MEDIAN_NOSE_SEGMENTS; i++) {
-			const angle = (i / MEDIAN_NOSE_SEGMENTS) * Math.PI;
-			const dx = tip.normalX * Math.cos(angle) + tx * Math.sin(angle);
-			const dy = tip.normalY * Math.cos(angle) + ty * Math.sin(angle);
-			vertices[(i + 1) * 3] = cx + dx * radius;
-			vertices[(i + 1) * 3 + 1] = y;
-			vertices[(i + 1) * 3 + 2] = cy + dy * radius;
-		}
-
-		const indices: number[] = [];
-		for (let i = 1; i <= MEDIAN_NOSE_SEGMENTS; i++) {
-			indices.push(0, i, i + 1);
-		}
-
-		const geometry = new THREE.BufferGeometry();
-		geometry.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
-		geometry.setIndex(indices);
-
-		return new THREE.Mesh(geometry, this.materialFor('median'));
 	}
 
 	private buildStrip(
@@ -503,6 +369,9 @@ export class RoadRenderer {
 			for (const at of boundaries) {
 				const last = cumulative[cumulative.length - 1];
 				if (at <= 0.001 || at >= last - 0.001) continue;
+				// A vertex landing on an existing one would create a
+				// degenerate sliver triangle that flickers.
+				if (cumulative.some((d) => Math.abs(d - at) < 0.01)) continue;
 
 				for (let i = 1; i < points.length; i++) {
 					if (cumulative[i] <= at + 0.001) continue;
