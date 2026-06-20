@@ -183,6 +183,10 @@ interface SegmentTrim {
 	end: number;
 }
 
+// Per-segment junction pullbacks, computed once per frame and shared between
+// the road and block renderers so neither recomputes the whole-graph sweep.
+export type SegmentTrims = Map<string, SegmentTrim>;
+
 // A node gets the intersection treatment (stop lines + pavement patch) when
 // 3+ roads meet, or when two roads form a corner sharper than a gentle bend.
 // Gentle two-segment bends keep their continuous swept join so polyline
@@ -769,7 +773,7 @@ function laneBoundaryTargets(
 // actually exits the other road's corridor — but only for arms no wider
 // than the one they're clearing, so a major road never yields to a narrow
 // shallow ramp or path.
-export function computeIntersectionTrims(graph: Graph): Map<string, SegmentTrim> {
+export function computeIntersectionTrims(graph: Graph): SegmentTrims {
 	const trims = new Map<string, SegmentTrim>();
 
 	const applyTrim = (segmentId: string, atNode: Node, trim: number) => {
@@ -1790,7 +1794,7 @@ function toClipperPoint(x: number, y: number) {
 	return { X: Math.round(x * CLIPPER_SCALE), Y: Math.round(y * CLIPPER_SCALE) };
 }
 
-function executeBoolean(clipType: number, subject: Paths, clip: Paths): Paths {
+export function executeBoolean(clipType: number, subject: Paths, clip: Paths): Paths {
 	const clipper = new ClipperLib.Clipper();
 	clipper.AddPaths(subject, ClipperLib.PolyType.ptSubject, true);
 	if (clip.length > 0) {
@@ -1807,7 +1811,7 @@ function executeBoolean(clipType: number, subject: Paths, clip: Paths): Paths {
 	return solution;
 }
 
-function unionPaths(paths: Paths): Paths {
+export function unionPaths(paths: Paths): Paths {
 	return executeBoolean(ClipperLib.ClipType.ctUnion, paths, []);
 }
 
@@ -1862,7 +1866,7 @@ function applyCurbRounding(paths: Paths, radius: number, junctionDiscs: Paths): 
 	return unionPaths([...paths, ...fillets]);
 }
 
-function offsetPaths(paths: Paths, delta: number): Paths {
+export function offsetPaths(paths: Paths, delta: number): Paths {
 	const offsetter = new ClipperLib.ClipperOffset(2, 0.25 * CLIPPER_SCALE);
 	offsetter.AddPaths(paths, ClipperLib.JoinType.jtRound, ClipperLib.EndType.etClosedPolygon);
 
@@ -1878,7 +1882,7 @@ function offsetPaths(paths: Paths, delta: number): Paths {
 const TRIANGULATION_EPSILON = 0.05;
 const MAX_DECOMPOSE_DEPTH = 4;
 
-function pathsToPolygons(paths: Paths): PolygonWithHoles[] {
+export function pathsToPolygons(paths: Paths): PolygonWithHoles[] {
 	if (paths.length === 0) return [];
 
 	const shrunk = offsetPaths(paths, -TRIANGULATION_EPSILON);
@@ -1980,7 +1984,7 @@ function centroidY(points: Point[]): number {
 	return points.length > 0 ? sum / points.length : 0;
 }
 
-function toClipperPath(points: Point[]): Path {
+export function toClipperPath(points: Point[]): Path {
 	return points.map((point) => toClipperPoint(point.x, point.y));
 }
 

@@ -9,7 +9,7 @@ import {
 	sampleTrimmedCenterline,
 	transitionMorph
 } from '../core/road-geometry';
-import type { NodePaintPath } from '../core/road-geometry';
+import type { NodePaintPath, SegmentTrims } from '../core/road-geometry';
 import type {
 	CenterlineSample,
 	Point,
@@ -113,8 +113,7 @@ export class RoadRenderer {
 	// Incrementally rebuild the network: every segment and node is a cached
 	// piece keyed by a hash of its inputs, so a drag only regenerates the
 	// pieces it actually moves.
-	update(graph: Graph) {
-		const trims = computeIntersectionTrims(graph);
+	update(graph: Graph, trims: SegmentTrims = computeIntersectionTrims(graph)) {
 		const centerlines = new Map<string, CenterlineSample[]>();
 
 		for (const segment of graph.segments.values()) {

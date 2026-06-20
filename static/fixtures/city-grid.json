@@ -1,0 +1,634 @@
+{
+	"nodes": [
+		{
+			"id": "node-00",
+			"x": -180,
+			"y": -110
+		},
+		{
+			"id": "node-01",
+			"x": -180,
+			"y": 0
+		},
+		{
+			"id": "node-02",
+			"x": -180,
+			"y": 110
+		},
+		{
+			"id": "node-10",
+			"x": -60,
+			"y": -110
+		},
+		{
+			"id": "node-11",
+			"x": -60,
+			"y": 0
+		},
+		{
+			"id": "node-12",
+			"x": -60,
+			"y": 110
+		},
+		{
+			"id": "node-20",
+			"x": 60,
+			"y": -110
+		},
+		{
+			"id": "node-21",
+			"x": 60,
+			"y": 0
+		},
+		{
+			"id": "node-22",
+			"x": 60,
+			"y": 110
+		},
+		{
+			"id": "node-30",
+			"x": 180,
+			"y": -110
+		},
+		{
+			"id": "node-31",
+			"x": 180,
+			"y": 0
+		},
+		{
+			"id": "node-32",
+			"x": 180,
+			"y": 110
+		},
+		{
+			"id": "node-d",
+			"x": 240,
+			"y": -160
+		}
+	],
+	"segments": [
+		{
+			"id": "segment-0",
+			"startNodeId": "node-00",
+			"endNodeId": "node-10",
+			"lanes": [
+				{
+					"type": "sidewalk",
+					"width": 2,
+					"direction": "bidirectional"
+				},
+				{
+					"type": "road",
+					"width": 3,
+					"direction": "backward"
+				},
+				{
+					"type": "road",
+					"width": 3,
+					"direction": "forward"
+				},
+				{
+					"type": "sidewalk",
+					"width": 2,
+					"direction": "bidirectional"
+				}
+			]
+		},
+		{
+			"id": "segment-1",
+			"startNodeId": "node-00",
+			"endNodeId": "node-01",
+			"lanes": [
+				{
+					"type": "sidewalk",
+					"width": 2,
+					"direction": "bidirectional"
+				},
+				{
+					"type": "road",
+					"width": 3,
+					"direction": "backward"
+				},
+				{
+					"type": "road",
+					"width": 3,
+					"direction": "forward"
+				},
+				{
+					"type": "sidewalk",
+					"width": 2,
+					"direction": "bidirectional"
+				}
+			]
+		},
+		{
+			"id": "segment-2",
+			"startNodeId": "node-01",
+			"endNodeId": "node-11",
+			"lanes": [
+				{
+					"type": "sidewalk",
+					"width": 2.5,
+					"direction": "bidirectional"
+				},
+				{
+					"type": "grass",
+					"width": 1,
+					"direction": "bidirectional"
+				},
+				{
+					"type": "road",
+					"width": 3.5,
+					"direction": "backward"
+				},
+				{
+					"type": "road",
+					"width": 3.5,
+					"direction": "backward"
+				},
+				{
+					"type": "median",
+					"width": 2,
+					"direction": "bidirectional"
+				},
+				{
+					"type": "road",
+					"width": 3.5,
+					"direction": "forward"
+				},
+				{
+					"type": "road",
+					"width": 3.5,
+					"direction": "forward"
+				},
+				{
+					"type": "grass",
+					"width": 1,
+					"direction": "bidirectional"
+				},
+				{
+					"type": "sidewalk",
+					"width": 2.5,
+					"direction": "bidirectional"
+				}
+			]
+		},
+		{
+			"id": "segment-3",
+			"startNodeId": "node-01",
+			"endNodeId": "node-02",
+			"lanes": [
+				{
+					"type": "sidewalk",
+					"width": 2,
+					"direction": "bidirectional"
+				},
+				{
+					"type": "road",
+					"width": 3,
+					"direction": "backward"
+				},
+				{
+					"type": "road",
+					"width": 3,
+					"direction": "forward"
+				},
+				{
+					"type": "sidewalk",
+					"width": 2,
+					"direction": "bidirectional"
+				}
+			]
+		},
+		{
+			"id": "segment-4",
+			"startNodeId": "node-02",
+			"endNodeId": "node-12",
+			"lanes": [
+				{
+					"type": "sidewalk",
+					"width": 2,
+					"direction": "bidirectional"
+				},
+				{
+					"type": "road",
+					"width": 3,
+					"direction": "backward"
+				},
+				{
+					"type": "road",
+					"width": 3,
+					"direction": "forward"
+				},
+				{
+					"type": "sidewalk",
+					"width": 2,
+					"direction": "bidirectional"
+				}
+			]
+		},
+		{
+			"id": "segment-5",
+			"startNodeId": "node-10",
+			"endNodeId": "node-20",
+			"lanes": [
+				{
+					"type": "sidewalk",
+					"width": 2,
+					"direction": "bidirectional"
+				},
+				{
+					"type": "road",
+					"width": 3,
+					"direction": "backward"
+				},
+				{
+					"type": "road",
+					"width": 3,
+					"direction": "forward"
+				},
+				{
+					"type": "sidewalk",
+					"width": 2,
+					"direction": "bidirectional"
+				}
+			]
+		},
+		{
+			"id": "segment-6",
+			"startNodeId": "node-10",
+			"endNodeId": "node-11",
+			"lanes": [
+				{
+					"type": "sidewalk",
+					"width": 2,
+					"direction": "bidirectional"
+				},
+				{
+					"type": "road",
+					"width": 3,
+					"direction": "backward"
+				},
+				{
+					"type": "road",
+					"width": 3,
+					"direction": "forward"
+				},
+				{
+					"type": "sidewalk",
+					"width": 2,
+					"direction": "bidirectional"
+				}
+			]
+		},
+		{
+			"id": "segment-7",
+			"startNodeId": "node-11",
+			"endNodeId": "node-21",
+			"lanes": [
+				{
+					"type": "sidewalk",
+					"width": 2.5,
+					"direction": "bidirectional"
+				},
+				{
+					"type": "grass",
+					"width": 1,
+					"direction": "bidirectional"
+				},
+				{
+					"type": "road",
+					"width": 3.5,
+					"direction": "backward"
+				},
+				{
+					"type": "road",
+					"width": 3.5,
+					"direction": "backward"
+				},
+				{
+					"type": "median",
+					"width": 2,
+					"direction": "bidirectional"
+				},
+				{
+					"type": "road",
+					"width": 3.5,
+					"direction": "forward"
+				},
+				{
+					"type": "road",
+					"width": 3.5,
+					"direction": "forward"
+				},
+				{
+					"type": "grass",
+					"width": 1,
+					"direction": "bidirectional"
+				},
+				{
+					"type": "sidewalk",
+					"width": 2.5,
+					"direction": "bidirectional"
+				}
+			]
+		},
+		{
+			"id": "segment-8",
+			"startNodeId": "node-11",
+			"endNodeId": "node-12",
+			"lanes": [
+				{
+					"type": "sidewalk",
+					"width": 2,
+					"direction": "bidirectional"
+				},
+				{
+					"type": "road",
+					"width": 3,
+					"direction": "backward"
+				},
+				{
+					"type": "road",
+					"width": 3,
+					"direction": "forward"
+				},
+				{
+					"type": "sidewalk",
+					"width": 2,
+					"direction": "bidirectional"
+				}
+			]
+		},
+		{
+			"id": "segment-9",
+			"startNodeId": "node-12",
+			"endNodeId": "node-22",
+			"lanes": [
+				{
+					"type": "sidewalk",
+					"width": 2,
+					"direction": "bidirectional"
+				},
+				{
+					"type": "road",
+					"width": 3,
+					"direction": "backward"
+				},
+				{
+					"type": "road",
+					"width": 3,
+					"direction": "forward"
+				},
+				{
+					"type": "sidewalk",
+					"width": 2,
+					"direction": "bidirectional"
+				}
+			]
+		},
+		{
+			"id": "segment-10",
+			"startNodeId": "node-20",
+			"endNodeId": "node-30",
+			"lanes": [
+				{
+					"type": "sidewalk",
+					"width": 2,
+					"direction": "bidirectional"
+				},
+				{
+					"type": "road",
+					"width": 3,
+					"direction": "backward"
+				},
+				{
+					"type": "road",
+					"width": 3,
+					"direction": "forward"
+				},
+				{
+					"type": "sidewalk",
+					"width": 2,
+					"direction": "bidirectional"
+				}
+			]
+		},
+		{
+			"id": "segment-11",
+			"startNodeId": "node-20",
+			"endNodeId": "node-21",
+			"lanes": [
+				{
+					"type": "sidewalk",
+					"width": 2,
+					"direction": "bidirectional"
+				},
+				{
+					"type": "road",
+					"width": 3,
+					"direction": "backward"
+				},
+				{
+					"type": "road",
+					"width": 3,
+					"direction": "forward"
+				},
+				{
+					"type": "sidewalk",
+					"width": 2,
+					"direction": "bidirectional"
+				}
+			]
+		},
+		{
+			"id": "segment-12",
+			"startNodeId": "node-21",
+			"endNodeId": "node-31",
+			"lanes": [
+				{
+					"type": "sidewalk",
+					"width": 2.5,
+					"direction": "bidirectional"
+				},
+				{
+					"type": "grass",
+					"width": 1,
+					"direction": "bidirectional"
+				},
+				{
+					"type": "road",
+					"width": 3.5,
+					"direction": "backward"
+				},
+				{
+					"type": "road",
+					"width": 3.5,
+					"direction": "backward"
+				},
+				{
+					"type": "median",
+					"width": 2,
+					"direction": "bidirectional"
+				},
+				{
+					"type": "road",
+					"width": 3.5,
+					"direction": "forward"
+				},
+				{
+					"type": "road",
+					"width": 3.5,
+					"direction": "forward"
+				},
+				{
+					"type": "grass",
+					"width": 1,
+					"direction": "bidirectional"
+				},
+				{
+					"type": "sidewalk",
+					"width": 2.5,
+					"direction": "bidirectional"
+				}
+			]
+		},
+		{
+			"id": "segment-13",
+			"startNodeId": "node-21",
+			"endNodeId": "node-22",
+			"lanes": [
+				{
+					"type": "sidewalk",
+					"width": 2,
+					"direction": "bidirectional"
+				},
+				{
+					"type": "road",
+					"width": 3,
+					"direction": "backward"
+				},
+				{
+					"type": "road",
+					"width": 3,
+					"direction": "forward"
+				},
+				{
+					"type": "sidewalk",
+					"width": 2,
+					"direction": "bidirectional"
+				}
+			]
+		},
+		{
+			"id": "segment-14",
+			"startNodeId": "node-22",
+			"endNodeId": "node-32",
+			"lanes": [
+				{
+					"type": "sidewalk",
+					"width": 2,
+					"direction": "bidirectional"
+				},
+				{
+					"type": "road",
+					"width": 3,
+					"direction": "backward"
+				},
+				{
+					"type": "road",
+					"width": 3,
+					"direction": "forward"
+				},
+				{
+					"type": "sidewalk",
+					"width": 2,
+					"direction": "bidirectional"
+				}
+			]
+		},
+		{
+			"id": "segment-15",
+			"startNodeId": "node-30",
+			"endNodeId": "node-31",
+			"lanes": [
+				{
+					"type": "sidewalk",
+					"width": 2,
+					"direction": "bidirectional"
+				},
+				{
+					"type": "road",
+					"width": 3,
+					"direction": "backward"
+				},
+				{
+					"type": "road",
+					"width": 3,
+					"direction": "forward"
+				},
+				{
+					"type": "sidewalk",
+					"width": 2,
+					"direction": "bidirectional"
+				}
+			]
+		},
+		{
+			"id": "segment-16",
+			"startNodeId": "node-31",
+			"endNodeId": "node-32",
+			"lanes": [
+				{
+					"type": "sidewalk",
+					"width": 2,
+					"direction": "bidirectional"
+				},
+				{
+					"type": "road",
+					"width": 3,
+					"direction": "backward"
+				},
+				{
+					"type": "road",
+					"width": 3,
+					"direction": "forward"
+				},
+				{
+					"type": "sidewalk",
+					"width": 2,
+					"direction": "bidirectional"
+				}
+			]
+		},
+		{
+			"id": "segment-17",
+			"startNodeId": "node-30",
+			"endNodeId": "node-d",
+			"lanes": [
+				{
+					"type": "sidewalk",
+					"width": 2,
+					"direction": "bidirectional"
+				},
+				{
+					"type": "road",
+					"width": 3,
+					"direction": "backward"
+				},
+				{
+					"type": "road",
+					"width": 3,
+					"direction": "forward"
+				},
+				{
+					"type": "sidewalk",
+					"width": 2,
+					"direction": "bidirectional"
+				}
+			],
+			"controlX": 270,
+			"controlY": -110
+		}
+	]
+}

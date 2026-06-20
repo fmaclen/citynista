@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Citynista is a web-based city planning tool prototype: draw street networks with multiple road types, shape them with bezier curves, and render them in a flat-shaded 2D top-down map style. The long-term goal is importing OpenStreetMap graphs and making them editable. Snappy editing is prioritized over high-fidelity rendering.
+Citynista is a web-based city planning tool prototype: draw street networks with multiple road types, shape them with bezier curves, and render them in a flat-shaded 2D top-down map style. The medium-term goal is procedurally generating buildings, vegetation, and other content inside the city blocks the road network encloses. OpenStreetMap import was prototyped and shelved — the public data proved too low-quality (noisy geometry, disconnected segments, sidewalks modeled as separate ways) to render cleanly, so the project drives its own drawn networks instead. Snappy editing is prioritized over high-fidelity rendering.
 
 ## Tech Stack
 
@@ -64,6 +64,10 @@ Two construction paths:
 - `buildRoadLayers(graph)`: full-network build through the same pipeline — used only for the draw-mode ghost preview and debugging.
 
 **Earcut caveat**: never hand `THREE.ShapeGeometry` a polygon with holes — it intermittently mis-triangulates. `pathsToPolygons` shrinks by an epsilon and decomposes holed polygons into simply-connected pieces; keep that invariant for any new geometry.
+
+### Blocks (`src/lib/core/blocks.ts`, `src/lib/rendering/block-renderer.ts`)
+
+City blocks are the enclosed faces of the road graph: half-edges traced by always turning onto the next arm around each node (bezier-aware tangents), interior faces kept by winding sign, dead-end slits and sub-minimum faces dropped. A block's interior is its face polygon minus every nearby road ribbon and node disc (Clipper difference, all paths positively oriented), so it hugs the outer edge of any road regardless of width or curvature — including roads fully inside the block. Blocks render as a slightly lighter ground fill below the lane layers, cached per face by a boundary-geometry signature so the Clipper work only reruns for faces whose boundary actually changed.
 
 ### Rendering (`src/lib/rendering/`)
 

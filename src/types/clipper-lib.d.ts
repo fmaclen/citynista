@@ -12,6 +12,7 @@ declare module 'clipper-lib' {
 	export class PolyTree extends PolyNode {}
 
 	export class Clipper {
+		static Orientation(path: Path): boolean;
 		AddPaths(paths: Paths, polyType: number, closed: boolean): boolean;
 		Execute(
 			clipType: number,

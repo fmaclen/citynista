@@ -4,9 +4,11 @@ import { Graph } from './core/graph.svelte';
 import type { GraphData } from './core/types';
 import { getDefaultTemplate } from './core/lane-template';
 import { resolveCrossings } from './core/crossings';
+import { computeIntersectionTrims } from './core/road-geometry';
 import { SceneManager } from './rendering/scene.svelte';
 import { NodeRenderer, type NodeTone } from './rendering/node-renderer';
 import { RoadRenderer } from './rendering/road-renderer';
+import { BlockRenderer } from './rendering/block-renderer';
 import { SelectionRenderer } from './rendering/selection-renderer';
 import type { ModeHandlers, Mode, DrawStyle } from './modes/types';
 import { setupDrawMode } from './modes/draw';
@@ -20,6 +22,7 @@ export class Editor {
 	sceneManager!: SceneManager;
 	nodeRenderer!: NodeRenderer;
 	roadRenderer!: RoadRenderer;
+	blockRenderer!: BlockRenderer;
 	selectionRenderer!: SelectionRenderer;
 
 	mode = $state<Mode>('select');
@@ -66,6 +69,7 @@ export class Editor {
 		});
 		this.nodeRenderer = new NodeRenderer(this.sceneManager.scene);
 		this.roadRenderer = new RoadRenderer(this.sceneManager.scene);
+		this.blockRenderer = new BlockRenderer(this.sceneManager.scene);
 		this.selectionRenderer = new SelectionRenderer(this.sceneManager.scene);
 
 		this.loadSavedData();
@@ -138,7 +142,9 @@ export class Editor {
 	}
 
 	rebuildRoads() {
-		this.roadRenderer.update(this.graph);
+		const trims = computeIntersectionTrims(this.graph);
+		this.roadRenderer.update(this.graph, trims);
+		this.blockRenderer.update(this.graph, trims);
 		for (const node of this.graph.nodes.values()) {
 			this.nodeRenderer.setRadius(node.id, this.nodeRingRadius(node));
 		}
@@ -396,6 +402,7 @@ export class Editor {
 		this.clearSelection();
 		this.nodeRenderer.clear();
 		this.roadRenderer.clear();
+		this.blockRenderer.clear();
 		this.graph.clear();
 		this.graph.save();
 	}
@@ -407,6 +414,7 @@ export class Editor {
 		this.setHoveredSegment(null);
 		this.nodeRenderer.clear();
 		this.roadRenderer.clear();
+		this.blockRenderer.clear();
 		this.graph.fromJSON(data);
 		for (const node of this.graph.nodes.values()) {
 			this.nodeRenderer.createNode(node);
