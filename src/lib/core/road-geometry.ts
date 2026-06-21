@@ -1466,11 +1466,23 @@ function collectIntersectionArms(
 	return arms;
 }
 
+// The dominant carriageway material of an arm: concrete only when it out-widths
+// the asphalt lanes, otherwise asphalt (turn pockets count as asphalt).
+function armCarriageway(lanes: Lane[]): LaneType {
+	let road = 0;
+	let concrete = 0;
+	for (const lane of lanes) {
+		if (lane.type === 'concrete') concrete += lane.width;
+		else if (lane.type === 'road' || lane.type === 'turn') road += lane.width;
+	}
+	return concrete > road ? 'concrete' : 'road';
+}
+
 // A patch node is built explicitly: every road already stops at its trimmed
-// stop line; an asphalt patch connects the road-bearing mouths, and sidewalk
+// stop line; a paved patch connects the road-bearing mouths, and sidewalk
 // bands wrap every corner between adjacent arms, blending between their real
 // sidewalk widths. Path arms join the junction through the sidewalk ring
-// rather than the asphalt patch.
+// rather than the patch.
 function addIntersection(
 	graph: Graph,
 	node: Node,
@@ -1524,6 +1536,12 @@ function addIntersection(
 	const roadArms = arms.filter((arm) => arm.hasRoad);
 	if (roadArms.length < 2) return;
 
+	// The patch takes the carriageway material the road arms share: a junction
+	// of concrete roads paves in concrete; any asphalt arm makes it asphalt.
+	const patchType: LaneType = roadArms.every((arm) => armCarriageway(arm.lanes) === 'concrete')
+		? 'concrete'
+		: 'road';
+
 	const patch: Point[] = [];
 	for (let i = 0; i < roadArms.length; i++) {
 		const armA = roadArms[i];
@@ -1546,7 +1564,7 @@ function addIntersection(
 		patch.push(offsetPoint(stopB, armB.side, -armB.away.roadEdge));
 	}
 
-	const roadBands = getOrCreateBands(bandsByType, 'road');
+	const roadBands = getOrCreateBands(bandsByType, patchType);
 	roadBands.push(normalizeWinding(patch.map((point) => toClipperPoint(point.x, point.y))));
 }
 
