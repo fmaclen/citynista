@@ -40,12 +40,20 @@ identity, connectivity, and detachment.
 
 ## Slice plan (small, browser-verified)
 
-1. **Connection data + endpoints** (headless-verifiable): identify each travel
-   lane's endpoint at a node (position, in/out flow) and compute default
-   connections. ← current
-2. **Visualize** the connections as arcs on a selected node (overlay, like #190).
-3. **Edit** connections (click a lane endpoint → pick targets); persist on the node.
-4. **Derive markings** (dashed/solid + arrows) from connections; retire the `turn` type.
-5. **Derive geometry**: lanes curve through; auto-taper for non-continuing lanes
-   - the per-node distance handle.
-6. **Detachment** (later).
+1. **Connection data + endpoints** — DONE. `lane-connections.ts`: each travel
+   lane's endpoint at a node (position, in/out flow) + permissive default
+   connections. Lanes addressable as `{segmentId, laneIndex}` (types.ts).
+2. **Visualize** — DONE. `connection-renderer.ts` draws the movements as bezier
+   arcs when a single node is selected (bright = allowed, faint = disabled).
+3. **Edit** — DONE. A node stores `disabledConnections`; clicking a connector
+   toggles it (click vs drag distinguished — a drag still moves the node), and
+   it persists. Reachability: connectors live inside the node ring, so editing
+   is click-to-toggle on the selected junction, not a separate tool yet. A
+   dedicated connector MODE (TM:PE-style) is the eventual UX if this feels off.
+4. **Derive markings** (dashed/solid + arrows) from connections; retire the
+   `turn` type. ← NEXT. Risky: arrows/markings live in the fragile road-renderer
+   paint path and would need the downstream node's connections threaded in + the
+   segment hash extended. Needs browser iteration — do with Winston watching.
+5. **Derive geometry**: lanes curve through the node along connections;
+   auto-taper for non-continuing lanes + the per-node distance handle (#193).
+6. **Detachment** (later) — peel a lane onto its own path.
