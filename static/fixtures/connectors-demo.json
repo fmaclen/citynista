@@ -1,0 +1,47 @@
+{
+	"nodes": [
+		{ "id": "c", "x": 0, "y": 0 },
+		{ "id": "n", "x": 0, "y": -70 },
+		{ "id": "e", "x": 70, "y": 0 },
+		{ "id": "s", "x": 0, "y": 70 },
+		{ "id": "w", "x": -70, "y": 0 }
+	],
+	"segments": [
+		{
+			"id": "seg-n",
+			"startNodeId": "n",
+			"endNodeId": "c",
+			"lanes": [
+				{ "type": "road", "width": 3.5, "direction": "backward" },
+				{ "type": "road", "width": 3.5, "direction": "forward" }
+			]
+		},
+		{
+			"id": "seg-e",
+			"startNodeId": "e",
+			"endNodeId": "c",
+			"lanes": [
+				{ "type": "road", "width": 3.5, "direction": "backward" },
+				{ "type": "road", "width": 3.5, "direction": "forward" }
+			]
+		},
+		{
+			"id": "seg-s",
+			"startNodeId": "s",
+			"endNodeId": "c",
+			"lanes": [
+				{ "type": "road", "width": 3.5, "direction": "backward" },
+				{ "type": "road", "width": 3.5, "direction": "forward" }
+			]
+		},
+		{
+			"id": "seg-w",
+			"startNodeId": "w",
+			"endNodeId": "c",
+			"lanes": [
+				{ "type": "road", "width": 3.5, "direction": "backward" },
+				{ "type": "road", "width": 3.5, "direction": "forward" }
+			]
+		}
+	]
+}
