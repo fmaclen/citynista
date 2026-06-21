@@ -1,10 +1,12 @@
-import type { NodeData } from './types';
+import type { LaneConnectionRef, NodeData } from './types';
 
 export class Node {
 	id: string;
 	x = $state(0);
 	y = $state(0);
 	connectedSegments: string[] = [];
+	// Movements turned off here; undefined = all default movements allowed.
+	disabledConnections = $state<LaneConnectionRef[] | undefined>(undefined);
 
 	constructor(id: string, x: number, y: number) {
 		this.id = id;
@@ -26,14 +28,25 @@ export class Node {
 	}
 
 	toJSON(): NodeData {
-		return {
+		const data: NodeData = {
 			id: this.id,
 			x: this.x,
 			y: this.y
 		};
+		if (this.disabledConnections && this.disabledConnections.length > 0) {
+			data.disabledConnections = this.disabledConnections.map((c) => ({
+				from: { ...c.from },
+				to: { ...c.to }
+			}));
+		}
+		return data;
 	}
 
 	static fromJSON(data: NodeData) {
-		return new Node(data.id, data.x, data.y);
+		const node = new Node(data.id, data.x, data.y);
+		if (data.disabledConnections && data.disabledConnections.length > 0) {
+			node.disabledConnections = data.disabledConnections;
+		}
+		return node;
 	}
 }

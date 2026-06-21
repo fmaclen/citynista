@@ -462,6 +462,16 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 		// take over from here.
 		editor.setHoveredSegment(null);
 
+		// With a junction selected, clicking one of its lane connectors toggles
+		// that movement instead of changing the selection or starting a drag.
+		if (editor.selectedNodes.size === 1) {
+			const connection = editor.connectionAt(worldPos.x, worldPos.z);
+			if (connection) {
+				editor.toggleConnection(connection);
+				return;
+			}
+		}
+
 		const controlPointSegment = findControlPointAt(worldPos.x, worldPos.z);
 		if (controlPointSegment) {
 			isDragging = true;

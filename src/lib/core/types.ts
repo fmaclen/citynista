@@ -30,10 +30,25 @@ export interface LaneTemplate {
 	lanes: Lane[];
 }
 
+// A lane addressed by its segment and its index in that segment's stack.
+export interface LaneRef {
+	segmentId: string;
+	laneIndex: number;
+}
+
+// A movement through a node: an incoming lane routed to an outgoing lane.
+export interface LaneConnectionRef {
+	from: LaneRef;
+	to: LaneRef;
+}
+
 export interface NodeData {
 	id: string;
 	x: number;
 	y: number;
+	// Movements turned OFF at this junction. Empty/omitted = every default
+	// (permissive) movement is allowed.
+	disabledConnections?: LaneConnectionRef[];
 }
 
 export interface SegmentData {

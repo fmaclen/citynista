@@ -5,11 +5,14 @@ import type { GraphData } from './core/types';
 import { getDefaultTemplate } from './core/lane-template';
 import { resolveCrossings } from './core/crossings';
 import { computeIntersectionTrims } from './core/road-geometry';
+import { connectionsAtNode, sameConnectionRef } from './core/lane-connections';
+import type { LaneConnection } from './core/lane-connections';
 import { SceneManager } from './rendering/scene.svelte';
 import { NodeRenderer, type NodeTone } from './rendering/node-renderer';
 import { RoadRenderer } from './rendering/road-renderer';
 import { BlockRenderer } from './rendering/block-renderer';
 import { SelectionRenderer } from './rendering/selection-renderer';
+import { ConnectionRenderer } from './rendering/connection-renderer';
 import type { ModeHandlers, Mode, DrawStyle } from './modes/types';
 import { setupDrawMode } from './modes/draw';
 import { setupSelectMode } from './modes/select';
@@ -24,6 +27,8 @@ export class Editor {
 	roadRenderer!: RoadRenderer;
 	blockRenderer!: BlockRenderer;
 	selectionRenderer!: SelectionRenderer;
+	connectionRenderer!: ConnectionRenderer;
+	private currentConnections: LaneConnection[] = [];
 
 	mode = $state<Mode>('select');
 	drawStyle = $state<DrawStyle>('straight');
@@ -71,6 +76,7 @@ export class Editor {
 		this.roadRenderer = new RoadRenderer(this.sceneManager.scene);
 		this.blockRenderer = new BlockRenderer(this.sceneManager.scene);
 		this.selectionRenderer = new SelectionRenderer(this.sceneManager.scene);
+		this.connectionRenderer = new ConnectionRenderer(this.sceneManager.scene);
 
 		this.loadSavedData();
 		this.presentState = JSON.stringify(this.graph.toJSON());
@@ -234,12 +240,88 @@ export class Editor {
 		this.selectedNodes.add(nodeId);
 		this.nodeRenderer.setSelected(nodeId, true);
 		this.refreshRevealedNodes();
+		this.refreshConnections();
 	}
 
 	deselectNode(nodeId: string) {
 		this.selectedNodes.delete(nodeId);
 		this.nodeRenderer.setSelected(nodeId, false);
 		this.refreshRevealedNodes();
+		this.refreshConnections();
+	}
+
+	// Lane connectors for the selected node: the permissive default movement
+	// set, drawn as an overlay. Shown only for a single selected junction.
+	refreshConnections() {
+		const nodeId = this.selectedNodes.size === 1 ? [...this.selectedNodes][0] : null;
+		const node = nodeId ? this.graph.nodes.get(nodeId) : undefined;
+		if (!node) {
+			this.currentConnections = [];
+			this.connectionRenderer.clear();
+			return;
+		}
+		this.currentConnections = connectionsAtNode(this.graph, node);
+		this.connectionRenderer.show(this.currentConnections);
+	}
+
+	// The connector nearest a world point, within a clickable threshold, or
+	// null. Used by select mode to toggle a movement instead of selecting.
+	connectionAt(worldX: number, worldZ: number): LaneConnection | null {
+		if (this.currentConnections.length === 0) return null;
+		const threshold = Math.max(0.5, this.sceneManager.worldPerPixel() * 6);
+		const samples = 14;
+		let best: LaneConnection | null = null;
+		let bestDistance = threshold;
+
+		for (const c of this.currentConnections) {
+			const reach = Math.hypot(c.toPoint.x - c.fromPoint.x, c.toPoint.y - c.fromPoint.y) * 0.4;
+			const c1x = c.fromPoint.x + c.fromDir.x * reach;
+			const c1y = c.fromPoint.y + c.fromDir.y * reach;
+			const c2x = c.toPoint.x - c.toDir.x * reach;
+			const c2y = c.toPoint.y - c.toDir.y * reach;
+			for (let i = 0; i <= samples; i++) {
+				const t = i / samples;
+				const u = 1 - t;
+				const bx =
+					u * u * u * c.fromPoint.x +
+					3 * u * u * t * c1x +
+					3 * u * t * t * c2x +
+					t * t * t * c.toPoint.x;
+				const by =
+					u * u * u * c.fromPoint.y +
+					3 * u * u * t * c1y +
+					3 * u * t * t * c2y +
+					t * t * t * c.toPoint.y;
+				const distance = Math.hypot(bx - worldX, by - worldZ);
+				if (distance < bestDistance) {
+					bestDistance = distance;
+					best = c;
+				}
+			}
+		}
+
+		return best;
+	}
+
+	// Flip a movement on/off at the selected junction by adding or removing it
+	// from the node's disabled set, then re-render the connectors.
+	toggleConnection(connection: LaneConnection) {
+		const nodeId = this.selectedNodes.size === 1 ? [...this.selectedNodes][0] : null;
+		const node = nodeId ? this.graph.nodes.get(nodeId) : undefined;
+		if (!node) return;
+
+		const ref = { from: connection.from, to: connection.to };
+		const disabled = node.disabledConnections ?? [];
+		const without = disabled.filter((d) => !sameConnectionRef(d, ref));
+		node.disabledConnections =
+			without.length === disabled.length
+				? [...disabled, ref]
+				: without.length
+					? without
+					: undefined;
+
+		this.graph.save();
+		this.refreshConnections();
 	}
 
 	selectSegment(segmentId: string) {
@@ -260,6 +342,7 @@ export class Editor {
 		this.selectedNodes.clear();
 		this.selectedSegments.clear();
 		this.refreshRevealedNodes();
+		this.connectionRenderer.clear();
 	}
 
 	setHoveredNode(nodeId: string | null) {
@@ -433,6 +516,7 @@ export class Editor {
 		if (this.boundHistoryKeyDown) {
 			window.removeEventListener('keydown', this.boundHistoryKeyDown);
 		}
+		this.connectionRenderer?.dispose();
 		this.sceneManager?.dispose();
 	}
 }

@@ -1398,7 +1398,8 @@ function addPairJoin(
 	);
 }
 
-interface IntersectionArm {
+export interface IntersectionArm {
+	segmentId: string;
 	stop: Point;
 	into: Point;
 	// perp(into) — points toward the corner shared with the next arm in the
@@ -1415,7 +1416,7 @@ interface IntersectionArm {
 	away: SideProfile;
 }
 
-function collectIntersectionArms(
+export function collectIntersectionArms(
 	graph: Graph,
 	node: Node,
 	centerlines: Map<string, CenterlineSample[]>,
@@ -1449,6 +1450,7 @@ function collectIntersectionArms(
 		const profile = getArmProfile(segment.lanes);
 		const side = { x: into.y, y: -into.x };
 		arms.push({
+			segmentId,
 			stop: { x: stopSample.x, y: stopSample.y },
 			into,
 			side,
@@ -1774,7 +1776,7 @@ function applyIntervalToSide(side: SideProfile, laneType: LaneType, inner: numbe
 	}
 }
 
-function offsetPoint(origin: Point, dir: Point, distance: number): Point {
+export function offsetPoint(origin: Point, dir: Point, distance: number): Point {
 	return { x: origin.x + dir.x * distance, y: origin.y + dir.y * distance };
 }
 

@@ -1,0 +1,92 @@
+import * as THREE from 'three';
+import type { LaneConnection } from '../core/lane-connections';
+
+// Lane connectors drawn above everything when a node is selected: one bezier
+// per movement, from an incoming lane through the node to an outgoing lane.
+// Allowed movements are bright; disabled ones stay faint so they can be
+// clicked back on. A throwaway-cheap overlay — rebuilt on each selection.
+const CONNECTION_Y = 0.3;
+const ACTIVE_COLOR = 0x22d3ee;
+const ACTIVE_OPACITY = 0.95;
+const DISABLED_COLOR = 0x64748b;
+const DISABLED_OPACITY = 0.3;
+const RENDER_ORDER = 4;
+const SAMPLES = 18;
+
+function cubic(p0: number, p1: number, p2: number, p3: number, t: number): number {
+	const u = 1 - t;
+	return u * u * u * p0 + 3 * u * u * t * p1 + 3 * u * t * t * p2 + t * t * t * p3;
+}
+
+export class ConnectionRenderer {
+	private scene: THREE.Scene;
+	private group: THREE.Group | null = null;
+	private activeMaterial: THREE.LineBasicMaterial;
+	private disabledMaterial: THREE.LineBasicMaterial;
+
+	constructor(scene: THREE.Scene) {
+		this.scene = scene;
+		this.activeMaterial = new THREE.LineBasicMaterial({
+			color: ACTIVE_COLOR,
+			transparent: true,
+			opacity: ACTIVE_OPACITY,
+			depthWrite: false
+		});
+		this.disabledMaterial = new THREE.LineBasicMaterial({
+			color: DISABLED_COLOR,
+			transparent: true,
+			opacity: DISABLED_OPACITY,
+			depthWrite: false
+		});
+	}
+
+	show(connections: LaneConnection[]) {
+		this.clear();
+		if (connections.length === 0) return;
+
+		const group = new THREE.Group();
+		group.renderOrder = RENDER_ORDER;
+
+		for (const c of connections) {
+			const reach = Math.hypot(c.toPoint.x - c.fromPoint.x, c.toPoint.y - c.fromPoint.y) * 0.4;
+			// Controls pull toward the node interior: into-tangent at `from`,
+			// back along the leaving-tangent at `to`.
+			const c1x = c.fromPoint.x + c.fromDir.x * reach;
+			const c1y = c.fromPoint.y + c.fromDir.y * reach;
+			const c2x = c.toPoint.x - c.toDir.x * reach;
+			const c2y = c.toPoint.y - c.toDir.y * reach;
+
+			const points: THREE.Vector3[] = [];
+			for (let i = 0; i <= SAMPLES; i++) {
+				const t = i / SAMPLES;
+				points.push(
+					new THREE.Vector3(
+						cubic(c.fromPoint.x, c1x, c2x, c.toPoint.x, t),
+						CONNECTION_Y,
+						cubic(c.fromPoint.y, c1y, c2y, c.toPoint.y, t)
+					)
+				);
+			}
+			const geometry = new THREE.BufferGeometry().setFromPoints(points);
+			group.add(new THREE.Line(geometry, c.active ? this.activeMaterial : this.disabledMaterial));
+		}
+
+		this.scene.add(group);
+		this.group = group;
+	}
+
+	clear() {
+		if (!this.group) return;
+		this.group.traverse((object) => {
+			if (object instanceof THREE.Line) object.geometry.dispose();
+		});
+		this.scene.remove(this.group);
+		this.group = null;
+	}
+
+	dispose() {
+		this.clear();
+		this.activeMaterial.dispose();
+		this.disabledMaterial.dispose();
+	}
+}
