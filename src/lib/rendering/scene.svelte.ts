@@ -1,14 +1,28 @@
 import * as THREE from 'three';
 
-const GROUND_SIZE = 10000;
-// Matches the grass lane color in road-renderer's LAYER_COLORS — the ground
-// plane reads as the same grass.
+// Default extent of the buildable world, in metres (world units). The map is a
+// finite diorama slab rather than an endless plane; overridable per SceneManager
+// so a settings UI can resize the world later.
+const DEFAULT_WORLD_SIZE = 5000;
+// How deep the slab sits below the ground surface — only visible once the camera
+// can tilt, but it gives the world a solid edge instead of a paper-thin plane.
+const GROUND_DEPTH = 200;
+// Matches the grass lane color in road-renderer's LAYER_COLORS — the slab's top
+// face reads as the same grass.
 const GROUND_COLOR = 0x52a06b;
+// Earthy tone for the slab's sides and underside.
+const SOIL_COLOR = 0x5c4a37;
+// Vertical world units the viewport spans at zoom 1.
+const BASE_FRUSTUM = 500;
+// How far past the world edge you can zoom out — 1.1 leaves a slim margin of
+// void around the diorama at full zoom-out so the whole slab stays framed.
+const WORLD_VIEW_MARGIN = 1.1;
 
 export class SceneManager {
 	scene: THREE.Scene;
 	camera: THREE.OrthographicCamera;
 	renderer: THREE.WebGLRenderer;
+	readonly worldSize: number;
 
 	private container: HTMLElement;
 	private animationFrameId: number | null = null;
@@ -27,9 +41,14 @@ export class SceneManager {
 	private lastMouseX = 0;
 	private lastMouseY = 0;
 
-	constructor(container: HTMLElement, onFps?: (fps: number) => void) {
+	constructor(
+		container: HTMLElement,
+		onFps?: (fps: number) => void,
+		worldSize = DEFAULT_WORLD_SIZE
+	) {
 		this.container = container;
 		this.onFps = onFps ?? null;
+		this.worldSize = worldSize;
 
 		// Create scene
 		this.scene = new THREE.Scene();
@@ -37,7 +56,7 @@ export class SceneManager {
 
 		// Create orthographic camera (looking down at XZ plane)
 		const aspect = container.clientWidth / container.clientHeight;
-		const frustumSize = 500;
+		const frustumSize = BASE_FRUSTUM;
 		this.camera = new THREE.OrthographicCamera(
 			(-frustumSize * aspect) / 2,
 			(frustumSize * aspect) / 2,
@@ -67,14 +86,15 @@ export class SceneManager {
 	}
 
 	private createGround() {
-		const geometry = new THREE.PlaneGeometry(GROUND_SIZE, GROUND_SIZE);
-		const material = new THREE.MeshBasicMaterial({
-			color: GROUND_COLOR,
-			side: THREE.DoubleSide
-		});
-		const ground = new THREE.Mesh(geometry, material);
-		ground.rotation.x = -Math.PI / 2;
-		ground.position.y = 0;
+		// A finite slab: the top face is grass at y=0 (where all road geometry sits
+		// just above), the sides and underside are soil so the world reads as a
+		// diorama block once the camera tilts. BoxGeometry face order is
+		// [+X, -X, +Y, -Y, +Z, -Z], so index 2 is the top.
+		const geometry = new THREE.BoxGeometry(this.worldSize, GROUND_DEPTH, this.worldSize);
+		const grass = new THREE.MeshBasicMaterial({ color: GROUND_COLOR });
+		const soil = new THREE.MeshBasicMaterial({ color: SOIL_COLOR });
+		const ground = new THREE.Mesh(geometry, [soil, soil, grass, soil, soil, soil]);
+		ground.position.y = -GROUND_DEPTH / 2;
 		ground.name = 'ground';
 		this.scene.add(ground);
 	}
@@ -114,7 +134,7 @@ export class SceneManager {
 
 		const zoomSpeed = 0.1;
 		const delta = event.deltaY > 0 ? -zoomSpeed : zoomSpeed;
-		this.zoom = Math.max(0.1, Math.min(10, this.zoom * (1 + delta)));
+		this.zoom = Math.max(this.minZoom(), Math.min(10, this.zoom * (1 + delta)));
 
 		this.updateCamera();
 	}
@@ -138,6 +158,7 @@ export class SceneManager {
 			const scale = this.getFrustumWidth() / this.container.clientHeight;
 			this.panX -= dx * scale;
 			this.panY += dy * scale;
+			this.clampPan();
 
 			this.lastMouseX = event.clientX;
 			this.lastMouseY = event.clientY;
@@ -174,8 +195,20 @@ export class SceneManager {
 	}
 
 	private getFrustumWidth() {
-		const baseFrustum = 500;
-		return baseFrustum / this.zoom;
+		return BASE_FRUSTUM / this.zoom;
+	}
+
+	// Lowest zoom: frames the whole world plus a slim margin of void around it.
+	private minZoom() {
+		return BASE_FRUSTUM / (this.worldSize * WORLD_VIEW_MARGIN);
+	}
+
+	// Keep the camera centred within the world so you can't pan off into the void
+	// around the diorama.
+	private clampPan() {
+		const half = this.worldSize / 2;
+		this.panX = Math.max(-half, Math.min(half, this.panX));
+		this.panY = Math.max(-half, Math.min(half, this.panY));
 	}
 
 	private updateCamera() {
@@ -244,8 +277,11 @@ export class SceneManager {
 		this.scene.traverse((object) => {
 			if (object instanceof THREE.Mesh) {
 				object.geometry.dispose();
-				if (object.material instanceof THREE.Material) {
-					object.material.dispose();
+				const material = object.material;
+				if (Array.isArray(material)) {
+					material.forEach((m) => m.dispose());
+				} else if (material instanceof THREE.Material) {
+					material.dispose();
 				}
 			}
 		});
