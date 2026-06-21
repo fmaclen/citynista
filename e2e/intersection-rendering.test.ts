@@ -35,7 +35,7 @@ const TEST_GRAPH_DATA = {
 
 test.describe('Intersection Rendering', () => {
 	test('renders smooth intersections without z-fighting', async ({ page }) => {
-		await page.goto('/');
+		await page.goto('/?topdown');
 		await expect(page.locator('canvas')).toBeVisible();
 
 		await page.evaluate(

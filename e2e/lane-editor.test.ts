@@ -20,7 +20,7 @@ const SCALE = 720 / 500;
 const toScreen = (x: number, y: number) => ({ x: 640 + x * SCALE, y: 360 + y * SCALE });
 
 async function seedGraph(page: import('@playwright/test').Page) {
-	await page.goto('/');
+	await page.goto('/?topdown');
 	await expect(page.locator('canvas')).toBeVisible();
 	await page.evaluate(
 		({ key, data }) => {

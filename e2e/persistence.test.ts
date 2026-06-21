@@ -4,7 +4,7 @@ const STORAGE_KEY = 'citynista-graph-v2';
 
 test.describe('Persistence', () => {
 	test.beforeEach(async ({ page }) => {
-		await page.goto('/');
+		await page.goto('/?topdown');
 		await page.evaluate((key) => localStorage.removeItem(key), STORAGE_KEY);
 		await page.reload();
 		await expect(page.locator('canvas')).toBeVisible();

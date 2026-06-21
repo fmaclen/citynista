@@ -6,7 +6,7 @@ const STORAGE_KEY = 'citynista-graph-v2';
 
 test.describe('Draw styles', () => {
 	test.beforeEach(async ({ page }) => {
-		await page.goto('/');
+		await page.goto('/?topdown');
 		await page.evaluate((key) => localStorage.removeItem(key), STORAGE_KEY);
 		await page.reload();
 		await expect(page.locator('canvas')).toBeVisible();
@@ -110,7 +110,7 @@ test.describe('Draw styles', () => {
 
 test.describe('Zoom-adaptive hit areas', () => {
 	test.beforeEach(async ({ page }) => {
-		await page.goto('/');
+		await page.goto('/?topdown');
 		await page.evaluate(() => localStorage.removeItem('citynista-graph-v2'));
 		await page.reload();
 		await expect(page.locator('canvas')).toBeVisible();
@@ -136,9 +136,9 @@ test.describe('Zoom-adaptive hit areas', () => {
 			await page.mouse.wheel(0, -100);
 		}
 
-		// scale = (720/500) * 1.1^8 ≈ 3.087 px per world unit.
-		const x = Math.round(640 - 154.5 * 3.087);
-		const y = Math.round(360 - 41.7 * 3.087);
+		// scale = (720/500) * 1.12^8 ≈ 3.565 px per world unit.
+		const x = Math.round(640 - 154.5 * 3.565);
+		const y = Math.round(360 - 41.7 * 3.565);
 
 		// Click the middle of the (now long) segment: the lane editor panel
 		// opening proves a segment — not a node — was selected.
@@ -149,7 +149,7 @@ test.describe('Zoom-adaptive hit areas', () => {
 
 test.describe('Shift-drag collinear snapping', () => {
 	test.beforeEach(async ({ page }) => {
-		await page.goto('/');
+		await page.goto('/?topdown');
 		await page.evaluate(() => localStorage.removeItem('citynista-graph-v2'));
 		await page.reload();
 		await expect(page.locator('canvas')).toBeVisible();

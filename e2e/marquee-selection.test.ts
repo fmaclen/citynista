@@ -20,7 +20,7 @@ const toScreen = (x: number, y: number) => ({ x: 640 + x * SCALE, y: 360 + y * S
 
 test.describe('Marquee Selection', () => {
 	test('dragging a rectangle selects the contained nodes and segments', async ({ page }) => {
-		await page.goto('/');
+		await page.goto('/?topdown');
 		await expect(page.locator('canvas')).toBeVisible();
 		await page.evaluate(
 			({ key, data }) => {

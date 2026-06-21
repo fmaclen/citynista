@@ -14,7 +14,7 @@ const GRAPH_DATA = {
 
 test.describe('Camera Pan', () => {
 	test('space+drag pans the camera without selecting', async ({ page }) => {
-		await page.goto('/');
+		await page.goto('/?topdown');
 		await expect(page.locator('canvas')).toBeVisible();
 		await page.evaluate(
 			({ key, data }) => {

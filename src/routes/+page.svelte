@@ -18,7 +18,11 @@
 			// Boot straight into a shared fixture: works in dev and preview
 			// (fixtures are static assets), so the e2e harness and a browser
 			// session render the exact same graph.
-			const fixture = new URLSearchParams(window.location.search).get('fixture');
+			const params = new URLSearchParams(window.location.search);
+			if (params.has('topdown')) {
+				editor.sceneManager.setTopDown();
+			}
+			const fixture = params.get('fixture');
 			if (fixture) {
 				fetch(`/fixtures/${fixture}.json`)
 					.then((response) => (response.ok ? response.json() : null))

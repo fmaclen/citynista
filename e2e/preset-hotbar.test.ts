@@ -4,7 +4,7 @@ const STORAGE_KEY = 'citynista-graph-v2';
 
 test.describe('Preset Hotbar', () => {
 	test('picking a preset enters draw mode, escape returns to select', async ({ page }) => {
-		await page.goto('/');
+		await page.goto('/?topdown');
 		await expect(page.locator('canvas')).toBeVisible();
 		await expect(page.locator('nav')).toBeVisible();
 
