@@ -6,6 +6,7 @@ import type { Node } from '../core/node.svelte';
 import { getQuadraticBezierTangent } from '../geometry/bezier';
 import { CONTROL_SIZE } from '../rendering/selection-renderer';
 import { nodeHitAt, segmentHitAt, rectContents } from './picking';
+import type { LaneConnection } from '../core/lane-connections';
 
 // Snap radii are sized in screen pixels and converted to world units at
 // the current zoom; hit areas live in modes/picking.
@@ -29,6 +30,9 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 	// Shift+click on a selected node means "deselect" only if no drag
 	// follows — a shift+drag instead smooths the node's tangent live.
 	let pendingShiftToggle: string | null = null;
+	// A click (no drag) on a connector of the already-selected junction
+	// toggles that movement on mouseup; a drag falls through to moving the node.
+	let pendingConnectorToggle: LaneConnection | null = null;
 	let dragDistance = 0;
 
 	const marqueeFillMaterial = new THREE.MeshBasicMaterial({
@@ -462,16 +466,6 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 		// take over from here.
 		editor.setHoveredSegment(null);
 
-		// With a junction selected, clicking one of its lane connectors toggles
-		// that movement instead of changing the selection or starting a drag.
-		if (editor.selectedNodes.size === 1) {
-			const connection = editor.connectionAt(worldPos.x, worldPos.z);
-			if (connection) {
-				editor.toggleConnection(connection);
-				return;
-			}
-		}
-
 		const controlPointSegment = findControlPointAt(worldPos.x, worldPos.z);
 		if (controlPointSegment) {
 			isDragging = true;
@@ -479,24 +473,41 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 			return;
 		}
 
+		// A connector of the already-selected junction under the pointer: armed
+		// now, toggled on mouseup unless the gesture becomes a drag.
+		const connectorHit =
+			editor.selectedNodes.size === 1 ? editor.connectionAt(worldPos.x, worldPos.z) : null;
+
 		const { node, segment: pickedSegment } = pickAt(worldPos.x, worldPos.z);
 		if (node) {
+			const wasSelected = editor.selectedNodes.has(node.id);
 			if (event.shiftKey) {
-				if (editor.selectedNodes.has(node.id)) {
+				if (wasSelected) {
 					// Deselect only if this turns out to be a click, not a
 					// shift+drag (which smooths the node's tangent instead).
 					pendingShiftToggle = node.id;
 				} else {
 					editor.selectNode(node.id);
 				}
-			} else if (!editor.selectedNodes.has(node.id)) {
+			} else if (!wasSelected) {
 				editor.clearSelection();
 				editor.selectNode(node.id);
+			} else if (connectorHit) {
+				// Clicking a connector of the already-selected node: toggle on
+				// release, but a drag still moves the node.
+				pendingConnectorToggle = connectorHit;
 			}
 			isDragging = true;
 			dragDistance = 0;
 			dragTarget = { type: 'nodes' };
 			captureControlFrames();
+			return;
+		}
+
+		// A connector reached outside the node ring (over a road mouth or the
+		// junction interior): no node to drag, so toggle it on release.
+		if (connectorHit) {
+			pendingConnectorToggle = connectorHit;
 			return;
 		}
 
@@ -543,7 +554,10 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 
 		if (dragTarget.type === 'nodes') {
 			dragDistance += Math.hypot(dx, dz);
-			if (dragDistance > 1) pendingShiftToggle = null;
+			if (dragDistance > 1) {
+				pendingShiftToggle = null;
+				pendingConnectorToggle = null;
+			}
 
 			for (const nodeId of editor.selectedNodes) {
 				const node = editor.graph.nodes.get(nodeId);
@@ -609,6 +623,17 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 			applyMarquee(worldPos.x, worldPos.z);
 			hideMarquee();
 			marqueeStart = null;
+			return;
+		}
+
+		// A click (no drag) on a connector of the selected junction toggles
+		// that movement; the node itself never moved, so skip the drag save.
+		if (pendingConnectorToggle) {
+			editor.toggleConnection(pendingConnectorToggle);
+			pendingConnectorToggle = null;
+			isDragging = false;
+			dragTarget = null;
+			controlFrames.clear();
 			return;
 		}
 

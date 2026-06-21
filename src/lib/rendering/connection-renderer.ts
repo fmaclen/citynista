@@ -8,8 +8,8 @@ import type { LaneConnection } from '../core/lane-connections';
 const CONNECTION_Y = 0.3;
 const ACTIVE_COLOR = 0x22d3ee;
 const ACTIVE_OPACITY = 0.95;
-const DISABLED_COLOR = 0x64748b;
-const DISABLED_OPACITY = 0.3;
+const DISABLED_COLOR = 0xcbd5e1;
+const DISABLED_OPACITY = 0.5;
 const RENDER_ORDER = 4;
 const SAMPLES = 18;
 

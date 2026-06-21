@@ -119,13 +119,10 @@ const ringControl = RR / Math.cos(Math.PI / RING);
 for (let i = 0; i < RING; i++) {
 	const next = (i + 1) % RING;
 	const mid = ((i + 0.5) / RING) * Math.PI * 2;
-	seg(
-		`rb-seg-${i}`,
-		ringId(i),
-		ringId(next),
-		[{ type: 'road', width: 5, direction: 'forward' }],
-		{ x: RC.x + Math.cos(mid) * ringControl, y: RC.y + Math.sin(mid) * ringControl }
-	);
+	seg(`rb-seg-${i}`, ringId(i), ringId(next), [{ type: 'road', width: 5, direction: 'forward' }], {
+		x: RC.x + Math.cos(mid) * ringControl,
+		y: RC.y + Math.sin(mid) * ringControl
+	});
 }
 // Connect the roundabout to the grid (west spoke) and give it three stubs.
 seg('rb-spoke-w', g(3, N - 1), ringId(3), L.street());
@@ -137,7 +134,11 @@ const spokes = [
 for (const sp of spokes) {
 	const end = `rb-stub-${sp.i}`;
 	const a = (sp.i / RING) * Math.PI * 2;
-	node(end, RC.x + Math.cos(a) * (RR + 55) + sp.dx * 0.4, RC.y + Math.sin(a) * (RR + 55) + sp.dy * 0.4);
+	node(
+		end,
+		RC.x + Math.cos(a) * (RR + 55) + sp.dx * 0.4,
+		RC.y + Math.sin(a) * (RR + 55) + sp.dy * 0.4
+	);
 	seg(`rb-spoke-${sp.i}`, ringId(sp.i), end, L.street());
 }
 
