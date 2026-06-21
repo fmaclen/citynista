@@ -71,5 +71,10 @@ export function getTotalWidth(lanes: Lane[]): number {
 }
 
 export function serializeLanes(lanes: Lane[]): string {
-	return lanes.map((lane) => `${lane.type}:${lane.width}:${lane.direction}`).join(',');
+	return lanes
+		.map(
+			(lane) =>
+				`${lane.type}:${lane.width}:${lane.direction}${lane.turn ? ':' + lane.turn : ''}${lane.markings === false ? ':nomark' : ''}`
+		)
+		.join(',');
 }

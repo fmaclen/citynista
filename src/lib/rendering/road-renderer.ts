@@ -33,7 +33,7 @@ import {
 	lanePaintBetween,
 	laneSurface
 } from '../core/lane-types';
-import type { Lane } from '../core/types';
+import type { Lane, TurnMovement } from '../core/types';
 
 const LAYER_Y: Record<RoadLayerId, number> = Object.fromEntries(
 	LANE_TYPE_LIST.map((type) => [type, laneLayerY(type)])
@@ -610,15 +610,32 @@ export class RoadRenderer {
 			};
 		};
 
-		const drawArrow = (d: number, offset: number, travelSign: number, bendSign: number) => {
+		const drawArrow = (
+			d: number,
+			offset: number,
+			travelSign: number,
+			bendSign: number,
+			forcedTurn?: TurnMovement
+		) => {
 			const p = sampleAt(d);
 			const tx = p.tx * travelSign;
 			const ty = p.ty * travelSign;
-			// The glyph bends toward the branch at the pocket's junction
-			// (the sign comes from the actual topology); without one it
-			// falls back to the driver's left.
-			const bx = bendSign !== 0 ? p.nx * bendSign : ty;
-			const by = bendSign !== 0 ? p.ny * bendSign : -tx;
+			// An explicit turn movement points the glyph relative to travel
+			// (left or right of the driver); otherwise the glyph bends toward
+			// the branch at the pocket's junction (the sign comes from the
+			// actual topology), and without one falls back to the driver's left.
+			let bx: number;
+			let by: number;
+			if (forcedTurn === 'left') {
+				bx = ty;
+				by = -tx;
+			} else if (forcedTurn === 'right') {
+				bx = -ty;
+				by = tx;
+			} else {
+				bx = bendSign !== 0 ? p.nx * bendSign : ty;
+				by = bendSign !== 0 ? p.ny * bendSign : -tx;
+			}
 			// The bend carries the glyph's mass sideways; shifting the stem
 			// the other way centers the whole glyph in the lane.
 			const baseX = p.x + p.nx * offset - bx * 0.9;
@@ -684,7 +701,7 @@ export class RoadRenderer {
 		let laneStart = -halfWidth;
 		for (const lane of lanes) {
 			const laneEnd = laneStart + lane.width;
-			if (lane.type === 'turn') {
+			if (lane.type === 'turn' && lane.markings !== false) {
 				const center = (laneStart + laneEnd) / 2;
 				const travelSign = lane.direction === 'backward' ? -1 : 1;
 				const usableFrom = (morphStart ? lengthStart : 0) + 4;
@@ -706,7 +723,7 @@ export class RoadRenderer {
 					}
 					for (const { d, bend } of spots) {
 						if (d >= usableFrom && d <= usableTo) {
-							drawArrow(d, center, travelSign, bend);
+							drawArrow(d, center, travelSign, bend, lane.turn);
 						}
 					}
 				}

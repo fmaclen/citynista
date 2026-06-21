@@ -2077,7 +2077,7 @@ function crossingPaths(
 	from: number,
 	to: number
 ): NodePaintPath[] {
-	const drivable = (type: LaneType) => isRoadway(type) || type === 'turn';
+	const drivable = (type: LaneType) => isRoadway(type);
 	const paths: NodePaintPath[] = [];
 	const mid = {
 		x: (innerCenter.x + outerCenter.x) / 2,

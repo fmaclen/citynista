@@ -6,12 +6,22 @@
 		createLanesFrom,
 		getTotalWidth
 	} from '$lib/core/lane-template';
-	import { LANE_TYPE_LIST, LANE_TYPE_SPECS } from '$lib/core/lane-types';
+	import { LANE_TYPE_LIST, LANE_TYPE_SPECS, isRoadway } from '$lib/core/lane-types';
 	import type { LaneType } from '$lib/core/types';
 	import * as Select from '$lib/components/ui/select';
 	import { Button } from '$lib/components/ui/button';
 	import { Input } from '$lib/components/ui/input';
-	import { ArrowLeft, ArrowRight, GripVertical, Plus, Trash2, X } from '@lucide/svelte';
+	import {
+		ArrowLeft,
+		ArrowRight,
+		CornerUpLeft,
+		CornerUpRight,
+		Equal,
+		GripVertical,
+		Plus,
+		Trash2,
+		X
+	} from '@lucide/svelte';
 
 	const editor = getEditorContext();
 
@@ -50,6 +60,19 @@
 			const lane = segment.lanes[index];
 			lane.type = option.value;
 			lane.direction = LANE_TYPE_SPECS[option.value].directional ? 'forward' : 'bidirectional';
+			if (option.value === 'turn') {
+				lane.turn ??= 'left';
+			} else {
+				delete lane.turn;
+			}
+		}
+		commit();
+	}
+
+	function flipTurn(index: number) {
+		const turn = lanes[index]?.turn === 'right' ? 'left' : 'right';
+		for (const segment of segments) {
+			segment.lanes[index].turn = turn;
 		}
 		commit();
 	}
@@ -124,11 +147,20 @@
 	}
 
 	const totalWidth = $derived(uniform ? getTotalWidth(lanes) : 0);
+
+	function toggleLaneMarkings(index: number) {
+		const next = lanes[index]?.markings === false ? undefined : false;
+		for (const segment of segments) {
+			if (next === undefined) delete segment.lanes[index].markings;
+			else segment.lanes[index].markings = next;
+		}
+		commit();
+	}
 </script>
 
 {#if segments.length > 0}
 	<aside
-		class="fixed top-4 right-4 z-40 flex max-h-[calc(100vh-2rem)] w-80 flex-col gap-3 overflow-y-auto rounded-lg border bg-background p-4 shadow-lg"
+		class="fixed top-4 right-4 z-40 flex max-h-[calc(100vh-2rem)] w-96 flex-col gap-3 overflow-y-auto rounded-lg border bg-background p-4 shadow-lg"
 	>
 		<div class="flex items-center justify-between">
 			<div>
@@ -217,7 +249,7 @@
 							<Button
 								variant="ghost"
 								size="icon"
-								class="h-7 w-7"
+								class="h-7 w-7 shrink-0"
 								onclick={() => flipDirection(i)}
 								title="Direction of travel (relative to drawing direction)"
 							>
@@ -231,18 +263,48 @@
 							<div class="h-7 w-7 shrink-0"></div>
 						{/if}
 
-						<div class="ml-auto flex items-center">
+						{#if isRoadway(lane.type)}
 							<Button
 								variant="ghost"
 								size="icon"
-								class="h-7 w-7"
-								disabled={lanes.length <= 1}
-								onclick={() => removeLane(i)}
-								title="Remove lane"
+								class="h-7 w-7 shrink-0 {lane.markings === false ? 'text-muted-foreground/40' : ''}"
+								onclick={() => toggleLaneMarkings(i)}
+								title="Lane markings"
 							>
-								<Trash2 class="h-4 w-4" />
+								<Equal class="h-4 w-4" />
 							</Button>
-						</div>
+						{:else}
+							<div class="h-7 w-7 shrink-0"></div>
+						{/if}
+
+						{#if lane.type === 'turn'}
+							<Button
+								variant="ghost"
+								size="icon"
+								class="h-7 w-7 shrink-0"
+								onclick={() => flipTurn(i)}
+								title="Turn direction"
+							>
+								{#if lane.turn === 'right'}
+									<CornerUpRight class="h-4 w-4" />
+								{:else}
+									<CornerUpLeft class="h-4 w-4" />
+								{/if}
+							</Button>
+						{:else}
+							<div class="h-7 w-7 shrink-0"></div>
+						{/if}
+
+						<Button
+							variant="ghost"
+							size="icon"
+							class="h-7 w-7 shrink-0"
+							disabled={lanes.length <= 1}
+							onclick={() => removeLane(i)}
+							title="Remove lane"
+						>
+							<Trash2 class="h-4 w-4" />
+						</Button>
 					</div>
 				{/each}
 			</div>

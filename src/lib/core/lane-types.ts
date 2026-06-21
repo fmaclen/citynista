@@ -1,4 +1,4 @@
-import type { LaneType } from './types';
+import type { LaneType, TurnMovement } from './types';
 
 // Every rule about how lanes render and connect is keyed to a lane type's
 // SURFACE CLASS, never to its name — adding a lane type is one row here.
@@ -72,13 +72,13 @@ export const LANE_TYPE_SPECS: Record<LaneType, LaneTypeSpec> = {
 		directional: false,
 		accessory: true
 	},
-	// Turn pockets are island-class on purpose: a median tapers into a turn
-	// lane through the same center-strip matching as median↔grass, while
-	// the asphalt color keeps it reading as carriageway. Its paint (solid
-	// flanks) comes from lanePaintBetween, not its fill.
+	// Turn pockets are roadway-class: they flow into the carriageway like any
+	// other travel lane and reach the junction stop line under the asphalt
+	// patch — no median-style wind-down nose. Their solid flank lines come
+	// from lanePaintBetween and the arrow glyph from the lane's turn field.
 	turn: {
 		label: 'Turn',
-		surface: 'island',
+		surface: 'roadway',
 		color: '#3D3D3D',
 		order: 2.5,
 		directional: true
@@ -123,15 +123,21 @@ export interface LanePaint {
 }
 
 export function lanePaintBetween(
-	a: { type: LaneType; direction: string },
-	b: { type: LaneType; direction: string }
+	a: { type: LaneType; direction: string; turn?: TurnMovement; markings?: boolean },
+	b: { type: LaneType; direction: string; turn?: TurnMovement; markings?: boolean }
 ): LanePaint | null {
-	// Turn pockets are flanked by solid lines: yellow against opposing
-	// traffic, white against same-direction lanes; against medians and
-	// curbs the median's own edge is the marking.
+	// A boundary line is painted only where both lanes touching it are marked,
+	// so disabling one lane's markings drops the lines on both its sides.
+	if (a.markings === false || b.markings === false) return null;
+	// Turn pockets are flanked by solid lines: a right-turn pocket sits beside
+	// same-direction traffic, so it is white; a left/center turn lane is yellow
+	// only against opposing flow, white against same-direction lanes. Against
+	// medians and curbs the median's own edge is the marking.
 	if (a.type === 'turn' || b.type === 'turn') {
+		const turnLane = a.type === 'turn' ? a : b;
 		const other = a.type === 'turn' ? b : a;
 		if (other.type !== 'turn' && laneSurface(other.type) !== 'roadway') return null;
+		if (turnLane.turn === 'right') return { color: 'lane', dashed: false };
 		return { color: a.direction !== b.direction ? 'center' : 'lane', dashed: false };
 	}
 	if (laneSurface(a.type) !== 'roadway' || laneSurface(b.type) !== 'roadway') return null;
