@@ -5,9 +5,9 @@ import { nodeHitAt, segmentHitAt } from './picking';
 
 // The lane connector: a transient mode scoped to one junction (entered by
 // double-clicking it). Each travel lane shows a dot at its mouth — a filled
-// disc where traffic enters the node, a hollow ring where it leaves. Drag
-// between an in dot and an out dot on different arms to toggle that movement
-// (either direction works); the junction pavement recarves when a corner's
+// disc where traffic enters the node, a hollow ring where it leaves. Only the
+// incoming discs are interactive: drag from one to an outgoing ring on another
+// arm to toggle that movement; the junction pavement recarves when a corner's
 // movements are all gone.
 //
 // The mode is modal: while it's open nothing else hovers or selects. Clicking a
@@ -29,13 +29,17 @@ export function setupConnectorMode(editor: Editor): ModeHandlers {
 	const onMouseDown = (event: MouseEvent) => {
 		if (event.button !== 0) return;
 		const world = editor.sceneManager.screenToWorld(event.clientX, event.clientY);
-		dragStart = editor.connectorEndpointNear(world.x, world.z);
-		if (dragStart) {
+
+		const near = editor.connectorEndpointNear(world.x, world.z);
+		if (near) {
+			// Only incoming dots are grabbable; an outgoing ring is a passive target.
+			dragStart = near.flow === 'in' ? near : null;
 			pendingExit = false;
-			setCursor('grabbing');
+			if (dragStart) setCursor('grabbing');
 			return;
 		}
-		// Only empty ground leaves the mode; clicking a road or node is ignored.
+
+		// No dot: leave only from empty ground; clicking a road or node is ignored.
 		const onSomething =
 			!!nodeHitAt(editor, world.x, world.z).node ||
 			!!segmentHitAt(editor, world.x, world.z).segment;
@@ -46,33 +50,28 @@ export function setupConnectorMode(editor: Editor): ModeHandlers {
 		const world = editor.sceneManager.screenToWorld(event.clientX, event.clientY);
 
 		if (dragStart) {
-			// Keep the source lit and its movements shown; the rubber band tracks
-			// the cursor toward whichever target you drop on.
 			editor.connectionRenderer.setHovered(dragStart.ref);
 			editor.connectionRenderer.showRubberBand(dragStart.point, { x: world.x, y: world.z });
 			return;
 		}
 
-		const over = editor.connectorEndpointNear(world.x, world.z);
-		editor.connectionRenderer.setHovered(over?.ref ?? null);
-		setCursor(over ? 'grab' : 'default');
+		const near = editor.connectorEndpointNear(world.x, world.z);
+		const hoverIn = near && near.flow === 'in' ? near : null;
+		editor.connectionRenderer.setHovered(hoverIn ? hoverIn.ref : null);
+		setCursor(hoverIn ? 'grab' : 'default');
 	};
 
 	const onMouseUp = (event: MouseEvent) => {
 		editor.connectionRenderer.hideRubberBand();
-		const world = editor.sceneManager.screenToWorld(event.clientX, event.clientY);
 
 		if (dragStart) {
-			const end = editor.connectorEndpointNear(world.x, world.z);
-			// One end must enter the node and the other leave it, on different arms;
-			// drag direction doesn't matter.
-			if (end && end.flow !== dragStart.flow && end.ref.segmentId !== dragStart.ref.segmentId) {
-				const incoming = dragStart.flow === 'in' ? dragStart : end;
-				const outgoing = dragStart.flow === 'in' ? end : dragStart;
-				editor.toggleConnection(incoming.ref, outgoing.ref);
+			const world = editor.sceneManager.screenToWorld(event.clientX, event.clientY);
+			const near = editor.connectorEndpointNear(world.x, world.z);
+			if (near && near.flow === 'out' && near.ref.segmentId !== dragStart.ref.segmentId) {
+				editor.toggleConnection(dragStart.ref, near.ref);
 			}
 			dragStart = null;
-			setCursor(end ? 'grab' : 'default');
+			setCursor('default');
 			return;
 		}
 

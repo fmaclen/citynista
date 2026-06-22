@@ -3,13 +3,12 @@ import type { LaneConnection, LaneEndpoint } from '../core/lane-connections';
 import { sameLaneRef } from '../core/lane-connections';
 import type { LaneRef } from '../core/types';
 
-// Lane connectors drawn above everything in connector mode: a dot at each lane
-// mouth — a filled disc where traffic enters the node, a hollow ring where it
-// leaves. Hovering a dot reveals just that lane's movements (so a busy junction
-// isn't a tangle of every arc at once); drag between an in dot and an out dot to
-// toggle a movement. Everything reads as "editor mode": dots follow the editor
-// palette (yellow = handle, blue = hover) and arcs are thick dashed ribbons
-// (allowed = yellow, blocked = white 50%) so they're never mistaken for paint.
+// Lane connectors drawn above everything in connector mode: every movement is a
+// dashed arc (allowed = yellow, blocked = white 50%), plus a dot at each lane
+// mouth — a filled disc where traffic enters the node (drag from here), a hollow
+// ring where it leaves (a passive target, not hoverable). Dots and arcs follow
+// the editor palette (yellow = handle, blue = hover); arcs are dashed ribbons so
+// they're never mistaken for the (thin, solid) road markings.
 const CONNECTION_Y = 0.3;
 const DOT_Y = 0.31;
 const HANDLE_COLOR = 0xfacc15;
@@ -21,11 +20,10 @@ const DOT_RADIUS = 1.2;
 const RING_INNER = 0.62;
 const DOT_SEGMENTS = 20;
 const HOVER_SCALE = 1.35;
-// Arcs are ~half a dot wide and dashed, so an editor line is obvious next to
-// the (thin, solid) road markings.
-const ARC_WIDTH = 0.7;
-const ARC_DASH = 1.6;
-const ARC_GAP = 1.3;
+const ARC_WIDTH = 0.35;
+const ARC_DASH = 1.2;
+const ARC_GAP = 0.9;
+const ARC_RESAMPLE = 0.3;
 const ARC_SAMPLES = 30;
 const RENDER_ORDER = 4;
 
@@ -34,26 +32,40 @@ function cubic(p0: number, p1: number, p2: number, p3: number, t: number): numbe
 	return u * u * u * p0 + 3 * u * u * t * p1 + 3 * u * t * t * p2 + t * t * t * p3;
 }
 
-// A dashed flat ribbon along a polyline (XZ plane at height y): emit a quad per
-// polyline segment whose arc-length midpoint lands in a dash, skip the gaps.
+// A dashed flat ribbon along a polyline (XZ plane at height y). The polyline is
+// first resampled to a roughly uniform spacing — a bezier sampled in t is not
+// uniform in arc length, which left dashes ragged — then a quad is emitted for
+// every step whose midpoint lands in a dash.
 function dashedRibbon(
 	curve: { x: number; y: number }[],
 	width: number,
 	y: number
 ): THREE.BufferGeometry {
-	const positions: number[] = [];
-	const half = width / 2;
-	let acc = 0;
+	const pts: { x: number; y: number }[] = [curve[0]];
 	for (let i = 0; i < curve.length - 1; i++) {
 		const a = curve[i];
 		const b = curve[i + 1];
+		const len = Math.hypot(b.x - a.x, b.y - a.y);
+		const n = Math.max(1, Math.round(len / ARC_RESAMPLE));
+		for (let k = 1; k <= n; k++) {
+			pts.push({ x: a.x + ((b.x - a.x) * k) / n, y: a.y + ((b.y - a.y) * k) / n });
+		}
+	}
+
+	const positions: number[] = [];
+	const half = width / 2;
+	const cycle = ARC_DASH + ARC_GAP;
+	let acc = 0;
+	for (let i = 0; i < pts.length - 1; i++) {
+		const a = pts[i];
+		const b = pts[i + 1];
 		const dx = b.x - a.x;
 		const dz = b.y - a.y;
 		const len = Math.hypot(dx, dz);
 		if (len < 1e-6) continue;
 		const mid = acc + len / 2;
 		acc += len;
-		if (mid % (ARC_DASH + ARC_GAP) >= ARC_DASH) continue;
+		if (mid % cycle >= ARC_DASH) continue;
 		const nx = (-dz / len) * half;
 		const nz = (dx / len) * half;
 		positions.push(
@@ -104,7 +116,6 @@ export class ConnectionRenderer {
 	private dotGroup: THREE.Group | null = null;
 	private arcGroup: THREE.Group | null = null;
 	private rubber: THREE.Mesh | null = null;
-	private connections: LaneConnection[] = [];
 	private dots: { ref: LaneRef; mesh: THREE.Mesh }[] = [];
 	private hoveredRef: LaneRef | null = null;
 	private activeMaterial: THREE.MeshBasicMaterial;
@@ -142,11 +153,20 @@ export class ConnectionRenderer {
 
 	show(connections: LaneConnection[], endpoints: LaneEndpoint[]) {
 		this.clear();
-		this.connections = connections;
-		if (endpoints.length === 0) return;
+		if (connections.length === 0 && endpoints.length === 0) return;
 
-		const group = new THREE.Group();
-		group.renderOrder = RENDER_ORDER;
+		const arcGroup = new THREE.Group();
+		arcGroup.renderOrder = RENDER_ORDER;
+		for (const c of connections) {
+			arcGroup.add(
+				new THREE.Mesh(arcRibbon(c), c.active ? this.activeMaterial : this.disabledMaterial)
+			);
+		}
+		this.scene.add(arcGroup);
+		this.arcGroup = arcGroup;
+
+		const dotGroup = new THREE.Group();
+		dotGroup.renderOrder = RENDER_ORDER + 1;
 		for (const endpoint of endpoints) {
 			// Filled disc = incoming (drag from here), hollow ring = outgoing.
 			const geometry =
@@ -157,65 +177,36 @@ export class ConnectionRenderer {
 			mesh.rotation.x = -Math.PI / 2;
 			mesh.position.set(endpoint.point.x, DOT_Y, endpoint.point.y);
 			mesh.renderOrder = RENDER_ORDER + 1;
-			group.add(mesh);
+			dotGroup.add(mesh);
 			this.dots.push({ ref: endpoint.ref, mesh });
 		}
-		this.scene.add(group);
-		this.dotGroup = group;
+		this.scene.add(dotGroup);
+		this.dotGroup = dotGroup;
+		this.applyHover();
 	}
 
-	// Highlight the dot under the cursor (blue, enlarged) and reveal its
-	// movements; pass null to clear.
+	// Highlight the dot under the cursor (blue, enlarged); pass null to clear.
+	// Only the incoming dots are ever passed here — outgoing dots are passive.
 	setHovered(ref: LaneRef | null) {
 		const changed =
 			(this.hoveredRef === null) !== (ref === null) ||
 			(this.hoveredRef !== null && ref !== null && !sameLaneRef(this.hoveredRef, ref));
 		if (!changed) return;
 		this.hoveredRef = ref;
+		this.applyHover();
+	}
+
+	private applyHover() {
 		for (const dot of this.dots) {
-			const hovered = ref !== null && sameLaneRef(dot.ref, ref);
+			const hovered = this.hoveredRef !== null && sameLaneRef(dot.ref, this.hoveredRef);
 			dot.mesh.material = hovered ? this.hoverMaterial : this.handleMaterial;
 			dot.mesh.scale.setScalar(hovered ? HOVER_SCALE : 1);
 		}
-		this.rebuildArcs();
-	}
-
-	private rebuildArcs() {
-		if (this.arcGroup) {
-			this.arcGroup.traverse((o) => {
-				if (o instanceof THREE.Mesh) o.geometry.dispose();
-			});
-			this.scene.remove(this.arcGroup);
-			this.arcGroup = null;
-		}
-		const ref = this.hoveredRef;
-		if (!ref) return;
-
-		const group = new THREE.Group();
-		group.renderOrder = RENDER_ORDER;
-		for (const c of this.connections) {
-			if (!sameLaneRef(c.from, ref) && !sameLaneRef(c.to, ref)) continue;
-			const mesh = new THREE.Mesh(
-				arcRibbon(c),
-				c.active ? this.activeMaterial : this.disabledMaterial
-			);
-			group.add(mesh);
-		}
-		this.scene.add(group);
-		this.arcGroup = group;
 	}
 
 	showRubberBand(from: { x: number; y: number }, to: { x: number; y: number }) {
 		this.hideRubberBand();
-		// Subdivide so the dash pattern shows along the straight band.
-		const len = Math.hypot(to.x - from.x, to.y - from.y);
-		const steps = Math.max(2, Math.ceil(len / 0.5));
-		const curve: { x: number; y: number }[] = [];
-		for (let i = 0; i <= steps; i++) {
-			const t = i / steps;
-			curve.push({ x: from.x + (to.x - from.x) * t, y: from.y + (to.y - from.y) * t });
-		}
-		const mesh = new THREE.Mesh(dashedRibbon(curve, ARC_WIDTH, DOT_Y), this.rubberMaterial);
+		const mesh = new THREE.Mesh(dashedRibbon([from, to], ARC_WIDTH, DOT_Y), this.rubberMaterial);
 		mesh.renderOrder = RENDER_ORDER + 2;
 		this.scene.add(mesh);
 		this.rubber = mesh;
@@ -232,7 +223,6 @@ export class ConnectionRenderer {
 		this.hideRubberBand();
 		this.dots = [];
 		this.hoveredRef = null;
-		this.connections = [];
 		for (const g of [this.dotGroup, this.arcGroup]) {
 			if (!g) continue;
 			g.traverse((o) => {
