@@ -1,12 +1,11 @@
 import * as THREE from 'three';
 import type { ModeHandlers } from './types';
-import type { Editor } from '../editor.svelte';
+import type { Editor, SetbackHandleInfo } from '../editor.svelte';
 import type { Segment } from '../core/segment.svelte';
 import type { Node } from '../core/node.svelte';
 import { getQuadraticBezierTangent } from '../geometry/bezier';
 import { CONTROL_SIZE } from '../rendering/selection-renderer';
 import { nodeHitAt, segmentHitAt, rectContents } from './picking';
-import type { LaneConnection, LaneEndpoint } from '../core/lane-connections';
 
 // Snap radii are sized in screen pixels and converted to world units at
 // the current zoom; hit areas live in modes/picking.
@@ -30,12 +29,8 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 	// Shift+click on a selected node means "deselect" only if no drag
 	// follows — a shift+drag instead smooths the node's tangent live.
 	let pendingShiftToggle: string | null = null;
-	// A click (no drag) on a connector of the already-selected junction
-	// toggles that movement on mouseup; a drag falls through to moving the node.
-	let pendingConnectorToggle: LaneConnection | null = null;
-	// Dragging from an incoming-lane dot to an outgoing-lane dot routes a
-	// movement (TM:PE-style); the rubber band follows the cursor meanwhile.
-	let connectSource: LaneEndpoint | null = null;
+	// Dragging a setback handle of the selected junction pulls that arm back.
+	let setbackDrag: SetbackHandleInfo | null = null;
 	let dragDistance = 0;
 
 	const marqueeFillMaterial = new THREE.MeshBasicMaterial({
@@ -469,13 +464,12 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 		// take over from here.
 		editor.setHoveredSegment(null);
 
-		// Dragging from an incoming-lane dot starts routing a connector. The
-		// dots are small, so node dragging still works by grabbing elsewhere.
+		// Dragging a setback handle of the selected junction. The handles sit
+		// out on the stop lines, so node dragging still works at the centre.
 		if (editor.selectedNodes.size === 1) {
-			const source = editor.connectSourceAt(worldPos.x, worldPos.z);
-			if (source) {
-				connectSource = source;
-				editor.showConnectRubberBand(source.point, worldPos.x, worldPos.z);
+			const handle = editor.setbackHandleAt(worldPos.x, worldPos.z);
+			if (handle) {
+				setbackDrag = handle;
 				return;
 			}
 		}
@@ -487,41 +481,24 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 			return;
 		}
 
-		// A connector of the already-selected junction under the pointer: armed
-		// now, toggled on mouseup unless the gesture becomes a drag.
-		const connectorHit =
-			editor.selectedNodes.size === 1 ? editor.connectionAt(worldPos.x, worldPos.z) : null;
-
 		const { node, segment: pickedSegment } = pickAt(worldPos.x, worldPos.z);
 		if (node) {
-			const wasSelected = editor.selectedNodes.has(node.id);
 			if (event.shiftKey) {
-				if (wasSelected) {
+				if (editor.selectedNodes.has(node.id)) {
 					// Deselect only if this turns out to be a click, not a
 					// shift+drag (which smooths the node's tangent instead).
 					pendingShiftToggle = node.id;
 				} else {
 					editor.selectNode(node.id);
 				}
-			} else if (!wasSelected) {
+			} else if (!editor.selectedNodes.has(node.id)) {
 				editor.clearSelection();
 				editor.selectNode(node.id);
-			} else if (connectorHit) {
-				// Clicking a connector of the already-selected node: toggle on
-				// release, but a drag still moves the node.
-				pendingConnectorToggle = connectorHit;
 			}
 			isDragging = true;
 			dragDistance = 0;
 			dragTarget = { type: 'nodes' };
 			captureControlFrames();
-			return;
-		}
-
-		// A connector reached outside the node ring (over a road mouth or the
-		// junction interior): no node to drag, so toggle it on release.
-		if (connectorHit) {
-			pendingConnectorToggle = connectorHit;
 			return;
 		}
 
@@ -551,8 +528,8 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 	const onMouseMove = (event: MouseEvent) => {
 		const worldPos = editor.sceneManager.screenToWorld(event.clientX, event.clientY);
 
-		if (connectSource) {
-			editor.showConnectRubberBand(connectSource.point, worldPos.x, worldPos.z);
+		if (setbackDrag) {
+			editor.setSetbackFromDrag(setbackDrag, worldPos.x, worldPos.z);
 			return;
 		}
 
@@ -573,10 +550,7 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 
 		if (dragTarget.type === 'nodes') {
 			dragDistance += Math.hypot(dx, dz);
-			if (dragDistance > 1) {
-				pendingShiftToggle = null;
-				pendingConnectorToggle = null;
-			}
+			if (dragDistance > 1) pendingShiftToggle = null;
 
 			for (const nodeId of editor.selectedNodes) {
 				const node = editor.graph.nodes.get(nodeId);
@@ -599,6 +573,8 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 				}
 			}
 			applyChanges();
+			// Setback handles ride along with a moving junction.
+			editor.refreshSetbackHandles();
 		} else if (dragTarget.type === 'controlPoint') {
 			if (event.shiftKey) {
 				snapControlPoint(dragTarget.segmentId, worldPos.x, worldPos.z);
@@ -637,13 +613,9 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 	};
 
 	const onMouseUp = (event: MouseEvent) => {
-		// Releasing a connector drag on an outgoing-lane dot routes the movement.
-		if (connectSource) {
-			const worldPos = editor.sceneManager.screenToWorld(event.clientX, event.clientY);
-			const target = editor.connectTargetAt(worldPos.x, worldPos.z);
-			if (target) editor.applyConnection(connectSource, target);
-			connectSource = null;
-			editor.hideConnectRubberBand();
+		if (setbackDrag) {
+			editor.finishSetback();
+			setbackDrag = null;
 			return;
 		}
 
@@ -652,17 +624,6 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 			applyMarquee(worldPos.x, worldPos.z);
 			hideMarquee();
 			marqueeStart = null;
-			return;
-		}
-
-		// A click (no drag) on a connector of the selected junction toggles
-		// that movement; the node itself never moved, so skip the drag save.
-		if (pendingConnectorToggle) {
-			editor.toggleConnection(pendingConnectorToggle);
-			pendingConnectorToggle = null;
-			isDragging = false;
-			dragTarget = null;
-			controlFrames.clear();
 			return;
 		}
 
@@ -698,8 +659,7 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 		isDragging = false;
 		dragTarget = null;
 		marqueeStart = null;
-		connectSource = null;
-		editor.hideConnectRubberBand();
+		setbackDrag = null;
 		controlFrames.clear();
 		editor.setHoveredNode(null);
 		editor.setHoveredSegment(null);

@@ -8,6 +8,10 @@ export class Segment {
 	controlX = $state<number | undefined>(undefined);
 	controlY = $state<number | undefined>(undefined);
 	lanes = $state<Lane[]>([]);
+	// Manual setback overrides — how far this end pulls back from its node,
+	// at least as far as the auto-computed trim. Undefined = use the auto value.
+	setbackStart = $state<number | undefined>(undefined);
+	setbackEnd = $state<number | undefined>(undefined);
 
 	lanesKey = $derived(serializeLanes(this.lanes));
 	totalWidth = $derived(getTotalWidth(this.lanes));
@@ -38,7 +42,7 @@ export class Segment {
 	}
 
 	toJSON(): SegmentData {
-		return {
+		const data: SegmentData = {
 			id: this.id,
 			startNodeId: this.startNodeId,
 			endNodeId: this.endNodeId,
@@ -46,6 +50,9 @@ export class Segment {
 			controlY: this.controlY,
 			lanes: this.cloneLanes()
 		};
+		if (this.setbackStart !== undefined) data.setbackStart = this.setbackStart;
+		if (this.setbackEnd !== undefined) data.setbackEnd = this.setbackEnd;
+		return data;
 	}
 
 	static fromJSON(data: SegmentData) {
@@ -57,6 +64,8 @@ export class Segment {
 		if (data.controlX !== undefined && data.controlY !== undefined) {
 			segment.setControlPoint(data.controlX, data.controlY);
 		}
+		segment.setbackStart = data.setbackStart;
+		segment.setbackEnd = data.setbackEnd;
 		return segment;
 	}
 }

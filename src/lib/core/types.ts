@@ -58,6 +58,9 @@ export interface SegmentData {
 	controlX?: number;
 	controlY?: number;
 	lanes?: Lane[];
+	// Manual per-end setback overrides (distance pulled back from each node).
+	setbackStart?: number;
+	setbackEnd?: number;
 	// Legacy saves referenced a shared template instead of owning lanes.
 	laneTemplateId?: string;
 }

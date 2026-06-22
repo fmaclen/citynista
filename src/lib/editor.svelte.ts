@@ -4,16 +4,25 @@ import { Graph } from './core/graph.svelte';
 import type { GraphData } from './core/types';
 import { getDefaultTemplate } from './core/lane-template';
 import { resolveCrossings } from './core/crossings';
-import { computeIntersectionTrims } from './core/road-geometry';
-import { nodeConnectivity, sameConnectionRef } from './core/lane-connections';
-import type { LaneConnection, LaneEndpoint } from './core/lane-connections';
-import type { LaneRef } from './core/types';
+import { computeIntersectionTrims, sampleTrimmedCenterline } from './core/road-geometry';
+import type { CenterlineSample, Point } from './core/road-geometry';
 import { SceneManager } from './rendering/scene.svelte';
 import { NodeRenderer, type NodeTone } from './rendering/node-renderer';
 import { RoadRenderer } from './rendering/road-renderer';
 import { BlockRenderer } from './rendering/block-renderer';
 import { SelectionRenderer } from './rendering/selection-renderer';
-import { ConnectionRenderer } from './rendering/connection-renderer';
+import { SetbackRenderer, type SetbackHandle } from './rendering/setback-renderer';
+
+// A draggable per-arm setback handle on a selected junction.
+export interface SetbackHandleInfo {
+	segmentId: string;
+	atStart: boolean;
+	node: Point;
+	handle: Point;
+	// Full (untrimmed) centerline, oriented node-side first, for projecting
+	// the drag to an arc-length setback.
+	centerline: CenterlineSample[];
+}
 import type { ModeHandlers, Mode, DrawStyle } from './modes/types';
 import { setupDrawMode } from './modes/draw';
 import { setupSelectMode } from './modes/select';
@@ -28,9 +37,8 @@ export class Editor {
 	roadRenderer!: RoadRenderer;
 	blockRenderer!: BlockRenderer;
 	selectionRenderer!: SelectionRenderer;
-	connectionRenderer!: ConnectionRenderer;
-	private currentConnections: LaneConnection[] = [];
-	private currentEndpoints: LaneEndpoint[] = [];
+	setbackRenderer!: SetbackRenderer;
+	private currentSetbackHandles: SetbackHandleInfo[] = [];
 
 	mode = $state<Mode>('select');
 	drawStyle = $state<DrawStyle>('straight');
@@ -78,7 +86,7 @@ export class Editor {
 		this.roadRenderer = new RoadRenderer(this.sceneManager.scene);
 		this.blockRenderer = new BlockRenderer(this.sceneManager.scene);
 		this.selectionRenderer = new SelectionRenderer(this.sceneManager.scene);
-		this.connectionRenderer = new ConnectionRenderer(this.sceneManager.scene);
+		this.setbackRenderer = new SetbackRenderer(this.sceneManager.scene);
 
 		this.loadSavedData();
 		this.presentState = JSON.stringify(this.graph.toJSON());
@@ -242,136 +250,108 @@ export class Editor {
 		this.selectedNodes.add(nodeId);
 		this.nodeRenderer.setSelected(nodeId, true);
 		this.refreshRevealedNodes();
-		this.refreshConnections();
+		this.refreshSetbackHandles();
 	}
 
 	deselectNode(nodeId: string) {
 		this.selectedNodes.delete(nodeId);
 		this.nodeRenderer.setSelected(nodeId, false);
 		this.refreshRevealedNodes();
-		this.refreshConnections();
+		this.refreshSetbackHandles();
 	}
 
-	// Lane connectors for the selected node: the permissive default movement
-	// set, drawn as an overlay. Shown only for a single selected junction.
-	refreshConnections() {
+	// Per-arm setback handles for a single selected junction (3+ arms): a dot
+	// on each arm's stop line. Bends get no handle (the stop sits on the node).
+	refreshSetbackHandles() {
 		const nodeId = this.selectedNodes.size === 1 ? [...this.selectedNodes][0] : null;
 		const node = nodeId ? this.graph.nodes.get(nodeId) : undefined;
-		// Only junctions (3+ arms) get connectors; at a bend the through
-		// movement is implied, and its lane dots would sit on the node centre
-		// and fight node dragging.
 		if (!node || node.connectedSegments.length < 3) {
-			this.currentConnections = [];
-			this.currentEndpoints = [];
-			this.connectionRenderer.clear();
+			this.currentSetbackHandles = [];
+			this.setbackRenderer.clear();
 			return;
 		}
-		const { endpoints, connections } = nodeConnectivity(this.graph, node);
-		this.currentConnections = connections;
-		this.currentEndpoints = endpoints;
-		this.connectionRenderer.show(connections, endpoints);
+
+		const trims = computeIntersectionTrims(this.graph);
+		const rich: SetbackHandleInfo[] = [];
+		const display: SetbackHandle[] = [];
+		for (const segmentId of node.connectedSegments) {
+			const segment = this.graph.segments.get(segmentId);
+			if (!segment) continue;
+			const startNode = this.graph.nodes.get(segment.startNodeId);
+			const endNode = this.graph.nodes.get(segment.endNodeId);
+			if (!startNode || !endNode) continue;
+
+			const atStart = segment.startNodeId === node.id;
+			const trim = trims.get(segmentId) ?? { start: 0, end: 0 };
+			const trimmed = sampleTrimmedCenterline(segment, startNode, endNode, trim.start, trim.end);
+			if (trimmed.length < 2) continue;
+			const stop = atStart ? trimmed[0] : trimmed[trimmed.length - 1];
+			let centerline = sampleTrimmedCenterline(segment, startNode, endNode, 0, 0);
+			if (!atStart) centerline = [...centerline].reverse();
+
+			const nodePoint = { x: node.x, y: node.y };
+			const handlePoint = { x: stop.x, y: stop.y };
+			rich.push({ segmentId, atStart, node: nodePoint, handle: handlePoint, centerline });
+			display.push({ node: nodePoint, handle: handlePoint });
+		}
+
+		this.currentSetbackHandles = rich;
+		this.setbackRenderer.show(display);
 	}
 
-	// The nearest lane endpoint of a given flow to a world point, within a
-	// draggable threshold — for dragging a connector from a source lane to a
-	// target lane (TM:PE-style).
-	private endpointAt(worldX: number, worldZ: number, flow: 'in' | 'out'): LaneEndpoint | null {
-		const threshold = Math.max(1.4, this.sceneManager.worldPerPixel() * 9);
-		let best: LaneEndpoint | null = null;
+	setbackHandleAt(worldX: number, worldZ: number): SetbackHandleInfo | null {
+		const threshold = Math.max(2, this.sceneManager.worldPerPixel() * 10);
+		let best: SetbackHandleInfo | null = null;
 		let bestDistance = threshold;
-		for (const endpoint of this.currentEndpoints) {
-			if (endpoint.flow !== flow) continue;
-			const distance = Math.hypot(endpoint.point.x - worldX, endpoint.point.y - worldZ);
+		for (const handle of this.currentSetbackHandles) {
+			const distance = Math.hypot(handle.handle.x - worldX, handle.handle.y - worldZ);
 			if (distance < bestDistance) {
 				bestDistance = distance;
-				best = endpoint;
+				best = handle;
 			}
 		}
 		return best;
 	}
 
-	connectSourceAt(worldX: number, worldZ: number): LaneEndpoint | null {
-		return this.endpointAt(worldX, worldZ, 'in');
+	// Live update while dragging a setback handle: project the cursor onto the
+	// arm's centerline and use the arc length from the node as the setback.
+	setSetbackFromDrag(handle: SetbackHandleInfo, worldX: number, worldZ: number) {
+		const points = handle.centerline;
+		let accumulated = 0;
+		let bestArc = 0;
+		let bestDistance = Infinity;
+		for (let i = 1; i < points.length; i++) {
+			const ax = points[i - 1].x;
+			const ay = points[i - 1].y;
+			const dx = points[i].x - ax;
+			const dy = points[i].y - ay;
+			const lengthSq = dx * dx + dy * dy;
+			const t =
+				lengthSq > 0
+					? Math.max(0, Math.min(1, ((worldX - ax) * dx + (worldZ - ay) * dy) / lengthSq))
+					: 0;
+			const px = ax + dx * t;
+			const py = ay + dy * t;
+			const distance = Math.hypot(px - worldX, py - worldZ);
+			if (distance < bestDistance) {
+				bestDistance = distance;
+				bestArc = accumulated + t * Math.sqrt(lengthSq);
+			}
+			accumulated += Math.sqrt(lengthSq);
+		}
+
+		const segment = this.graph.segments.get(handle.segmentId);
+		if (!segment) return;
+		const value = bestArc < 1 ? undefined : bestArc;
+		if (handle.atStart) segment.setbackStart = value;
+		else segment.setbackEnd = value;
+
+		this.rebuildRoads();
+		this.refreshSetbackHandles();
 	}
 
-	connectTargetAt(worldX: number, worldZ: number): LaneEndpoint | null {
-		return this.endpointAt(worldX, worldZ, 'out');
-	}
-
-	showConnectRubberBand(from: { x: number; y: number }, toX: number, toZ: number) {
-		this.connectionRenderer.showRubberBand(from, { x: toX, y: toZ });
-	}
-
-	hideConnectRubberBand() {
-		this.connectionRenderer.hideRubberBand();
-	}
-
-	applyConnection(source: LaneEndpoint, target: LaneEndpoint) {
-		this.toggleConnectionRef(source.ref, target.ref);
-	}
-
-	private toggleConnectionRef(from: LaneRef, to: LaneRef) {
-		if (from.segmentId === to.segmentId) return;
-		const nodeId = this.selectedNodes.size === 1 ? [...this.selectedNodes][0] : null;
-		const node = nodeId ? this.graph.nodes.get(nodeId) : undefined;
-		if (!node) return;
-
-		const ref = { from, to };
-		const disabled = node.disabledConnections ?? [];
-		const without = disabled.filter((d) => !sameConnectionRef(d, ref));
-		node.disabledConnections =
-			without.length === disabled.length
-				? [...disabled, ref]
-				: without.length
-					? without
-					: undefined;
-
+	finishSetback() {
 		this.graph.save();
-		this.refreshConnections();
-	}
-
-	// The connector nearest a world point, within a clickable threshold, or
-	// null. Used by select mode to toggle a movement instead of selecting.
-	connectionAt(worldX: number, worldZ: number): LaneConnection | null {
-		if (this.currentConnections.length === 0) return null;
-		const threshold = Math.max(0.5, this.sceneManager.worldPerPixel() * 6);
-		const samples = 14;
-		let best: LaneConnection | null = null;
-		let bestDistance = threshold;
-
-		for (const c of this.currentConnections) {
-			const reach = Math.hypot(c.toPoint.x - c.fromPoint.x, c.toPoint.y - c.fromPoint.y) * 0.4;
-			const c1x = c.fromPoint.x + c.fromDir.x * reach;
-			const c1y = c.fromPoint.y + c.fromDir.y * reach;
-			const c2x = c.toPoint.x - c.toDir.x * reach;
-			const c2y = c.toPoint.y - c.toDir.y * reach;
-			for (let i = 0; i <= samples; i++) {
-				const t = i / samples;
-				const u = 1 - t;
-				const bx =
-					u * u * u * c.fromPoint.x +
-					3 * u * u * t * c1x +
-					3 * u * t * t * c2x +
-					t * t * t * c.toPoint.x;
-				const by =
-					u * u * u * c.fromPoint.y +
-					3 * u * u * t * c1y +
-					3 * u * t * t * c2y +
-					t * t * t * c.toPoint.y;
-				const distance = Math.hypot(bx - worldX, by - worldZ);
-				if (distance < bestDistance) {
-					bestDistance = distance;
-					best = c;
-				}
-			}
-		}
-
-		return best;
-	}
-
-	// Flip a movement on/off at the selected junction (clicking its arc).
-	toggleConnection(connection: LaneConnection) {
-		this.toggleConnectionRef(connection.from, connection.to);
 	}
 
 	selectSegment(segmentId: string) {
@@ -392,7 +372,8 @@ export class Editor {
 		this.selectedNodes.clear();
 		this.selectedSegments.clear();
 		this.refreshRevealedNodes();
-		this.connectionRenderer.clear();
+		this.currentSetbackHandles = [];
+		this.setbackRenderer.clear();
 	}
 
 	setHoveredNode(nodeId: string | null) {
@@ -566,7 +547,7 @@ export class Editor {
 		if (this.boundHistoryKeyDown) {
 			window.removeEventListener('keydown', this.boundHistoryKeyDown);
 		}
-		this.connectionRenderer?.dispose();
+		this.setbackRenderer?.dispose();
 		this.sceneManager?.dispose();
 	}
 }

@@ -1,0 +1,43 @@
+{
+	"nodes": [
+		{ "id": "a", "x": 0, "y": 0 },
+		{ "id": "l", "x": -90, "y": 0 },
+		{ "id": "r", "x": 90, "y": 0 },
+		{ "id": "b", "x": 0, "y": 95 }
+	],
+	"segments": [
+		{
+			"id": "seg-l",
+			"startNodeId": "l",
+			"endNodeId": "a",
+			"lanes": [
+				{ "type": "road", "width": 3.5, "direction": "backward" },
+				{ "type": "road", "width": 3.5, "direction": "forward" }
+			]
+		},
+		{
+			"id": "seg-r",
+			"startNodeId": "a",
+			"endNodeId": "r",
+			"lanes": [
+				{ "type": "road", "width": 3.5, "direction": "backward" },
+				{ "type": "road", "width": 3.5, "direction": "forward" }
+			]
+		},
+		{
+			"id": "seg-b",
+			"startNodeId": "b",
+			"endNodeId": "a",
+			"setbackEnd": 22,
+			"lanes": [
+				{ "type": "sidewalk", "width": 3, "direction": "bidirectional" },
+				{ "type": "road", "width": 3.5, "direction": "backward" },
+				{ "type": "road", "width": 3.5, "direction": "backward" },
+				{ "type": "median", "width": 2, "direction": "bidirectional" },
+				{ "type": "road", "width": 3.5, "direction": "forward" },
+				{ "type": "road", "width": 3.5, "direction": "forward" },
+				{ "type": "sidewalk", "width": 3, "direction": "bidirectional" }
+			]
+		}
+	]
+}

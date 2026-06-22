@@ -887,6 +887,24 @@ export function computeIntersectionTrims(graph: Graph): SegmentTrims {
 		}
 	}
 
+	// Manual setback overrides pull an end back further than the auto trim
+	// (never less), capped so the segment can't collapse.
+	for (const segment of graph.segments.values()) {
+		if (segment.setbackStart === undefined && segment.setbackEnd === undefined) continue;
+		const startNode = graph.nodes.get(segment.startNodeId);
+		const endNode = graph.nodes.get(segment.endNodeId);
+		if (!startNode || !endNode) continue;
+		const cap = Math.hypot(endNode.x - startNode.x, endNode.y - startNode.y) * 0.45;
+		const trim = trims.get(segment.id) ?? { start: 0, end: 0 };
+		if (segment.setbackStart !== undefined) {
+			trim.start = Math.min(cap, Math.max(trim.start, segment.setbackStart));
+		}
+		if (segment.setbackEnd !== undefined) {
+			trim.end = Math.min(cap, Math.max(trim.end, segment.setbackEnd));
+		}
+		trims.set(segment.id, trim);
+	}
+
 	return trims;
 }
 
