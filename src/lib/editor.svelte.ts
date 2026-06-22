@@ -1,4 +1,3 @@
-import * as THREE from 'three';
 import { getContext, setContext, untrack } from 'svelte';
 import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 import { Graph } from './core/graph.svelte';
@@ -433,85 +432,6 @@ export class Editor {
 		this.graph.save();
 		this.rebuildRoads();
 		this.refreshConnectors();
-	}
-
-	// SPIKE (Step 2): draw each junction movement as a dashed lane-width ribbon
-	// (hatched across the flow), coloured by source arm — see-through, so the
-	// underlying pavement and overlapping movements read clearly.
-	debugConnectionMesh() {
-		const Y = 0.28;
-		const SAMPLES = 22;
-		const palette = [
-			0x22d3ee, 0xf472b6, 0xfb923c, 0xa3e635, 0x818cf8, 0xfbbf24, 0xf87171, 0x34d399
-		].map((hex) => new THREE.Color(hex));
-		const positions: number[] = [];
-		const colors: number[] = [];
-
-		for (const node of this.graph.nodes.values()) {
-			if (node.connectedSegments.length < 3) continue;
-			const arms = [...node.connectedSegments].sort();
-
-			const { connections } = nodeConnectivity(this.graph, node);
-			for (const c of connections) {
-				if (!c.active) continue;
-				const segment = this.graph.segments.get(c.from.segmentId);
-				const half = (segment?.lanes[c.from.laneIndex]?.width ?? 3.5) / 2;
-				const color = palette[arms.indexOf(c.from.segmentId) % palette.length];
-
-				const reach = Math.hypot(c.toPoint.x - c.fromPoint.x, c.toPoint.y - c.fromPoint.y) * 0.4;
-				const c1x = c.fromPoint.x + c.fromDir.x * reach;
-				const c1y = c.fromPoint.y + c.fromDir.y * reach;
-				const c2x = c.toPoint.x - c.toDir.x * reach;
-				const c2y = c.toPoint.y - c.toDir.y * reach;
-				const curve: { x: number; y: number }[] = [];
-				for (let i = 0; i <= SAMPLES; i++) {
-					const t = i / SAMPLES;
-					const u = 1 - t;
-					curve.push({
-						x:
-							u * u * u * c.fromPoint.x +
-							3 * u * u * t * c1x +
-							3 * u * t * t * c2x +
-							t * t * t * c.toPoint.x,
-						y:
-							u * u * u * c.fromPoint.y +
-							3 * u * u * t * c1y +
-							3 * u * t * t * c2y +
-							t * t * t * c.toPoint.y
-					});
-				}
-
-				for (let i = 0; i < curve.length; i++) {
-					const prev = curve[Math.max(0, i - 1)];
-					const next = curve[Math.min(curve.length - 1, i + 1)];
-					let tx = next.x - prev.x;
-					let ty = next.y - prev.y;
-					const length = Math.hypot(tx, ty) || 1;
-					tx /= length;
-					ty /= length;
-					positions.push(
-						curve[i].x - ty * half,
-						Y,
-						curve[i].y + tx * half,
-						curve[i].x + ty * half,
-						Y,
-						curve[i].y - tx * half
-					);
-					colors.push(color.r, color.g, color.b, color.r, color.g, color.b);
-				}
-			}
-		}
-
-		const geometry = new THREE.BufferGeometry();
-		geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-		geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
-		const material = new THREE.LineBasicMaterial({
-			vertexColors: true,
-			transparent: true,
-			opacity: 0.55,
-			depthWrite: false
-		});
-		this.sceneManager.scene.add(new THREE.LineSegments(geometry, material));
 	}
 
 	selectSegment(segmentId: string) {
