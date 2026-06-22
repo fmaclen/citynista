@@ -42,7 +42,7 @@ test.describe('Lane connector', () => {
 		await expect.poll(() => disabledCount(page)).toBe(0);
 	});
 
-	test('Escape leaves the connector and returns to selecting', async ({ page }) => {
+	test('is modal: clicking a road is ignored until Escape returns to select', async ({ page }) => {
 		await page.goto('/?fixture=connectors-demo&topdown');
 		await page.waitForFunction(() => {
 			const raw = localStorage.getItem('citynista-graph-v2');
@@ -52,9 +52,14 @@ test.describe('Lane connector', () => {
 		for (let i = 0; i < 18; i++) await page.mouse.wheel(0, -100);
 
 		await page.mouse.dblclick(640, 360);
-		await page.keyboard.press('Escape');
 
-		// Back in select mode: clicking a road selects it and opens the lane panel.
+		// Clicking the road next to the junction does nothing — no selection,
+		// still in connector mode (the lane panel never opens).
+		await page.mouse.click(640, 250);
+		await expect(page.locator('aside')).not.toBeVisible();
+
+		// Escape returns to select mode, where that road selects normally.
+		await page.keyboard.press('Escape');
 		await page.mouse.click(640, 250);
 		await expect(page.locator('aside')).toBeVisible();
 	});
