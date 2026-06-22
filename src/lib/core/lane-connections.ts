@@ -11,6 +11,10 @@ import {
 import { laneSurface } from './lane-types';
 import { getTotalWidth } from './lane-template';
 
+// Minimum distance a connector dot sits out from its node, so the mouths of
+// collinear through-arms don't stack their dots on the node itself.
+const MIN_DOT_OFFSET = 6;
+
 export function sameLaneRef(a: LaneRef, b: LaneRef): boolean {
 	return a.segmentId === b.segmentId && a.laneIndex === b.laneIndex;
 }
@@ -71,6 +75,19 @@ export function laneEndpointsAtNode(
 		const tangent = arm.startsHere ? { x: -arm.into.x, y: -arm.into.y } : arm.into;
 		const normal = { x: -tangent.y, y: tangent.x };
 
+		// Seat the dots a minimum distance out from the node along the arm. At a
+		// collinear through-node the two arms' trimmed mouths both sit on the
+		// node, so without this their in/out dots stack on the same point and one
+		// hides the other. `into` points at the node, so step out along −into.
+		const stopDist = Math.hypot(arm.stop.x - node.x, arm.stop.y - node.y);
+		const base =
+			stopDist >= MIN_DOT_OFFSET
+				? arm.stop
+				: {
+						x: node.x - arm.into.x * MIN_DOT_OFFSET,
+						y: node.y - arm.into.y * MIN_DOT_OFFSET
+					};
+
 		let offset = -getTotalWidth(arm.lanes) / 2;
 		for (let laneIndex = 0; laneIndex < arm.lanes.length; laneIndex++) {
 			const lane = arm.lanes[laneIndex];
@@ -86,7 +103,7 @@ export function laneEndpointsAtNode(
 				: lane.direction === 'forward';
 			endpoints.push({
 				ref: { segmentId: arm.segmentId, laneIndex },
-				point: offsetPoint(arm.stop, normal, centre),
+				point: offsetPoint(base, normal, centre),
 				dir: arm.into,
 				flow: incoming ? 'in' : 'out'
 			});
