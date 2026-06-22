@@ -1109,6 +1109,20 @@ function addMergeNode(
 ) {
 	if (pairBendDeviation(graph, node, merge.through[0], merge.through[1]) >= MIN_BEND_DEVIATION) {
 		addPairJoin(graph, node, centerlines, bandsByType, merge.throughIds, merge.through);
+	} else {
+		// A straight through pair normally just lets its two ribbons meet at the
+		// node, but a setback pulls the mouths apart and leaves a hole. Pave a
+		// full-section spoke from each through mouth to the centre (a no-op when
+		// the mouths already meet).
+		for (const arm of collectIntersectionArms(graph, node, centerlines)) {
+			if (!merge.throughIds.has(arm.segmentId)) continue;
+			getOrCreateBands(bandsByType, 'sidewalk').push(
+				armSpoke(node, arm, arm.halfWidth, arm.halfWidth)
+			);
+			getOrCreateBands(bandsByType, armCarriageway(arm.lanes)).push(
+				armSpoke(node, arm, arm.away.roadEdge, arm.toward.roadEdge)
+			);
+		}
 	}
 
 	for (const merger of merge.mergers) {
@@ -1554,7 +1568,11 @@ function addIntersection(
 		);
 		plate.push(offsetPoint(stopB, armB.side, -armB.halfWidth));
 	}
-	sidewalkBands.push(normalizeWinding(plate.map((point) => toClipperPoint(point.x, point.y))));
+	const plateRing = normalizeWinding(plate.map((point) => toClipperPoint(point.x, point.y)));
+	const plateSpokes = arms.map((arm) => armSpoke(node, arm, arm.halfWidth, arm.halfWidth));
+	for (const path of unionPaths([plateRing, ...plateSpokes])) {
+		sidewalkBands.push(path);
+	}
 
 	const roadArms = arms.filter((arm) => arm.hasRoad);
 	if (roadArms.length < 2) return;
@@ -2005,7 +2023,26 @@ function junctionPavement(node: Node, arms: IntersectionArm[]): Paths {
 			ring.push(cornerB);
 		}
 	}
-	return [normalizeWinding(ring.map((p) => toClipperPoint(p.x, p.y)))];
+	const ringPath = normalizeWinding(ring.map((p) => toClipperPoint(p.x, p.y)));
+	// Connecting the mouths alone leaves a hole between two arms set back far
+	// from the node, so union a spoke that runs each carriageway in to the
+	// centre.
+	const spokes = arms.map((arm) => armSpoke(node, arm, arm.away.roadEdge, arm.toward.roadEdge));
+	return unionPaths([ringPath, ...spokes]);
+}
+
+// A full-width quad from an arm's mouth in to just past the node centre. Unioned
+// into the junction surface it keeps the interior covered however far the arms
+// are set back, where joining mouth-to-mouth would leave a gap.
+function armSpoke(node: Node, arm: IntersectionArm, leftEdge: number, rightEdge: number): Path {
+	const mouth = offsetPoint(arm.stop, arm.into, -MOUTH_OVERLAP);
+	const reach =
+		Math.hypot(arm.stop.x - node.x, arm.stop.y - node.y) + MOUTH_OVERLAP + arm.halfWidth;
+	const p0 = offsetPoint(mouth, arm.side, -leftEdge);
+	const p1 = offsetPoint(mouth, arm.side, rightEdge);
+	const p2 = offsetPoint(p1, arm.into, reach);
+	const p3 = offsetPoint(p0, arm.into, reach);
+	return normalizeWinding([p0, p1, p2, p3].map((p) => toClipperPoint(p.x, p.y)));
 }
 
 export function pathsToPolygons(paths: Paths): PolygonWithHoles[] {
