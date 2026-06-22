@@ -63,6 +63,14 @@ export function laneEndpointsAtNode(
 	const endpoints: LaneEndpoint[] = [];
 
 	for (const arm of collectIntersectionArms(graph, node, centerlines)) {
+		// Lanes are placed off the segment's DRAWING-direction normal (the same
+		// frame the road strips use), so an arm that starts here and one that
+		// ends here agree on which world side a lane is on. Using arm.side
+		// (perp of `into`, which flips with start/end) put a straight-through
+		// lane on opposite sides at the two arms — a diagonal, not a band.
+		const tangent = arm.startsHere ? { x: -arm.into.x, y: -arm.into.y } : arm.into;
+		const normal = { x: -tangent.y, y: tangent.x };
+
 		let offset = -getTotalWidth(arm.lanes) / 2;
 		for (let laneIndex = 0; laneIndex < arm.lanes.length; laneIndex++) {
 			const lane = arm.lanes[laneIndex];
@@ -78,7 +86,7 @@ export function laneEndpointsAtNode(
 				: lane.direction === 'forward';
 			endpoints.push({
 				ref: { segmentId: arm.segmentId, laneIndex },
-				point: offsetPoint(arm.stop, arm.side, centre),
+				point: offsetPoint(arm.stop, normal, centre),
 				dir: arm.into,
 				flow: incoming ? 'in' : 'out'
 			});

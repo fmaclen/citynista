@@ -6,8 +6,7 @@ import type { GraphData } from './core/types';
 import { getDefaultTemplate } from './core/lane-template';
 import { resolveCrossings } from './core/crossings';
 import { computeIntersectionTrims, sampleTrimmedCenterline } from './core/road-geometry';
-import { buildConnectionMesh } from './core/road-geometry';
-import type { CenterlineSample, ConnectionRibbon, Point } from './core/road-geometry';
+import type { CenterlineSample, Point } from './core/road-geometry';
 import { nodeConnectivity } from './core/lane-connections';
 import { SceneManager } from './rendering/scene.svelte';
 import { NodeRenderer, type NodeTone } from './rendering/node-renderer';
@@ -357,49 +356,83 @@ export class Editor {
 		this.graph.save();
 	}
 
-	// SPIKE (Step 2): render the connection-union mesh for every junction as a
-	// bright overlay, to see whether it reads like a clean intersection.
+	// SPIKE (Step 2): draw each junction movement as a dashed lane-width ribbon
+	// (hatched across the flow), coloured by source arm — see-through, so the
+	// underlying pavement and overlapping movements read clearly.
 	debugConnectionMesh() {
-		const group = new THREE.Group();
-		const material = new THREE.MeshBasicMaterial({
-			color: 0xff2d95,
-			transparent: true,
-			opacity: 0.55,
-			side: THREE.DoubleSide,
-			depthWrite: false
-		});
+		const Y = 0.28;
+		const SAMPLES = 22;
+		const palette = [
+			0x22d3ee, 0xf472b6, 0xfb923c, 0xa3e635, 0x818cf8, 0xfbbf24, 0xf87171, 0x34d399
+		].map((hex) => new THREE.Color(hex));
+		const positions: number[] = [];
+		const colors: number[] = [];
 
 		for (const node of this.graph.nodes.values()) {
 			if (node.connectedSegments.length < 3) continue;
+			const arms = [...node.connectedSegments].sort();
+
 			const { connections } = nodeConnectivity(this.graph, node);
-			const ribbons: ConnectionRibbon[] = [];
 			for (const c of connections) {
 				if (!c.active) continue;
 				const segment = this.graph.segments.get(c.from.segmentId);
-				const width = segment?.lanes[c.from.laneIndex]?.width ?? 3.5;
-				ribbons.push({
-					fromPoint: c.fromPoint,
-					toPoint: c.toPoint,
-					fromDir: c.fromDir,
-					toDir: c.toDir,
-					halfWidth: width / 2
-				});
-			}
+				const half = (segment?.lanes[c.from.laneIndex]?.width ?? 3.5) / 2;
+				const color = palette[arms.indexOf(c.from.segmentId) % palette.length];
 
-			for (const polygon of buildConnectionMesh(ribbons)) {
-				const shape = new THREE.Shape(polygon.outer.map((p) => new THREE.Vector2(p.x, p.y)));
-				for (const hole of polygon.holes) {
-					shape.holes.push(new THREE.Path(hole.map((p) => new THREE.Vector2(p.x, p.y))));
+				const reach = Math.hypot(c.toPoint.x - c.fromPoint.x, c.toPoint.y - c.fromPoint.y) * 0.4;
+				const c1x = c.fromPoint.x + c.fromDir.x * reach;
+				const c1y = c.fromPoint.y + c.fromDir.y * reach;
+				const c2x = c.toPoint.x - c.toDir.x * reach;
+				const c2y = c.toPoint.y - c.toDir.y * reach;
+				const curve: { x: number; y: number }[] = [];
+				for (let i = 0; i <= SAMPLES; i++) {
+					const t = i / SAMPLES;
+					const u = 1 - t;
+					curve.push({
+						x:
+							u * u * u * c.fromPoint.x +
+							3 * u * u * t * c1x +
+							3 * u * t * t * c2x +
+							t * t * t * c.toPoint.x,
+						y:
+							u * u * u * c.fromPoint.y +
+							3 * u * u * t * c1y +
+							3 * u * t * t * c2y +
+							t * t * t * c.toPoint.y
+					});
 				}
-				const geometry = new THREE.ShapeGeometry(shape);
-				geometry.rotateX(Math.PI / 2);
-				const mesh = new THREE.Mesh(geometry, material);
-				mesh.position.y = 0.25;
-				group.add(mesh);
+
+				for (let i = 0; i < curve.length; i++) {
+					const prev = curve[Math.max(0, i - 1)];
+					const next = curve[Math.min(curve.length - 1, i + 1)];
+					let tx = next.x - prev.x;
+					let ty = next.y - prev.y;
+					const length = Math.hypot(tx, ty) || 1;
+					tx /= length;
+					ty /= length;
+					positions.push(
+						curve[i].x - ty * half,
+						Y,
+						curve[i].y + tx * half,
+						curve[i].x + ty * half,
+						Y,
+						curve[i].y - tx * half
+					);
+					colors.push(color.r, color.g, color.b, color.r, color.g, color.b);
+				}
 			}
 		}
 
-		this.sceneManager.scene.add(group);
+		const geometry = new THREE.BufferGeometry();
+		geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+		geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+		const material = new THREE.LineBasicMaterial({
+			vertexColors: true,
+			transparent: true,
+			opacity: 0.55,
+			depthWrite: false
+		});
+		this.sceneManager.scene.add(new THREE.LineSegments(geometry, material));
 	}
 
 	selectSegment(segmentId: string) {
