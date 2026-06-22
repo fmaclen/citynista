@@ -1,6 +1,7 @@
 import type { ModeHandlers } from './types';
 import type { Editor } from '../editor.svelte';
 import type { LaneEndpoint } from '../core/lane-connections';
+import { sameLaneRef } from '../core/lane-connections';
 import { nodeHitAt, segmentHitAt } from './picking';
 
 // The lane connector: a transient mode scoped to one junction (entered by
@@ -50,8 +51,17 @@ export function setupConnectorMode(editor: Editor): ModeHandlers {
 		const world = editor.sceneManager.screenToWorld(event.clientX, event.clientY);
 
 		if (dragStart) {
-			editor.connectionRenderer.setHovered(dragStart.ref);
-			editor.connectionRenderer.showRubberBand(dragStart.point, { x: world.x, y: world.z });
+			// Feedback: green over a valid exit (an outgoing ring on another arm),
+			// red over anything else under the cursor.
+			const near = editor.connectorEndpointNear(world.x, world.z);
+			const over = near && !sameLaneRef(near.ref, dragStart.ref) ? near : null;
+			const valid = !!over && over.flow === 'out' && over.ref.segmentId !== dragStart.ref.segmentId;
+			editor.connectionRenderer.setDragFeedback(dragStart.ref, over ? over.ref : null, valid);
+			editor.connectionRenderer.showRubberBand(
+				dragStart.point,
+				{ x: world.x, y: world.z },
+				over ? (valid ? 'valid' : 'invalid') : 'neutral'
+			);
 			return;
 		}
 

@@ -3,18 +3,20 @@ import type { LaneConnection, LaneEndpoint } from '../core/lane-connections';
 import { sameLaneRef } from '../core/lane-connections';
 import type { LaneRef } from '../core/types';
 
-// Lane connectors drawn above everything in connector mode: every movement is a
-// dashed arc (allowed = yellow, blocked = white 50%), plus a dot at each lane
-// mouth — a filled disc where traffic enters the node (drag from here), a hollow
-// ring where it leaves (a passive target, not hoverable). Dots and arcs follow
-// the editor palette (yellow = handle, blue = hover); arcs are dashed ribbons so
-// they're never mistaken for the (thin, solid) road markings.
+// Lane connectors drawn above everything in connector mode: every allowed
+// movement is a thin dashed yellow arc, plus a dot at each lane mouth — a filled
+// disc where traffic enters the node (drag from here), a hollow ring where it
+// leaves (a passive target). While dragging, the dot under the cursor turns
+// green on a valid exit, red on an invalid one. Dots/arcs follow the editor
+// palette (yellow = handle, blue = hover) and read as "editor mode" — dashed,
+// never mistaken for road paint.
 const CONNECTION_Y = 0.3;
 const DOT_Y = 0.31;
 const HANDLE_COLOR = 0xfacc15;
 const HOVER_COLOR = 0x4a9eff;
 const ACTIVE_COLOR = 0xfacc15;
-const DISABLED_COLOR = 0xffffff;
+const VALID_COLOR = 0x22c55e;
+const INVALID_COLOR = 0xef4444;
 const RUBBER_COLOR = 0xfacc15;
 const DOT_RADIUS = 1.2;
 const RING_INNER = 0.62;
@@ -25,7 +27,11 @@ const ARC_DASH = 1.2;
 const ARC_GAP = 0.9;
 const ARC_RESAMPLE = 0.3;
 const ARC_SAMPLES = 30;
-const RENDER_ORDER = 4;
+const ARC_ORDER = 4;
+const RUBBER_ORDER = 5;
+const DOT_ORDER = 7;
+
+type RubberState = 'neutral' | 'valid' | 'invalid';
 
 function cubic(p0: number, p1: number, p2: number, p3: number, t: number): number {
 	const u = 1 - t;
@@ -118,35 +124,42 @@ export class ConnectionRenderer {
 	private rubber: THREE.Mesh | null = null;
 	private dots: { ref: LaneRef; mesh: THREE.Mesh }[] = [];
 	private hoveredRef: LaneRef | null = null;
+	private dragTargetRef: LaneRef | null = null;
+	private dragValid = false;
 	private activeMaterial: THREE.MeshBasicMaterial;
-	private disabledMaterial: THREE.MeshBasicMaterial;
 	private handleMaterial: THREE.MeshBasicMaterial;
 	private hoverMaterial: THREE.MeshBasicMaterial;
+	private validMaterial: THREE.MeshBasicMaterial;
+	private invalidMaterial: THREE.MeshBasicMaterial;
 	private rubberMaterial: THREE.MeshBasicMaterial;
 
 	constructor(scene: THREE.Scene) {
 		this.scene = scene;
+		const dot = (color: number) =>
+			new THREE.MeshBasicMaterial({
+				color,
+				transparent: true,
+				depthTest: false,
+				depthWrite: false
+			});
 		this.activeMaterial = new THREE.MeshBasicMaterial({
 			color: ACTIVE_COLOR,
 			transparent: true,
 			opacity: 0.95,
 			side: THREE.DoubleSide,
+			depthTest: false,
 			depthWrite: false
 		});
-		this.disabledMaterial = new THREE.MeshBasicMaterial({
-			color: DISABLED_COLOR,
-			transparent: true,
-			opacity: 0.5,
-			side: THREE.DoubleSide,
-			depthWrite: false
-		});
-		this.handleMaterial = new THREE.MeshBasicMaterial({ color: HANDLE_COLOR, depthWrite: false });
-		this.hoverMaterial = new THREE.MeshBasicMaterial({ color: HOVER_COLOR, depthWrite: false });
+		this.handleMaterial = dot(HANDLE_COLOR);
+		this.hoverMaterial = dot(HOVER_COLOR);
+		this.validMaterial = dot(VALID_COLOR);
+		this.invalidMaterial = dot(INVALID_COLOR);
 		this.rubberMaterial = new THREE.MeshBasicMaterial({
 			color: RUBBER_COLOR,
 			transparent: true,
 			opacity: 0.95,
 			side: THREE.DoubleSide,
+			depthTest: false,
 			depthWrite: false
 		});
 	}
@@ -156,17 +169,16 @@ export class ConnectionRenderer {
 		if (connections.length === 0 && endpoints.length === 0) return;
 
 		const arcGroup = new THREE.Group();
-		arcGroup.renderOrder = RENDER_ORDER;
 		for (const c of connections) {
-			arcGroup.add(
-				new THREE.Mesh(arcRibbon(c), c.active ? this.activeMaterial : this.disabledMaterial)
-			);
+			if (!c.active) continue; // blocked movements simply aren't drawn
+			const mesh = new THREE.Mesh(arcRibbon(c), this.activeMaterial);
+			mesh.renderOrder = ARC_ORDER;
+			arcGroup.add(mesh);
 		}
 		this.scene.add(arcGroup);
 		this.arcGroup = arcGroup;
 
 		const dotGroup = new THREE.Group();
-		dotGroup.renderOrder = RENDER_ORDER + 1;
 		for (const endpoint of endpoints) {
 			// Filled disc = incoming (drag from here), hollow ring = outgoing.
 			const geometry =
@@ -176,38 +188,59 @@ export class ConnectionRenderer {
 			const mesh = new THREE.Mesh(geometry, this.handleMaterial);
 			mesh.rotation.x = -Math.PI / 2;
 			mesh.position.set(endpoint.point.x, DOT_Y, endpoint.point.y);
-			mesh.renderOrder = RENDER_ORDER + 1;
+			mesh.renderOrder = DOT_ORDER;
 			dotGroup.add(mesh);
 			this.dots.push({ ref: endpoint.ref, mesh });
 		}
 		this.scene.add(dotGroup);
 		this.dotGroup = dotGroup;
-		this.applyHover();
+		this.applyDotStates();
 	}
 
-	// Highlight the dot under the cursor (blue, enlarged); pass null to clear.
-	// Only the incoming dots are ever passed here — outgoing dots are passive.
+	// Highlight an incoming dot under the cursor (blue, enlarged); pass null to
+	// clear. Used when not dragging.
 	setHovered(ref: LaneRef | null) {
-		const changed =
-			(this.hoveredRef === null) !== (ref === null) ||
-			(this.hoveredRef !== null && ref !== null && !sameLaneRef(this.hoveredRef, ref));
-		if (!changed) return;
 		this.hoveredRef = ref;
-		this.applyHover();
+		this.dragTargetRef = null;
+		this.applyDotStates();
 	}
 
-	private applyHover() {
+	// While dragging from `sourceRef`, mark the dot under the cursor green (valid
+	// exit) or red (invalid).
+	setDragFeedback(sourceRef: LaneRef, targetRef: LaneRef | null, valid: boolean) {
+		this.hoveredRef = sourceRef;
+		this.dragTargetRef = targetRef;
+		this.dragValid = valid;
+		this.applyDotStates();
+	}
+
+	private applyDotStates() {
 		for (const dot of this.dots) {
-			const hovered = this.hoveredRef !== null && sameLaneRef(dot.ref, this.hoveredRef);
-			dot.mesh.material = hovered ? this.hoverMaterial : this.handleMaterial;
-			dot.mesh.scale.setScalar(hovered ? HOVER_SCALE : 1);
+			let material = this.handleMaterial;
+			let scale = 1;
+			if (this.dragTargetRef && sameLaneRef(dot.ref, this.dragTargetRef)) {
+				material = this.dragValid ? this.validMaterial : this.invalidMaterial;
+				scale = HOVER_SCALE;
+			} else if (this.hoveredRef && sameLaneRef(dot.ref, this.hoveredRef)) {
+				material = this.hoverMaterial;
+				scale = HOVER_SCALE;
+			}
+			dot.mesh.material = material;
+			dot.mesh.scale.setScalar(scale);
 		}
 	}
 
-	showRubberBand(from: { x: number; y: number }, to: { x: number; y: number }) {
+	showRubberBand(
+		from: { x: number; y: number },
+		to: { x: number; y: number },
+		state: RubberState = 'neutral'
+	) {
 		this.hideRubberBand();
+		this.rubberMaterial.color.setHex(
+			state === 'valid' ? VALID_COLOR : state === 'invalid' ? INVALID_COLOR : RUBBER_COLOR
+		);
 		const mesh = new THREE.Mesh(dashedRibbon([from, to], ARC_WIDTH, DOT_Y), this.rubberMaterial);
-		mesh.renderOrder = RENDER_ORDER + 2;
+		mesh.renderOrder = RUBBER_ORDER;
 		this.scene.add(mesh);
 		this.rubber = mesh;
 	}
@@ -223,6 +256,7 @@ export class ConnectionRenderer {
 		this.hideRubberBand();
 		this.dots = [];
 		this.hoveredRef = null;
+		this.dragTargetRef = null;
 		for (const g of [this.dotGroup, this.arcGroup]) {
 			if (!g) continue;
 			g.traverse((o) => {
@@ -237,9 +271,10 @@ export class ConnectionRenderer {
 	dispose() {
 		this.clear();
 		this.activeMaterial.dispose();
-		this.disabledMaterial.dispose();
 		this.handleMaterial.dispose();
 		this.hoverMaterial.dispose();
+		this.validMaterial.dispose();
+		this.invalidMaterial.dispose();
 		this.rubberMaterial.dispose();
 	}
 }
