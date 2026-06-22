@@ -9,18 +9,17 @@ Status key: **now** (in progress) · **next** (agreed, queued) · **later**
 
 ## Connector tool
 
-- **now** — Editor-overlay lines (connector arcs, setback stems, bezier guides)
-  are hairlines, easily confused with road markings. Make them ~half a dot wide
-  and **dashed**, so "editor mode" is unmistakable. Doing connector arcs first;
-  apply the same to setback/bezier after.
-- **now** — Disabled connector arcs → white at 50% opacity so they recede into
-  whatever's underneath.
-- **now** — Modality (#217): in connector mode, nothing else should hover or
-  select; exit only via Esc or clicking empty ground.
-- **later** — Re-enabling a blocked movement is "drag the same pair again"
-  (absence of an arc = blocked). Revisit if it feels unclear.
-- **later** — Fallback if drag model keeps confusing: switch to TM:PE-style
-  click-source-then-click-targets.
+- **done** — Connector arcs are thin dashed ribbons (allowed yellow, blocked
+  white 50%), resampled to even dashes; all movements shown by default. In-discs
+  hoverable/grabbable, out-rings passive.
+- **done** — Modality (#217): clicking a road/node is ignored; exit only via Esc
+  or a click on empty ground.
+- **next** — Apply the same thin-dashed editor-line styling to **setback stems**
+  and the **bezier curvature guides** (still hairlines).
+- **later** — Re-enabling a blocked movement is "drag the same pair again."
+  Revisit if it feels unclear.
+- **later** — Fallback if drag still confuses: TM:PE-style click-source-then-
+  click-targets.
 
 ## Overlays (general)
 
