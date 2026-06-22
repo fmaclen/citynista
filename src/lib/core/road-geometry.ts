@@ -1498,6 +1498,10 @@ function armCarriageway(lanes: Lane[]): LaneType {
 	return concrete > road ? 'concrete' : 'road';
 }
 
+// How far junction surfaces reach back into each segment past its stop line,
+// underlapping the road strips so antialiasing never leaks the ground colour.
+const MOUTH_OVERLAP = 0.5;
+
 // A patch node is built explicitly: every road already stops at its trimmed
 // stop line; a paved patch connects the road-bearing mouths, and sidewalk
 // bands wrap every corner between adjacent arms, blending between their real
@@ -1530,7 +1534,6 @@ function addIntersection(
 	// Mouths reach slightly into the segments, underlapping the strips: any
 	// antialiasing crack along a stop line shows junction surface, never the
 	// ground, and nothing pokes over the lanes.
-	const MOUTH_OVERLAP = 0.5;
 	const sidewalkBands = getOrCreateBands(bandsByType, 'sidewalk');
 	const plate: Point[] = [];
 	for (let i = 0; i < arms.length; i++) {
@@ -1562,6 +1565,18 @@ function addIntersection(
 		? 'concrete'
 		: 'road';
 
+	const roadBands = getOrCreateBands(bandsByType, patchType);
+
+	// The drivable surface is the union of the lane-connection ribbons: pavement
+	// only where lanes actually route through, so dead corners stay sidewalk.
+	const mesh = junctionPavement(node, roadArms);
+	if (mesh.length > 0) {
+		for (const path of mesh) roadBands.push(path);
+		return;
+	}
+
+	// Fallback for junctions with no through movement (all arms one-way out):
+	// the convex patch that just connects the road mouths with corner curves.
 	const patch: Point[] = [];
 	for (let i = 0; i < roadArms.length; i++) {
 		const armA = roadArms[i];
@@ -1583,8 +1598,6 @@ function addIntersection(
 		);
 		patch.push(offsetPoint(stopB, armB.side, -armB.away.roadEdge));
 	}
-
-	const roadBands = getOrCreateBands(bandsByType, patchType);
 	roadBands.push(normalizeWinding(patch.map((point) => toClipperPoint(point.x, point.y))));
 }
 
@@ -1932,7 +1945,7 @@ export interface ConnectionRibbon {
 	halfWidth: number;
 }
 
-export function buildConnectionMesh(ribbons: ConnectionRibbon[]): PolygonWithHoles[] {
+function connectionRibbonPaths(ribbons: ConnectionRibbon[]): Paths {
 	const SAMPLES = 16;
 	const paths: Paths = [];
 
@@ -1977,7 +1990,111 @@ export function buildConnectionMesh(ribbons: ConnectionRibbon[]): PolygonWithHol
 		paths.push(normalizeWinding(loop.map((p) => toClipperPoint(p.x, p.y))));
 	}
 
-	return pathsToPolygons(unionPaths(paths));
+	return paths;
+}
+
+export function buildConnectionMesh(ribbons: ConnectionRibbon[]): PolygonWithHoles[] {
+	return pathsToPolygons(unionPaths(connectionRibbonPaths(ribbons)));
+}
+
+// Union a set of paths and drop every interior hole, keeping only the solid
+// outer contours — so a median or between-lane gap enclosed by a junction's
+// connection ribbons reads as paved, never as a hole in the asphalt.
+function fillHoles(paths: Paths): Paths {
+	if (paths.length === 0) return [];
+	const clipper = new ClipperLib.Clipper();
+	clipper.AddPaths(paths, ClipperLib.PolyType.ptSubject, true);
+	const tree: PolyTree = new ClipperLib.PolyTree();
+	clipper.Execute(
+		ClipperLib.ClipType.ctUnion,
+		tree,
+		ClipperLib.PolyFillType.pftNonZero,
+		ClipperLib.PolyFillType.pftNonZero
+	);
+	const result: Paths = [];
+	for (const child of tree.Childs()) {
+		result.push(normalizeWinding(child.Contour()));
+	}
+	return result;
+}
+
+interface ArmLaneEndpoint {
+	segmentId: string;
+	laneIndex: number;
+	point: Point;
+	dir: Point;
+	flow: 'in' | 'out';
+	halfWidth: number;
+}
+
+// The travel-lane mouths of a junction's arms, one per directional roadway
+// lane, positioned at the lane centre on the arm's stop line and pulled a
+// hair back into the segment so the ribbon underlaps the road strip (no
+// hairline crack along the stop line). Lanes sit off the arm's DRAWING-
+// direction normal — the same frame the road strips use — so a through lane
+// lands on the same world side at both arms.
+function junctionLaneEndpoints(arms: IntersectionArm[]): ArmLaneEndpoint[] {
+	const endpoints: ArmLaneEndpoint[] = [];
+	for (const arm of arms) {
+		const tangent = arm.startsHere ? { x: -arm.into.x, y: -arm.into.y } : arm.into;
+		const normal = { x: -tangent.y, y: tangent.x };
+		const mouth = offsetPoint(arm.stop, arm.into, -MOUTH_OVERLAP);
+
+		let offset = -arm.halfWidth;
+		for (let laneIndex = 0; laneIndex < arm.lanes.length; laneIndex++) {
+			const lane = arm.lanes[laneIndex];
+			const centre = offset + lane.width / 2;
+			offset += lane.width;
+			if (laneSurface(lane.type) !== 'roadway') continue;
+			if (lane.direction !== 'forward' && lane.direction !== 'backward') continue;
+
+			const incoming = arm.startsHere
+				? lane.direction === 'backward'
+				: lane.direction === 'forward';
+			endpoints.push({
+				segmentId: arm.segmentId,
+				laneIndex,
+				point: offsetPoint(mouth, normal, centre),
+				dir: arm.into,
+				flow: incoming ? 'in' : 'out',
+				halfWidth: lane.width / 2
+			});
+		}
+	}
+	return endpoints;
+}
+
+// The drivable area of a junction: the union of a lane-width ribbon for every
+// allowed movement — each incoming lane swept to each outgoing lane on a
+// different arm (minus the node's disabled set) — with interior holes filled.
+// Returns the empty set when there are no through movements (e.g. all arms
+// one-way out), letting the caller fall back to the convex patch.
+function junctionPavement(node: Node, arms: IntersectionArm[]): Paths {
+	const endpoints = junctionLaneEndpoints(arms);
+	const disabled = node.disabledConnections ?? [];
+	const ribbons: ConnectionRibbon[] = [];
+	for (const from of endpoints) {
+		if (from.flow !== 'in') continue;
+		for (const to of endpoints) {
+			if (to.flow !== 'out' || to.segmentId === from.segmentId) continue;
+			const blocked = disabled.some(
+				(d) =>
+					d.from.segmentId === from.segmentId &&
+					d.from.laneIndex === from.laneIndex &&
+					d.to.segmentId === to.segmentId &&
+					d.to.laneIndex === to.laneIndex
+			);
+			if (blocked) continue;
+			ribbons.push({
+				fromPoint: from.point,
+				toPoint: to.point,
+				fromDir: from.dir,
+				toDir: { x: -to.dir.x, y: -to.dir.y },
+				halfWidth: from.halfWidth
+			});
+		}
+	}
+	return fillHoles(connectionRibbonPaths(ribbons));
 }
 
 export function pathsToPolygons(paths: Paths): PolygonWithHoles[] {
