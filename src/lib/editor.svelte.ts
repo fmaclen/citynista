@@ -142,6 +142,9 @@ export class Editor {
 		// objects that no longer exist; reinstalling the mode resets it.
 		this.setupMode(this.mode);
 		this.replaceGraph(JSON.parse(serialized));
+		// setupMode rebuilt the connector overlay against the pre-undo graph;
+		// refresh it now that the restored graph is in place.
+		if (this.mode === 'connector') this.refreshConnectors();
 		this.restoringHistory = false;
 		this.canUndo = this.undoStack.length > 0;
 		this.canRedo = this.redoStack.length > 0;
