@@ -3,7 +3,7 @@ import type { Path, Paths, PolyNode, PolyTree } from 'clipper-lib';
 import type { Graph } from './graph.svelte';
 import type { Node } from './node.svelte';
 import type { Segment } from './segment.svelte';
-import type { Lane, LaneType } from './types';
+import type { Lane, LaneConnectionRef, LaneType } from './types';
 import { getTotalWidth } from './lane-template';
 import {
 	isIslandLike,
@@ -1565,40 +1565,13 @@ function addIntersection(
 		? 'concrete'
 		: 'road';
 
+	// The drivable surface: the full-carriageway plate with any dead corner (no
+	// movement between adjacent arms) carved back to sidewalk. With every
+	// movement allowed this is the clean convex patch.
 	const roadBands = getOrCreateBands(bandsByType, patchType);
-
-	// The drivable surface is the union of the lane-connection ribbons: pavement
-	// only where lanes actually route through, so dead corners stay sidewalk.
-	const mesh = junctionPavement(node, roadArms);
-	if (mesh.length > 0) {
-		for (const path of mesh) roadBands.push(path);
-		return;
+	for (const path of junctionPavement(node, roadArms)) {
+		roadBands.push(path);
 	}
-
-	// Fallback for junctions with no through movement (all arms one-way out):
-	// the convex patch that just connects the road mouths with corner curves.
-	const patch: Point[] = [];
-	for (let i = 0; i < roadArms.length; i++) {
-		const armA = roadArms[i];
-		const armB = roadArms[(i + 1) % roadArms.length];
-		const stopA = offsetPoint(armA.stop, armA.into, -MOUTH_OVERLAP);
-		const stopB = offsetPoint(armB.stop, armB.into, -MOUTH_OVERLAP);
-
-		// Underlapped stop-line edge of arm A, then the corner curve over
-		// to arm B.
-		patch.push(offsetPoint(stopA, armA.side, -armA.away.roadEdge));
-		patch.push(offsetPoint(stopA, armA.side, armA.toward.roadEdge));
-		patch.push(
-			...sampleCornerCurve(
-				offsetPoint(armA.stop, armA.side, armA.toward.roadEdge),
-				armA.into,
-				offsetPoint(armB.stop, armB.side, -armB.away.roadEdge),
-				armB.into
-			)
-		);
-		patch.push(offsetPoint(stopB, armB.side, -armB.away.roadEdge));
-	}
-	roadBands.push(normalizeWinding(patch.map((point) => toClipperPoint(point.x, point.y))));
 }
 
 // Two arms of the same road type meeting at a sharp corner: every lane
@@ -1933,150 +1906,58 @@ export function offsetPaths(paths: Paths, delta: number): Paths {
 const TRIANGULATION_EPSILON = 0.05;
 const MAX_DECOMPOSE_DEPTH = 4;
 
-// SPIKE (Step 2): the junction pavement as the union of lane-connection
-// ribbons. Each connection is a lane-width ribbon swept along a bezier from
-// its source stop line to its target stop line; their union is the drivable
-// area — dead corners with no movement stay unpaved.
-export interface ConnectionRibbon {
-	fromPoint: Point;
-	toPoint: Point;
-	fromDir: Point;
-	toDir: Point;
-	halfWidth: number;
-}
-
-function connectionRibbonPaths(ribbons: ConnectionRibbon[]): Paths {
-	const SAMPLES = 16;
-	const paths: Paths = [];
-
-	for (const r of ribbons) {
-		const reach = Math.hypot(r.toPoint.x - r.fromPoint.x, r.toPoint.y - r.fromPoint.y) * 0.4;
-		const c1 = { x: r.fromPoint.x + r.fromDir.x * reach, y: r.fromPoint.y + r.fromDir.y * reach };
-		const c2 = { x: r.toPoint.x - r.toDir.x * reach, y: r.toPoint.y - r.toDir.y * reach };
-
-		const curve: Point[] = [];
-		for (let i = 0; i <= SAMPLES; i++) {
-			const t = i / SAMPLES;
-			const u = 1 - t;
-			curve.push({
-				x:
-					u * u * u * r.fromPoint.x +
-					3 * u * u * t * c1.x +
-					3 * u * t * t * c2.x +
-					t * t * t * r.toPoint.x,
-				y:
-					u * u * u * r.fromPoint.y +
-					3 * u * u * t * c1.y +
-					3 * u * t * t * c2.y +
-					t * t * t * r.toPoint.y
-			});
-		}
-
-		const left: Point[] = [];
-		const right: Point[] = [];
-		for (let i = 0; i < curve.length; i++) {
-			const prev = curve[Math.max(0, i - 1)];
-			const next = curve[Math.min(curve.length - 1, i + 1)];
-			let tx = next.x - prev.x;
-			let ty = next.y - prev.y;
-			const length = Math.hypot(tx, ty) || 1;
-			tx /= length;
-			ty /= length;
-			left.push({ x: curve[i].x - ty * r.halfWidth, y: curve[i].y + tx * r.halfWidth });
-			right.push({ x: curve[i].x + ty * r.halfWidth, y: curve[i].y - tx * r.halfWidth });
-		}
-
-		const loop = [...left, ...right.reverse()];
-		paths.push(normalizeWinding(loop.map((p) => toClipperPoint(p.x, p.y))));
-	}
-
-	return paths;
-}
-
-export function buildConnectionMesh(ribbons: ConnectionRibbon[]): PolygonWithHoles[] {
-	return pathsToPolygons(unionPaths(connectionRibbonPaths(ribbons)));
-}
-
-// Union a set of paths and drop every interior hole, keeping only the solid
-// outer contours — so a median or between-lane gap enclosed by a junction's
-// connection ribbons reads as paved, never as a hole in the asphalt.
-function fillHoles(paths: Paths): Paths {
-	if (paths.length === 0) return [];
-	const clipper = new ClipperLib.Clipper();
-	clipper.AddPaths(paths, ClipperLib.PolyType.ptSubject, true);
-	const tree: PolyTree = new ClipperLib.PolyTree();
-	clipper.Execute(
-		ClipperLib.ClipType.ctUnion,
-		tree,
-		ClipperLib.PolyFillType.pftNonZero,
-		ClipperLib.PolyFillType.pftNonZero
-	);
-	const result: Paths = [];
-	for (const child of tree.Childs()) {
-		result.push(normalizeWinding(child.Contour()));
-	}
-	return result;
+// Where the rays (a, da) and (b, db) cross, or null if parallel. Used to cut a
+// dead corner back along both carriageway edges to the point they meet.
+function edgeMeet(a: Point, da: Point, b: Point, db: Point): Point | null {
+	const cross = da.x * db.y - da.y * db.x;
+	if (Math.abs(cross) < 1e-6) return null;
+	const dx = b.x - a.x;
+	const dy = b.y - a.y;
+	const t = (dx * db.y - dy * db.x) / cross;
+	if (t <= 0) return null;
+	return { x: a.x + da.x * t, y: a.y + da.y * t };
 }
 
 interface ArmLaneEndpoint {
 	segmentId: string;
 	laneIndex: number;
-	point: Point;
-	dir: Point;
 	flow: 'in' | 'out';
-	halfWidth: number;
 }
 
-// The travel-lane mouths of a junction's arms, one per directional roadway
-// lane, positioned at the lane centre on the arm's stop line and pulled a
-// hair back into the segment so the ribbon underlaps the road strip (no
-// hairline crack along the stop line). Lanes sit off the arm's DRAWING-
-// direction normal — the same frame the road strips use — so a through lane
-// lands on the same world side at both arms.
+// Every directional roadway lane on a junction's arms, tagged with which way
+// it flows at the node (incoming = its travel direction points at the node).
+// Used to decide which arms a movement connects.
 function junctionLaneEndpoints(arms: IntersectionArm[]): ArmLaneEndpoint[] {
 	const endpoints: ArmLaneEndpoint[] = [];
 	for (const arm of arms) {
-		const tangent = arm.startsHere ? { x: -arm.into.x, y: -arm.into.y } : arm.into;
-		const normal = { x: -tangent.y, y: tangent.x };
-		const mouth = offsetPoint(arm.stop, arm.into, -MOUTH_OVERLAP);
-
-		let offset = -arm.halfWidth;
 		for (let laneIndex = 0; laneIndex < arm.lanes.length; laneIndex++) {
 			const lane = arm.lanes[laneIndex];
-			const centre = offset + lane.width / 2;
-			offset += lane.width;
 			if (laneSurface(lane.type) !== 'roadway') continue;
 			if (lane.direction !== 'forward' && lane.direction !== 'backward') continue;
-
 			const incoming = arm.startsHere
 				? lane.direction === 'backward'
 				: lane.direction === 'forward';
-			endpoints.push({
-				segmentId: arm.segmentId,
-				laneIndex,
-				point: offsetPoint(mouth, normal, centre),
-				dir: arm.into,
-				flow: incoming ? 'in' : 'out',
-				halfWidth: lane.width / 2
-			});
+			endpoints.push({ segmentId: arm.segmentId, laneIndex, flow: incoming ? 'in' : 'out' });
 		}
 	}
 	return endpoints;
 }
 
-// The drivable area of a junction: the union of a lane-width ribbon for every
-// allowed movement — each incoming lane swept to each outgoing lane on a
-// different arm (minus the node's disabled set) — with interior holes filled.
-// Returns the empty set when there are no through movements (e.g. all arms
-// one-way out), letting the caller fall back to the convex patch.
-function junctionPavement(node: Node, arms: IntersectionArm[]): Paths {
-	const endpoints = junctionLaneEndpoints(arms);
-	const disabled = node.disabledConnections ?? [];
-	const ribbons: ConnectionRibbon[] = [];
+// Whether any movement is allowed between two arms — at least one incoming
+// lane on either routed to an outgoing lane on the other, not in the disabled
+// set. A junction corner is paved only when its two arms connect.
+function armsConnected(
+	endpoints: ArmLaneEndpoint[],
+	disabled: LaneConnectionRef[],
+	segA: string,
+	segB: string
+): boolean {
 	for (const from of endpoints) {
 		if (from.flow !== 'in') continue;
+		if (from.segmentId !== segA && from.segmentId !== segB) continue;
+		const target = from.segmentId === segA ? segB : segA;
 		for (const to of endpoints) {
-			if (to.flow !== 'out' || to.segmentId === from.segmentId) continue;
+			if (to.flow !== 'out' || to.segmentId !== target) continue;
 			const blocked = disabled.some(
 				(d) =>
 					d.from.segmentId === from.segmentId &&
@@ -2084,17 +1965,47 @@ function junctionPavement(node: Node, arms: IntersectionArm[]): Paths {
 					d.to.segmentId === to.segmentId &&
 					d.to.laneIndex === to.laneIndex
 			);
-			if (blocked) continue;
-			ribbons.push({
-				fromPoint: from.point,
-				toPoint: to.point,
-				fromDir: from.dir,
-				toDir: { x: -to.dir.x, y: -to.dir.y },
-				halfWidth: from.halfWidth
-			});
+			if (!blocked) return true;
 		}
 	}
-	return fillHoles(connectionRibbonPaths(ribbons));
+	return false;
+}
+
+// The drivable surface of a junction: the full-carriageway plate that spans
+// every arm's mouth (both road edges, so a median is paved and the sidewalk
+// ring stays a constant width), with each corner rounded where its two arms
+// connect and cut back to sidewalk where the movement between them is dead.
+// With every movement allowed this is exactly the clean convex patch.
+function junctionPavement(node: Node, arms: IntersectionArm[]): Paths {
+	if (arms.length < 2) return [];
+	const endpoints = junctionLaneEndpoints(arms);
+	const disabled = node.disabledConnections ?? [];
+
+	const ring: Point[] = [];
+	for (let i = 0; i < arms.length; i++) {
+		const armA = arms[i];
+		const armB = arms[(i + 1) % arms.length];
+		const stopA = offsetPoint(armA.stop, armA.into, -MOUTH_OVERLAP);
+		const cornerA = offsetPoint(armA.stop, armA.side, armA.toward.roadEdge);
+		const cornerB = offsetPoint(armB.stop, armB.side, -armB.away.roadEdge);
+
+		// A's full-carriageway mouth, both road edges (median included).
+		ring.push(offsetPoint(stopA, armA.side, -armA.away.roadEdge));
+		ring.push(offsetPoint(stopA, armA.side, armA.toward.roadEdge));
+
+		if (arms.length === 2 || armsConnected(endpoints, disabled, armA.segmentId, armB.segmentId)) {
+			// Live corner: the rounded asphalt corner curve paves it.
+			ring.push(...sampleCornerCurve(cornerA, armA.into, cornerB, armB.into));
+		} else {
+			// Dead corner: follow both carriageway edges in to where they meet,
+			// carving the corner out to sidewalk.
+			const meet = edgeMeet(cornerA, armA.into, cornerB, armB.into);
+			ring.push(cornerA);
+			if (meet) ring.push(meet);
+			ring.push(cornerB);
+		}
+	}
+	return [normalizeWinding(ring.map((p) => toClipperPoint(p.x, p.y)))];
 }
 
 export function pathsToPolygons(paths: Paths): PolygonWithHoles[] {
