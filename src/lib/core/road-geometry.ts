@@ -1119,6 +1119,7 @@ function addNodeGeometry(
 				}
 			}
 		}
+		addMedianContinuation(graph, node, centerlines, bandsByType);
 	} else {
 		addPairJoin(graph, node, centerlines, bandsByType);
 	}
@@ -2074,6 +2075,50 @@ function armSpoke(node: Node, arm: IntersectionArm, leftEdge: number, rightEdge:
 	const p2 = offsetPoint(p1, arm.into, reach);
 	const p3 = offsetPoint(p0, arm.into, reach);
 	return normalizeWinding([p0, p1, p2, p3].map((p) => toClipperPoint(p.x, p.y)));
+}
+
+// Continue each arm's medians/verges (a divided road's central strip) through
+// the junction, broken only where a roadway actually crosses them — so a median
+// no longer leaves a full gap at the intersection. A spoke per island/verge
+// interval, minus every roadway spoke (which sit beside it on through arms and
+// across it on crossing arms), added to that lane type's band (drawn above the
+// asphalt).
+function addMedianContinuation(
+	graph: Graph,
+	node: Node,
+	centerlines: Map<string, CenterlineSample[]>,
+	bandsByType: Map<LaneType, Paths>
+) {
+	const arms = collectIntersectionArms(graph, node, centerlines).filter((arm) => arm.hasRoad);
+	if (arms.length < 2) return;
+
+	const roadwaySpokes: Paths = [];
+	const islandSpokes = new Map<LaneType, Paths>();
+	for (const arm of arms) {
+		for (const interval of getLaneIntervals(arm.lanes)) {
+			const surface = laneSurface(interval.laneType);
+			const spoke = armSpoke(node, arm, -interval.start, interval.end);
+			if (surface === 'roadway') {
+				roadwaySpokes.push(spoke);
+			} else if (surface === 'island' || surface === 'verge') {
+				const list = islandSpokes.get(interval.laneType);
+				if (list) list.push(spoke);
+				else islandSpokes.set(interval.laneType, [spoke]);
+			}
+		}
+	}
+	if (islandSpokes.size === 0) return;
+
+	const roadways = unionPaths(roadwaySpokes);
+	for (const [laneType, spokes] of islandSpokes) {
+		const continued = executeBoolean(
+			ClipperLib.ClipType.ctDifference,
+			unionPaths(spokes),
+			roadways
+		);
+		const band = getOrCreateBands(bandsByType, laneType);
+		for (const path of continued) band.push(path);
+	}
 }
 
 export function pathsToPolygons(paths: Paths): PolygonWithHoles[] {
