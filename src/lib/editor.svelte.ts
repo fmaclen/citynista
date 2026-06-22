@@ -408,12 +408,13 @@ export class Editor {
 		);
 	}
 
-	connectorEndpointAt(worldX: number, worldZ: number, flow: 'in' | 'out'): LaneEndpoint | null {
+	// The lane dot nearest the cursor, either flow — used for hover feedback and
+	// for picking both ends of a connector drag (direction-agnostic).
+	connectorEndpointNear(worldX: number, worldZ: number): LaneEndpoint | null {
 		const threshold = Math.max(2, this.sceneManager.worldPerPixel() * 12);
 		let best: LaneEndpoint | null = null;
 		let bestDistance = threshold;
 		for (const endpoint of this.currentConnectors.endpoints) {
-			if (endpoint.flow !== flow) continue;
 			const distance = Math.hypot(endpoint.point.x - worldX, endpoint.point.y - worldZ);
 			if (distance < bestDistance) {
 				bestDistance = distance;

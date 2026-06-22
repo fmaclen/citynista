@@ -1,23 +1,33 @@
 import * as THREE from 'three';
 import type { LaneConnection, LaneEndpoint } from '../core/lane-connections';
+import { sameLaneRef } from '../core/lane-connections';
+import type { LaneRef } from '../core/types';
 
-// Lane connectors drawn above everything when a node is selected: one bezier
-// per movement (bright = allowed, faint = disabled), plus a dot at each lane
-// endpoint — drag from an incoming dot to an outgoing dot to route a movement.
-// A throwaway-cheap overlay, rebuilt on each selection.
+// Lane connectors drawn above everything in connector mode: one bezier per
+// movement (visible when allowed, faint when blocked) plus a dot at each lane
+// mouth — a filled disc where traffic enters the node, a hollow ring where it
+// leaves. Drag between an in dot and an out dot to toggle that movement. Colours
+// follow the editor convention: yellow = an interactive handle, blue = hover.
 const CONNECTION_Y = 0.3;
 const DOT_Y = 0.31;
-const ACTIVE_COLOR = 0x22d3ee;
-const ACTIVE_OPACITY = 0.95;
-const DISABLED_COLOR = 0xcbd5e1;
-const DISABLED_OPACITY = 0.5;
-const SOURCE_COLOR = 0x22d3ee;
-const TARGET_COLOR = 0xf8fafc;
+const HANDLE_COLOR = 0xfacc15;
+const HOVER_COLOR = 0x4a9eff;
+const ACTIVE_COLOR = 0xe2e8f0;
+const ACTIVE_OPACITY = 0.8;
+const DISABLED_COLOR = 0x64748b;
+const DISABLED_OPACITY = 0.4;
 const RUBBER_COLOR = 0xfacc15;
 const DOT_RADIUS = 1.2;
-const DOT_SEGMENTS = 16;
+const RING_INNER = 0.62;
+const DOT_SEGMENTS = 20;
+const HOVER_SCALE = 1.35;
 const RENDER_ORDER = 4;
 const SAMPLES = 18;
+
+interface DotHandle {
+	ref: LaneRef;
+	mesh: THREE.Mesh;
+}
 
 function cubic(p0: number, p1: number, p2: number, p3: number, t: number): number {
 	const u = 1 - t;
@@ -28,10 +38,12 @@ export class ConnectionRenderer {
 	private scene: THREE.Scene;
 	private group: THREE.Group | null = null;
 	private rubber: THREE.Line | null = null;
+	private dots: DotHandle[] = [];
+	private hoveredRef: LaneRef | null = null;
 	private activeMaterial: THREE.LineBasicMaterial;
 	private disabledMaterial: THREE.LineBasicMaterial;
-	private sourceMaterial: THREE.MeshBasicMaterial;
-	private targetMaterial: THREE.MeshBasicMaterial;
+	private handleMaterial: THREE.MeshBasicMaterial;
+	private hoverMaterial: THREE.MeshBasicMaterial;
 	private rubberMaterial: THREE.LineBasicMaterial;
 
 	constructor(scene: THREE.Scene) {
@@ -48,14 +60,8 @@ export class ConnectionRenderer {
 			opacity: DISABLED_OPACITY,
 			depthWrite: false
 		});
-		this.sourceMaterial = new THREE.MeshBasicMaterial({
-			color: SOURCE_COLOR,
-			depthWrite: false
-		});
-		this.targetMaterial = new THREE.MeshBasicMaterial({
-			color: TARGET_COLOR,
-			depthWrite: false
-		});
+		this.handleMaterial = new THREE.MeshBasicMaterial({ color: HANDLE_COLOR, depthWrite: false });
+		this.hoverMaterial = new THREE.MeshBasicMaterial({ color: HOVER_COLOR, depthWrite: false });
 		this.rubberMaterial = new THREE.LineBasicMaterial({
 			color: RUBBER_COLOR,
 			transparent: true,
@@ -94,17 +100,40 @@ export class ConnectionRenderer {
 		}
 
 		for (const endpoint of endpoints) {
-			const dot = new THREE.Mesh(
-				new THREE.CircleGeometry(DOT_RADIUS, DOT_SEGMENTS),
-				endpoint.flow === 'in' ? this.sourceMaterial : this.targetMaterial
-			);
-			dot.rotation.x = -Math.PI / 2;
-			dot.position.set(endpoint.point.x, DOT_Y, endpoint.point.y);
-			group.add(dot);
+			// Filled disc = incoming (drag from here), hollow ring = outgoing.
+			const geometry =
+				endpoint.flow === 'in'
+					? new THREE.CircleGeometry(DOT_RADIUS, DOT_SEGMENTS)
+					: new THREE.RingGeometry(RING_INNER, DOT_RADIUS, DOT_SEGMENTS);
+			const mesh = new THREE.Mesh(geometry, this.handleMaterial);
+			mesh.rotation.x = -Math.PI / 2;
+			mesh.position.set(endpoint.point.x, DOT_Y, endpoint.point.y);
+			mesh.renderOrder = RENDER_ORDER + 1;
+			group.add(mesh);
+			this.dots.push({ ref: endpoint.ref, mesh });
 		}
 
 		this.scene.add(group);
 		this.group = group;
+		this.applyHover();
+	}
+
+	// Highlight the dot under the cursor (blue, enlarged); pass null to clear.
+	setHovered(ref: LaneRef | null) {
+		const changed =
+			(this.hoveredRef === null) !== (ref === null) ||
+			(this.hoveredRef !== null && ref !== null && !sameLaneRef(this.hoveredRef, ref));
+		if (!changed) return;
+		this.hoveredRef = ref;
+		this.applyHover();
+	}
+
+	private applyHover() {
+		for (const dot of this.dots) {
+			const hovered = this.hoveredRef !== null && sameLaneRef(dot.ref, this.hoveredRef);
+			dot.mesh.material = hovered ? this.hoverMaterial : this.handleMaterial;
+			dot.mesh.scale.setScalar(hovered ? HOVER_SCALE : 1);
+		}
 	}
 
 	showRubberBand(from: { x: number; y: number }, to: { x: number; y: number }) {
@@ -114,7 +143,7 @@ export class ConnectionRenderer {
 			new THREE.Vector3(to.x, DOT_Y, to.y)
 		]);
 		const line = new THREE.Line(geometry, this.rubberMaterial);
-		line.renderOrder = RENDER_ORDER + 1;
+		line.renderOrder = RENDER_ORDER + 2;
 		this.scene.add(line);
 		this.rubber = line;
 	}
@@ -128,6 +157,8 @@ export class ConnectionRenderer {
 
 	clear() {
 		this.hideRubberBand();
+		this.dots = [];
+		this.hoveredRef = null;
 		if (!this.group) return;
 		this.group.traverse((object) => {
 			if (object instanceof THREE.Line || object instanceof THREE.Mesh) object.geometry.dispose();
@@ -140,8 +171,8 @@ export class ConnectionRenderer {
 		this.clear();
 		this.activeMaterial.dispose();
 		this.disabledMaterial.dispose();
-		this.sourceMaterial.dispose();
-		this.targetMaterial.dispose();
+		this.handleMaterial.dispose();
+		this.hoverMaterial.dispose();
 		this.rubberMaterial.dispose();
 	}
 }
