@@ -2,39 +2,28 @@ import * as THREE from 'three';
 import type { LaneConnection, LaneEndpoint } from '../core/lane-connections';
 import { sameLaneRef } from '../core/lane-connections';
 import type { LaneRef } from '../core/types';
+import { editorLineGeometry, createEditorLineMaterial, EDITOR_LINE_COLOR } from './editor-line';
 
 // Lane connectors drawn above everything in connector mode: every allowed
-// movement is a thin dashed yellow arc, plus a dot at each lane mouth — a filled
-// disc where traffic enters the node (drag from here), a hollow ring where it
-// leaves (a passive target). While dragging, the dot under the cursor turns
-// green on a valid exit, red on an invalid one. Dots/arcs follow the editor
-// palette (yellow = handle, blue = hover) and read as "editor mode" — dashed,
-// never mistaken for road paint.
+// movement is a beaded editor line (see editor-line.ts), plus a dot at each lane
+// mouth — a filled disc where traffic enters the node (drag from here), a hollow
+// ring where it leaves (a passive target). While dragging, the dot under the
+// cursor turns green on a valid exit, red on an invalid one. Dots follow the
+// editor palette (yellow = handle, blue = hover).
 const CONNECTION_Y = 0.3;
 const DOT_Y = 0.31;
-const HANDLE_COLOR = 0xfacc15;
+const HANDLE_COLOR = EDITOR_LINE_COLOR;
 const HOVER_COLOR = 0x4a9eff;
-const ACTIVE_COLOR = 0xfacc15;
 const VALID_COLOR = 0x22c55e;
 const INVALID_COLOR = 0xef4444;
-const RUBBER_COLOR = 0xfacc15;
 const DOT_RADIUS = 1.2;
 const RING_INNER = 0.62;
 const DOT_SEGMENTS = 20;
 const HOVER_SCALE = 1.35;
-const DOT_DIAMETER = 0.5;
-const DOT_SPACING = 0.95;
-const DOT_SEG = 10;
 const ARC_SAMPLES = 30;
 const ARC_ORDER = 4;
 const RUBBER_ORDER = 5;
 const DOT_ORDER = 7;
-
-// Unit-circle offsets reused to stamp every bead.
-const UNIT_CIRCLE = Array.from({ length: DOT_SEG + 1 }, (_, k) => {
-	const a = (k / DOT_SEG) * Math.PI * 2;
-	return { c: Math.cos(a), s: Math.sin(a) };
-});
 
 type RubberState = 'neutral' | 'valid' | 'invalid';
 
@@ -43,40 +32,7 @@ function cubic(p0: number, p1: number, p2: number, p3: number, t: number): numbe
 	return u * u * u * p0 + 3 * u * u * t * p1 + 3 * u * t * t * p2 + t * t * t * p3;
 }
 
-// A dotted ribbon along a polyline (XZ plane at height y): a row of small filled
-// circles spaced evenly by arc length. Reads as an editor line, never mistaken
-// for the (thin, solid) road markings.
-function dottedRibbon(curve: { x: number; y: number }[], y: number): THREE.BufferGeometry {
-	const positions: number[] = [];
-	const r = DOT_DIAMETER / 2;
-	let acc = 0;
-	let next = DOT_SPACING / 2;
-	for (let i = 0; i < curve.length - 1; i++) {
-		const a = curve[i];
-		const b = curve[i + 1];
-		const dx = b.x - a.x;
-		const dy = b.y - a.y;
-		const len = Math.hypot(dx, dy);
-		if (len < 1e-6) continue;
-		while (next <= acc + len) {
-			const t = (next - acc) / len;
-			const cx = a.x + dx * t;
-			const cz = a.y + dy * t;
-			for (let k = 0; k < DOT_SEG; k++) {
-				const u0 = UNIT_CIRCLE[k];
-				const u1 = UNIT_CIRCLE[k + 1];
-				positions.push(cx, y, cz, cx + u0.c * r, y, cz + u0.s * r, cx + u1.c * r, y, cz + u1.s * r);
-			}
-			next += DOT_SPACING;
-		}
-		acc += len;
-	}
-	const geometry = new THREE.BufferGeometry();
-	geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-	return geometry;
-}
-
-function arcRibbon(c: LaneConnection): THREE.BufferGeometry {
+function arcGeometry(c: LaneConnection): THREE.BufferGeometry {
 	const reach = Math.hypot(c.toPoint.x - c.fromPoint.x, c.toPoint.y - c.fromPoint.y) * 0.4;
 	const c1x = c.fromPoint.x + c.fromDir.x * reach;
 	const c1y = c.fromPoint.y + c.fromDir.y * reach;
@@ -90,7 +46,7 @@ function arcRibbon(c: LaneConnection): THREE.BufferGeometry {
 			y: cubic(c.fromPoint.y, c1y, c2y, c.toPoint.y, t)
 		});
 	}
-	return dottedRibbon(curve, CONNECTION_Y);
+	return editorLineGeometry(curve, CONNECTION_Y);
 }
 
 export class ConnectionRenderer {
@@ -118,26 +74,12 @@ export class ConnectionRenderer {
 				depthTest: false,
 				depthWrite: false
 			});
-		this.activeMaterial = new THREE.MeshBasicMaterial({
-			color: ACTIVE_COLOR,
-			transparent: true,
-			opacity: 0.95,
-			side: THREE.DoubleSide,
-			depthTest: false,
-			depthWrite: false
-		});
+		this.activeMaterial = createEditorLineMaterial();
 		this.handleMaterial = dot(HANDLE_COLOR);
 		this.hoverMaterial = dot(HOVER_COLOR);
 		this.validMaterial = dot(VALID_COLOR);
 		this.invalidMaterial = dot(INVALID_COLOR);
-		this.rubberMaterial = new THREE.MeshBasicMaterial({
-			color: RUBBER_COLOR,
-			transparent: true,
-			opacity: 0.95,
-			side: THREE.DoubleSide,
-			depthTest: false,
-			depthWrite: false
-		});
+		this.rubberMaterial = createEditorLineMaterial();
 	}
 
 	show(connections: LaneConnection[], endpoints: LaneEndpoint[]) {
@@ -147,7 +89,7 @@ export class ConnectionRenderer {
 		const arcGroup = new THREE.Group();
 		for (const c of connections) {
 			if (!c.active) continue; // blocked movements simply aren't drawn
-			const mesh = new THREE.Mesh(arcRibbon(c), this.activeMaterial);
+			const mesh = new THREE.Mesh(arcGeometry(c), this.activeMaterial);
 			mesh.renderOrder = ARC_ORDER;
 			arcGroup.add(mesh);
 		}
@@ -213,9 +155,9 @@ export class ConnectionRenderer {
 	) {
 		this.hideRubberBand();
 		this.rubberMaterial.color.setHex(
-			state === 'valid' ? VALID_COLOR : state === 'invalid' ? INVALID_COLOR : RUBBER_COLOR
+			state === 'valid' ? VALID_COLOR : state === 'invalid' ? INVALID_COLOR : EDITOR_LINE_COLOR
 		);
-		const mesh = new THREE.Mesh(dottedRibbon([from, to], DOT_Y), this.rubberMaterial);
+		const mesh = new THREE.Mesh(editorLineGeometry([from, to], DOT_Y), this.rubberMaterial);
 		mesh.renderOrder = RUBBER_ORDER;
 		this.scene.add(mesh);
 		this.rubber = mesh;

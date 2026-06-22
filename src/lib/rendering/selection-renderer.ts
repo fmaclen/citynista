@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import type { Segment } from '../core/segment.svelte';
 import type { Node } from '../core/node.svelte';
 import { getQuadraticBezierPoint, getQuadraticBezierTangent } from '../geometry/bezier';
+import { editorLineGeometry, createEditorLineMaterial } from './editor-line';
 
 // Segment highlights: a translucent full-width ribbon with round end caps sized
 // to the node rings. Hover, selection and delete-hover are the *same* highlight
@@ -17,8 +18,6 @@ const HIGHLIGHT_OPACITY = 0.2;
 const FILL_RENDER_ORDER = 1;
 const GUIDE_RENDER_ORDER = 2;
 const CONTROL_RENDER_ORDER = 3;
-const GUIDE_COLOR = 0xfacc15;
-const GUIDE_OPACITY = 0.7;
 const CONTROL_COLOR = 0xfacc15;
 export const CONTROL_SIZE = 4.5;
 const CURVE_SAMPLES = 50;
@@ -39,7 +38,7 @@ interface Highlight {
 interface SegmentVisual {
 	group: THREE.Group;
 	fill: Highlight;
-	handles: THREE.Line;
+	handles: THREE.Mesh;
 	control: THREE.Mesh;
 }
 
@@ -201,17 +200,7 @@ export class SelectionRenderer {
 		if (!visual) {
 			const fill = createHighlight(SELECT_COLOR);
 
-			const handles = new THREE.Line(
-				new THREE.BufferGeometry(),
-				new THREE.LineDashedMaterial({
-					color: GUIDE_COLOR,
-					transparent: true,
-					opacity: GUIDE_OPACITY,
-					depthWrite: false,
-					dashSize: 3,
-					gapSize: 2
-				})
-			);
+			const handles = new THREE.Mesh(new THREE.BufferGeometry(), createEditorLineMaterial());
 			handles.renderOrder = GUIDE_RENDER_ORDER;
 
 			const control = new THREE.Mesh(
@@ -239,12 +228,14 @@ export class SelectionRenderer {
 		const cy = segment.controlY ?? (startNode.y + endNode.y) / 2;
 
 		visual.handles.geometry.dispose();
-		visual.handles.geometry = new THREE.BufferGeometry().setFromPoints([
-			new THREE.Vector3(startNode.x, GUIDE_Y, startNode.y),
-			new THREE.Vector3(cx, GUIDE_Y, cy),
-			new THREE.Vector3(endNode.x, GUIDE_Y, endNode.y)
-		]);
-		visual.handles.computeLineDistances();
+		visual.handles.geometry = editorLineGeometry(
+			[
+				{ x: startNode.x, y: startNode.y },
+				{ x: cx, y: cy },
+				{ x: endNode.x, y: endNode.y }
+			],
+			GUIDE_Y
+		);
 
 		visual.control.position.set(cx, CONTROL_Y, cy);
 	}

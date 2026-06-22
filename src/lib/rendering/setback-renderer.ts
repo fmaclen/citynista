@@ -1,12 +1,12 @@
 import * as THREE from 'three';
 import type { Point } from '../core/road-geometry';
+import { editorLineGeometry, createEditorLineMaterial } from './editor-line';
 
 // Per-arm setback handles shown on a selected junction: a stem from the node
 // to a draggable dot sitting on the arm's stop line. Dragging the dot pulls
 // the arm back from the node. A cheap overlay, rebuilt on selection/edit.
 const HANDLE_Y = 0.31;
 const COLOR = 0xfacc15;
-const STEM_OPACITY = 0.85;
 const HANDLE_RADIUS = 1.6;
 const SEGMENTS = 16;
 const RENDER_ORDER = 4;
@@ -19,17 +19,12 @@ export interface SetbackHandle {
 export class SetbackRenderer {
 	private scene: THREE.Scene;
 	private group: THREE.Group | null = null;
-	private lineMaterial: THREE.LineBasicMaterial;
+	private lineMaterial: THREE.MeshBasicMaterial;
 	private dotMaterial: THREE.MeshBasicMaterial;
 
 	constructor(scene: THREE.Scene) {
 		this.scene = scene;
-		this.lineMaterial = new THREE.LineBasicMaterial({
-			color: COLOR,
-			transparent: true,
-			opacity: STEM_OPACITY,
-			depthWrite: false
-		});
+		this.lineMaterial = createEditorLineMaterial();
 		this.dotMaterial = new THREE.MeshBasicMaterial({ color: COLOR, depthWrite: false });
 	}
 
@@ -41,11 +36,8 @@ export class SetbackRenderer {
 		group.renderOrder = RENDER_ORDER;
 
 		for (const h of handles) {
-			const stem = new THREE.Line(
-				new THREE.BufferGeometry().setFromPoints([
-					new THREE.Vector3(h.node.x, HANDLE_Y, h.node.y),
-					new THREE.Vector3(h.handle.x, HANDLE_Y, h.handle.y)
-				]),
+			const stem = new THREE.Mesh(
+				editorLineGeometry([h.node, h.handle], HANDLE_Y),
 				this.lineMaterial
 			);
 			group.add(stem);
