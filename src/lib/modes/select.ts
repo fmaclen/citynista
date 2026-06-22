@@ -644,6 +644,16 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 		controlFrames.clear();
 	};
 
+	// Double-clicking a junction (3+ arms) opens the lane connector for it.
+	const onDoubleClick = (event: MouseEvent) => {
+		if (event.button !== 0) return;
+		const worldPos = editor.sceneManager.screenToWorld(event.clientX, event.clientY);
+		const { node } = nodeHitAt(editor, worldPos.x, worldPos.z);
+		if (node && node.connectedSegments.length >= 3) {
+			editor.enterConnectorMode(node.id);
+		}
+	};
+
 	const onKeyDown = (event: KeyboardEvent) => {
 		if (event.key === 'Delete' || event.key === 'Backspace') {
 			if (editor.selectedNodes.size > 0 || editor.selectedSegments.size > 0) {
@@ -675,6 +685,7 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 		onMouseDown,
 		onMouseMove,
 		onMouseUp,
+		onDoubleClick,
 		onKeyDown,
 		cleanup
 	};

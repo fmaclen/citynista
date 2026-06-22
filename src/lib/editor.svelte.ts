@@ -7,13 +7,16 @@ import { getDefaultTemplate } from './core/lane-template';
 import { resolveCrossings } from './core/crossings';
 import { computeIntersectionTrims, sampleTrimmedCenterline } from './core/road-geometry';
 import type { CenterlineSample, Point } from './core/road-geometry';
-import { nodeConnectivity } from './core/lane-connections';
+import { nodeConnectivity, sameConnectionRef } from './core/lane-connections';
+import type { LaneEndpoint, LaneConnection } from './core/lane-connections';
+import type { LaneRef } from './core/types';
 import { SceneManager } from './rendering/scene.svelte';
 import { NodeRenderer, type NodeTone } from './rendering/node-renderer';
 import { RoadRenderer } from './rendering/road-renderer';
 import { BlockRenderer } from './rendering/block-renderer';
 import { SelectionRenderer } from './rendering/selection-renderer';
 import { SetbackRenderer, type SetbackHandle } from './rendering/setback-renderer';
+import { ConnectionRenderer } from './rendering/connection-renderer';
 
 // A draggable per-arm setback handle on a selected junction.
 export interface SetbackHandleInfo {
@@ -29,6 +32,7 @@ import type { ModeHandlers, Mode, DrawStyle } from './modes/types';
 import { setupDrawMode } from './modes/draw';
 import { setupSelectMode } from './modes/select';
 import { setupBulldozeMode } from './modes/bulldoze';
+import { setupConnectorMode } from './modes/connector';
 
 const EDITOR_CONTEXT_KEY = Symbol('editor');
 
@@ -40,7 +44,15 @@ export class Editor {
 	blockRenderer!: BlockRenderer;
 	selectionRenderer!: SelectionRenderer;
 	setbackRenderer!: SetbackRenderer;
+	connectionRenderer!: ConnectionRenderer;
 	private currentSetbackHandles: SetbackHandleInfo[] = [];
+	// The junction being edited in connector mode, and its current lane
+	// connectivity overlay (dots + movement arcs).
+	connectorNodeId: string | null = null;
+	private currentConnectors: { endpoints: LaneEndpoint[]; connections: LaneConnection[] } = {
+		endpoints: [],
+		connections: []
+	};
 
 	mode = $state<Mode>('select');
 	drawStyle = $state<DrawStyle>('straight');
@@ -89,6 +101,7 @@ export class Editor {
 		this.blockRenderer = new BlockRenderer(this.sceneManager.scene);
 		this.selectionRenderer = new SelectionRenderer(this.sceneManager.scene);
 		this.setbackRenderer = new SetbackRenderer(this.sceneManager.scene);
+		this.connectionRenderer = new ConnectionRenderer(this.sceneManager.scene);
 
 		this.loadSavedData();
 		this.presentState = JSON.stringify(this.graph.toJSON());
@@ -209,6 +222,10 @@ export class Editor {
 			this.modeHandlers?.onMouseMove?.(e);
 		});
 		canvas.addEventListener('mouseup', (e) => this.modeHandlers?.onMouseUp?.(e));
+		canvas.addEventListener('dblclick', (e) => {
+			if (this.sceneManager.isCameraPanning()) return;
+			this.modeHandlers?.onDoubleClick?.(e);
+		});
 	}
 
 	private setupMode(mode: Mode) {
@@ -231,6 +248,8 @@ export class Editor {
 			this.modeHandlers = setupDrawMode(this);
 		} else if (mode === 'bulldoze') {
 			this.modeHandlers = setupBulldozeMode(this);
+		} else if (mode === 'connector') {
+			this.modeHandlers = setupConnectorMode(this);
 		} else {
 			this.modeHandlers = setupSelectMode(this);
 		}
@@ -354,6 +373,66 @@ export class Editor {
 
 	finishSetback() {
 		this.graph.save();
+	}
+
+	// Connector mode edits which movements a junction allows. Entry is a
+	// double-click on a junction (3+ arms): the overlay shows a dot at each
+	// lane mouth (cyan incoming, white outgoing) and an arc per movement;
+	// toggling a movement recarves the junction pavement and persists.
+	enterConnectorMode(nodeId: string) {
+		const node = this.graph.nodes.get(nodeId);
+		if (!node || node.connectedSegments.length < 3) return;
+		this.clearSelection();
+		this.connectorNodeId = nodeId;
+		this.mode = 'connector';
+	}
+
+	exitConnectorMode() {
+		this.connectorNodeId = null;
+		this.mode = 'select';
+	}
+
+	refreshConnectors() {
+		const node = this.connectorNodeId ? this.graph.nodes.get(this.connectorNodeId) : null;
+		if (!node) {
+			this.currentConnectors = { endpoints: [], connections: [] };
+			this.connectionRenderer.clear();
+			return;
+		}
+		this.currentConnectors = nodeConnectivity(this.graph, node);
+		this.connectionRenderer.show(
+			this.currentConnectors.connections,
+			this.currentConnectors.endpoints
+		);
+	}
+
+	connectorEndpointAt(worldX: number, worldZ: number, flow: 'in' | 'out'): LaneEndpoint | null {
+		const threshold = Math.max(2, this.sceneManager.worldPerPixel() * 12);
+		let best: LaneEndpoint | null = null;
+		let bestDistance = threshold;
+		for (const endpoint of this.currentConnectors.endpoints) {
+			if (endpoint.flow !== flow) continue;
+			const distance = Math.hypot(endpoint.point.x - worldX, endpoint.point.y - worldZ);
+			if (distance < bestDistance) {
+				bestDistance = distance;
+				best = endpoint;
+			}
+		}
+		return best;
+	}
+
+	toggleConnection(from: LaneRef, to: LaneRef) {
+		const node = this.connectorNodeId ? this.graph.nodes.get(this.connectorNodeId) : null;
+		if (!node) return;
+		const ref = { from, to };
+		const disabled = [...(node.disabledConnections ?? [])];
+		const existing = disabled.findIndex((d) => sameConnectionRef(d, ref));
+		if (existing >= 0) disabled.splice(existing, 1);
+		else disabled.push(ref);
+		node.disabledConnections = disabled.length > 0 ? disabled : undefined;
+		this.graph.save();
+		this.rebuildRoads();
+		this.refreshConnectors();
 	}
 
 	// SPIKE (Step 2): draw each junction movement as a dashed lane-width ribbon
@@ -629,6 +708,7 @@ export class Editor {
 			window.removeEventListener('keydown', this.boundHistoryKeyDown);
 		}
 		this.setbackRenderer?.dispose();
+		this.connectionRenderer?.dispose();
 		this.sceneManager?.dispose();
 	}
 }

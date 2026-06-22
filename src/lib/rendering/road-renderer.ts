@@ -203,6 +203,19 @@ export class RoadRenderer {
 
 			const key = `node:${node.id}`;
 			const parts: string[] = [`${node.x},${node.y}`];
+			// Disabled movements carve the junction pavement, so they belong in
+			// the piece hash — toggling a connector must rebuild the node.
+			if (node.disabledConnections?.length) {
+				parts.push(
+					'dc:' +
+						node.disabledConnections
+							.map(
+								(c) => `${c.from.segmentId}.${c.from.laneIndex}>${c.to.segmentId}.${c.to.laneIndex}`
+							)
+							.sort()
+							.join(',')
+				);
+			}
 			for (const segmentId of [...node.connectedSegments].sort()) {
 				const segment = graph.segments.get(segmentId);
 				const samples = centerlines.get(segmentId);
