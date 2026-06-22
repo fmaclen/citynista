@@ -2033,11 +2033,14 @@ function junctionPavement(node: Node, arms: IntersectionArm[]): Paths {
 
 // A full-width quad from an arm's mouth in to just past the node centre. Unioned
 // into the junction surface it keeps the interior covered however far the arms
-// are set back, where joining mouth-to-mouth would leave a gap.
+// are set back, where joining mouth-to-mouth would leave a gap. The overshoot
+// past the centre is small — only enough for opposing spokes to overlap, not so
+// much that a wide arm poked past a narrow crossing road.
+const SPOKE_OVERSHOOT = 1;
 function armSpoke(node: Node, arm: IntersectionArm, leftEdge: number, rightEdge: number): Path {
 	const mouth = offsetPoint(arm.stop, arm.into, -MOUTH_OVERLAP);
 	const reach =
-		Math.hypot(arm.stop.x - node.x, arm.stop.y - node.y) + MOUTH_OVERLAP + arm.halfWidth;
+		Math.hypot(arm.stop.x - node.x, arm.stop.y - node.y) + MOUTH_OVERLAP + SPOKE_OVERSHOOT;
 	const p0 = offsetPoint(mouth, arm.side, -leftEdge);
 	const p1 = offsetPoint(mouth, arm.side, rightEdge);
 	const p2 = offsetPoint(p1, arm.into, reach);
