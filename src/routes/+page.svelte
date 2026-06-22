@@ -28,6 +28,8 @@
 					.then((response) => (response.ok ? response.json() : null))
 					.then((data) => {
 						if (data) editor.replaceGraph(data);
+						// SPIKE: overlay the connection-union mesh.
+						if (params.has('mesh')) editor.debugConnectionMesh();
 					});
 			}
 		});

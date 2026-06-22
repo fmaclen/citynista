@@ -1920,6 +1920,66 @@ export function offsetPaths(paths: Paths, delta: number): Paths {
 const TRIANGULATION_EPSILON = 0.05;
 const MAX_DECOMPOSE_DEPTH = 4;
 
+// SPIKE (Step 2): the junction pavement as the union of lane-connection
+// ribbons. Each connection is a lane-width ribbon swept along a bezier from
+// its source stop line to its target stop line; their union is the drivable
+// area — dead corners with no movement stay unpaved.
+export interface ConnectionRibbon {
+	fromPoint: Point;
+	toPoint: Point;
+	fromDir: Point;
+	toDir: Point;
+	halfWidth: number;
+}
+
+export function buildConnectionMesh(ribbons: ConnectionRibbon[]): PolygonWithHoles[] {
+	const SAMPLES = 16;
+	const paths: Paths = [];
+
+	for (const r of ribbons) {
+		const reach = Math.hypot(r.toPoint.x - r.fromPoint.x, r.toPoint.y - r.fromPoint.y) * 0.4;
+		const c1 = { x: r.fromPoint.x + r.fromDir.x * reach, y: r.fromPoint.y + r.fromDir.y * reach };
+		const c2 = { x: r.toPoint.x - r.toDir.x * reach, y: r.toPoint.y - r.toDir.y * reach };
+
+		const curve: Point[] = [];
+		for (let i = 0; i <= SAMPLES; i++) {
+			const t = i / SAMPLES;
+			const u = 1 - t;
+			curve.push({
+				x:
+					u * u * u * r.fromPoint.x +
+					3 * u * u * t * c1.x +
+					3 * u * t * t * c2.x +
+					t * t * t * r.toPoint.x,
+				y:
+					u * u * u * r.fromPoint.y +
+					3 * u * u * t * c1.y +
+					3 * u * t * t * c2.y +
+					t * t * t * r.toPoint.y
+			});
+		}
+
+		const left: Point[] = [];
+		const right: Point[] = [];
+		for (let i = 0; i < curve.length; i++) {
+			const prev = curve[Math.max(0, i - 1)];
+			const next = curve[Math.min(curve.length - 1, i + 1)];
+			let tx = next.x - prev.x;
+			let ty = next.y - prev.y;
+			const length = Math.hypot(tx, ty) || 1;
+			tx /= length;
+			ty /= length;
+			left.push({ x: curve[i].x - ty * r.halfWidth, y: curve[i].y + tx * r.halfWidth });
+			right.push({ x: curve[i].x + ty * r.halfWidth, y: curve[i].y - tx * r.halfWidth });
+		}
+
+		const loop = [...left, ...right.reverse()];
+		paths.push(normalizeWinding(loop.map((p) => toClipperPoint(p.x, p.y))));
+	}
+
+	return pathsToPolygons(unionPaths(paths));
+}
+
 export function pathsToPolygons(paths: Paths): PolygonWithHoles[] {
 	if (paths.length === 0) return [];
 

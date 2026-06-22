@@ -1,3 +1,4 @@
+import * as THREE from 'three';
 import { getContext, setContext, untrack } from 'svelte';
 import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 import { Graph } from './core/graph.svelte';
@@ -5,7 +6,9 @@ import type { GraphData } from './core/types';
 import { getDefaultTemplate } from './core/lane-template';
 import { resolveCrossings } from './core/crossings';
 import { computeIntersectionTrims, sampleTrimmedCenterline } from './core/road-geometry';
-import type { CenterlineSample, Point } from './core/road-geometry';
+import { buildConnectionMesh } from './core/road-geometry';
+import type { CenterlineSample, ConnectionRibbon, Point } from './core/road-geometry';
+import { nodeConnectivity } from './core/lane-connections';
 import { SceneManager } from './rendering/scene.svelte';
 import { NodeRenderer, type NodeTone } from './rendering/node-renderer';
 import { RoadRenderer } from './rendering/road-renderer';
@@ -352,6 +355,51 @@ export class Editor {
 
 	finishSetback() {
 		this.graph.save();
+	}
+
+	// SPIKE (Step 2): render the connection-union mesh for every junction as a
+	// bright overlay, to see whether it reads like a clean intersection.
+	debugConnectionMesh() {
+		const group = new THREE.Group();
+		const material = new THREE.MeshBasicMaterial({
+			color: 0xff2d95,
+			transparent: true,
+			opacity: 0.55,
+			side: THREE.DoubleSide,
+			depthWrite: false
+		});
+
+		for (const node of this.graph.nodes.values()) {
+			if (node.connectedSegments.length < 3) continue;
+			const { connections } = nodeConnectivity(this.graph, node);
+			const ribbons: ConnectionRibbon[] = [];
+			for (const c of connections) {
+				if (!c.active) continue;
+				const segment = this.graph.segments.get(c.from.segmentId);
+				const width = segment?.lanes[c.from.laneIndex]?.width ?? 3.5;
+				ribbons.push({
+					fromPoint: c.fromPoint,
+					toPoint: c.toPoint,
+					fromDir: c.fromDir,
+					toDir: c.toDir,
+					halfWidth: width / 2
+				});
+			}
+
+			for (const polygon of buildConnectionMesh(ribbons)) {
+				const shape = new THREE.Shape(polygon.outer.map((p) => new THREE.Vector2(p.x, p.y)));
+				for (const hole of polygon.holes) {
+					shape.holes.push(new THREE.Path(hole.map((p) => new THREE.Vector2(p.x, p.y))));
+				}
+				const geometry = new THREE.ShapeGeometry(shape);
+				geometry.rotateX(Math.PI / 2);
+				const mesh = new THREE.Mesh(geometry, material);
+				mesh.position.y = 0.25;
+				group.add(mesh);
+			}
+		}
+
+		this.sceneManager.scene.add(group);
 	}
 
 	selectSegment(segmentId: string) {
