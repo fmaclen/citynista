@@ -9,9 +9,11 @@ Status key: **now** (in progress) · **next** (agreed, queued) · **later**
 
 ## Connector tool
 
-- **done** — Connector arcs are thin dashed ribbons (allowed yellow, blocked
-  white 50%), resampled to even dashes; all movements shown by default. In-discs
-  hoverable/grabbable, out-rings passive.
+- **done** — Connector arcs are thin dashed yellow ribbons with even dashes;
+  allowed movements shown, blocked ones hidden (the faint arcs were too noisy).
+  In-discs hoverable/grabbable, out-rings passive; dots render above the arcs.
+- **done** — Drag feedback: the target dot + rubber band turn green over a valid
+  exit, red over an invalid one.
 - **done** — Modality (#217): clicking a road/node is ignored; exit only via Esc
   or a click on empty ground.
 - **next** — Apply the same thin-dashed editor-line styling to **setback stems**
