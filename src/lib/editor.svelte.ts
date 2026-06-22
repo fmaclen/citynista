@@ -33,6 +33,27 @@ import { setupSelectMode } from './modes/select';
 import { setupBulldozeMode } from './modes/bulldoze';
 import { setupConnectorMode } from './modes/connector';
 
+// Setback handles seat at least this far out from the node along their arm, so
+// the two stops of a straight through-road don't land on the node together.
+const SETBACK_HANDLE_MIN_OFFSET = 5;
+
+function pointAtArcLength(points: Point[], target: number): Point {
+	let acc = 0;
+	for (let i = 1; i < points.length; i++) {
+		const seg = Math.hypot(points[i].x - points[i - 1].x, points[i].y - points[i - 1].y);
+		if (acc + seg >= target) {
+			const t = seg > 0 ? (target - acc) / seg : 0;
+			return {
+				x: points[i - 1].x + (points[i].x - points[i - 1].x) * t,
+				y: points[i - 1].y + (points[i].y - points[i - 1].y) * t
+			};
+		}
+		acc += seg;
+	}
+	const last = points[points.length - 1];
+	return { x: last.x, y: last.y };
+}
+
 const EDITOR_CONTEXT_KEY = Symbol('editor');
 
 export class Editor {
@@ -308,12 +329,17 @@ export class Editor {
 			const trim = trims.get(segmentId) ?? { start: 0, end: 0 };
 			const trimmed = sampleTrimmedCenterline(segment, startNode, endNode, trim.start, trim.end);
 			if (trimmed.length < 2) continue;
-			const stop = atStart ? trimmed[0] : trimmed[trimmed.length - 1];
 			let centerline = sampleTrimmedCenterline(segment, startNode, endNode, 0, 0);
 			if (!atStart) centerline = [...centerline].reverse();
 
+			// Seat the handle at its stop line, but never closer to the node than
+			// the minimum, so a through-road's two stops don't stack on the node.
+			const trimDist = atStart ? trim.start : trim.end;
 			const nodePoint = { x: node.x, y: node.y };
-			const handlePoint = { x: stop.x, y: stop.y };
+			const handlePoint = pointAtArcLength(
+				centerline,
+				Math.max(trimDist, SETBACK_HANDLE_MIN_OFFSET)
+			);
 			rich.push({ segmentId, atStart, node: nodePoint, handle: handlePoint, centerline });
 			display.push({ node: nodePoint, handle: handlePoint });
 		}
