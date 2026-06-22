@@ -638,12 +638,22 @@ export class Editor {
 		this.graph.save();
 	}
 
+	// Drop the connector overlay when its node no longer exists (reset, fixture
+	// load) — but keep it across an undo that preserves the node.
+	private dropStaleConnector() {
+		if (this.connectorNodeId && this.graph.nodes.has(this.connectorNodeId)) return;
+		this.connectorNodeId = null;
+		this.connectionRenderer.clear();
+		if (this.mode === 'connector') this.mode = 'select';
+	}
+
 	clearAll() {
 		this.clearSelection();
 		this.nodeRenderer.clear();
 		this.roadRenderer.clear();
 		this.blockRenderer.clear();
 		this.graph.clear();
+		this.dropStaleConnector();
 		this.graph.save();
 	}
 
@@ -656,6 +666,7 @@ export class Editor {
 		this.roadRenderer.clear();
 		this.blockRenderer.clear();
 		this.graph.fromJSON(data);
+		this.dropStaleConnector();
 		for (const node of this.graph.nodes.values()) {
 			this.nodeRenderer.createNode(node);
 		}
