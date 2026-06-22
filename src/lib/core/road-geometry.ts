@@ -575,10 +575,16 @@ export function transitionMorph(
 			Math.abs(target.end - selfIntervals[k].end)
 		);
 	}
-	const length = Math.min(
-		TRANSITION_MAX_LENGTH,
-		Math.max(TRANSITION_MIN_LENGTH, maxShift * TRANSITION_TAPER)
-	);
+	// A setback on the morphing (wide) side overrides the automatic taper length:
+	// the handle drags where the cross-section finishes necking down.
+	const setback = self.startNodeId === node.id ? self.setbackStart : self.setbackEnd;
+	const length =
+		setback !== undefined
+			? Math.max(TRANSITION_MIN_LENGTH, setback)
+			: Math.min(
+					TRANSITION_MAX_LENGTH,
+					Math.max(TRANSITION_MIN_LENGTH, maxShift * TRANSITION_TAPER)
+				);
 
 	const anchorLanes = flipped ? [...other.lanes].reverse() : other.lanes;
 	const laneBoundaries = laneBoundaryTargets(
@@ -599,6 +605,26 @@ export function transitionMorph(
 			`${targets.map((t) => (t ? `${t.start},${t.end}` : 'x')).join(';')}|` +
 			laneBoundaries.map((b) => (b === null ? 'x' : Math.round(b * 100))).join(',')
 	};
+}
+
+// The morphing (wide) side of a transition node and its current taper length,
+// so the editor can show a setback-style handle there. Null at non-transitions.
+export function transitionTaper(
+	graph: Graph,
+	node: Node
+): { segmentId: string; length: number } | null {
+	if (!isTransitionNode(graph, node)) return null;
+	const pair = nodeThroughPair(graph, node);
+	if (!pair) return null;
+	const halfA = getTotalWidth(pair[0].lanes) / 2;
+	const halfB = getTotalWidth(pair[1].lanes) / 2;
+	const aIsAnchor =
+		halfA < halfB - 0.01 ||
+		(Math.abs(halfA - halfB) <= 0.01 && pair[0].lanesKey <= pair[1].lanesKey);
+	const wide = aIsAnchor ? pair[1] : pair[0];
+	const morph = transitionMorph(graph, node, wide.id);
+	if (!morph) return null;
+	return { segmentId: wide.id, length: morph.length };
 }
 
 function laneBoundaryOffsets(lanes: Lane[]): number[] {
@@ -896,10 +922,12 @@ export function computeIntersectionTrims(graph: Graph): SegmentTrims {
 		if (!startNode || !endNode) continue;
 		const cap = Math.hypot(endNode.x - startNode.x, endNode.y - startNode.y) * 0.45;
 		const trim = trims.get(segment.id) ?? { start: 0, end: 0 };
-		if (segment.setbackStart !== undefined) {
+		// At a transition the setback is the taper length, applied by the morph —
+		// not a ribbon trim — so skip it here and leave the ribbon full length.
+		if (segment.setbackStart !== undefined && !isTransitionNode(graph, startNode)) {
 			trim.start = Math.min(cap, Math.max(trim.start, segment.setbackStart));
 		}
-		if (segment.setbackEnd !== undefined) {
+		if (segment.setbackEnd !== undefined && !isTransitionNode(graph, endNode)) {
 			trim.end = Math.min(cap, Math.max(trim.end, segment.setbackEnd));
 		}
 		trims.set(segment.id, trim);

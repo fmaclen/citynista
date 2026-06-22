@@ -1,0 +1,33 @@
+{
+	"nodes": [
+		{ "id": "a", "x": -70, "y": 0 },
+		{ "id": "mid", "x": 0, "y": 0 },
+		{ "id": "b", "x": 70, "y": 0 }
+	],
+	"segments": [
+		{
+			"id": "narrow",
+			"startNodeId": "a",
+			"endNodeId": "mid",
+			"lanes": [
+				{ "type": "sidewalk", "width": 3 },
+				{ "type": "road", "width": 3.5, "direction": "backward" },
+				{ "type": "road", "width": 3.5, "direction": "forward" },
+				{ "type": "sidewalk", "width": 3 }
+			]
+		},
+		{
+			"id": "wide",
+			"startNodeId": "mid",
+			"endNodeId": "b",
+			"lanes": [
+				{ "type": "sidewalk", "width": 3 },
+				{ "type": "road", "width": 3.5, "direction": "backward" },
+				{ "type": "road", "width": 3.5, "direction": "backward" },
+				{ "type": "road", "width": 3.5, "direction": "forward" },
+				{ "type": "road", "width": 3.5, "direction": "forward" },
+				{ "type": "sidewalk", "width": 3 }
+			]
+		}
+	]
+}

@@ -4,7 +4,11 @@ import { Graph } from './core/graph.svelte';
 import type { GraphData } from './core/types';
 import { getDefaultTemplate } from './core/lane-template';
 import { resolveCrossings } from './core/crossings';
-import { computeIntersectionTrims, sampleTrimmedCenterline } from './core/road-geometry';
+import {
+	computeIntersectionTrims,
+	sampleTrimmedCenterline,
+	transitionTaper
+} from './core/road-geometry';
 import type { CenterlineSample, Point } from './core/road-geometry';
 import { nodeConnectivity, sameConnectionRef } from './core/lane-connections';
 import type { LaneEndpoint, LaneConnection } from './core/lane-connections';
@@ -309,7 +313,16 @@ export class Editor {
 	refreshSetbackHandles() {
 		const nodeId = this.selectedNodes.size === 1 ? [...this.selectedNodes][0] : null;
 		const node = nodeId ? this.graph.nodes.get(nodeId) : undefined;
-		if (!node || node.connectedSegments.length < 3) {
+		if (!node) {
+			this.currentSetbackHandles = [];
+			this.setbackRenderer.clear();
+			return;
+		}
+		// Junctions (3+ arms) get a handle per arm at its stop line. A 2-segment
+		// transition gets one handle on the wide side controlling the taper.
+		const isJunction = node.connectedSegments.length >= 3;
+		const taper = isJunction ? null : transitionTaper(this.graph, node);
+		if (!isJunction && !taper) {
 			this.currentSetbackHandles = [];
 			this.setbackRenderer.clear();
 			return;
@@ -319,6 +332,8 @@ export class Editor {
 		const rich: SetbackHandleInfo[] = [];
 		const display: SetbackHandle[] = [];
 		for (const segmentId of node.connectedSegments) {
+			// At a transition only the wide (morphing) segment gets a handle.
+			if (taper && segmentId !== taper.segmentId) continue;
 			const segment = this.graph.segments.get(segmentId);
 			if (!segment) continue;
 			const startNode = this.graph.nodes.get(segment.startNodeId);
@@ -332,9 +347,10 @@ export class Editor {
 			let centerline = sampleTrimmedCenterline(segment, startNode, endNode, 0, 0);
 			if (!atStart) centerline = [...centerline].reverse();
 
-			// Seat the handle at its stop line, but never closer to the node than
-			// the minimum, so a through-road's two stops don't stack on the node.
-			const trimDist = atStart ? trim.start : trim.end;
+			// Seat the handle at its stop line (transition: at the taper start),
+			// but never closer to the node than the minimum, so a through-road's
+			// two stops don't stack on the node.
+			const trimDist = taper ? taper.length : atStart ? trim.start : trim.end;
 			const nodePoint = { x: node.x, y: node.y };
 			const handlePoint = pointAtArcLength(
 				centerline,
