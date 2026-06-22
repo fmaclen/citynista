@@ -86,9 +86,12 @@ for (let r = 0; r < N - 1; r++) {
 	}
 }
 
-// NOTE: a 45° diagonal through the grid nodes makes 5–6-arm blobs and
-// shallow-angle merges (the renderer wants traffic circles at those crossings,
-// like real DC). Left out until the circle-integrated version is built.
+// --- Diagonal avenue through the squares (shares grid nodes) ---------------
+// At 45° these still make busy multi-arm junctions; the per-arm setback handle
+// lets you pull each approach back to clean them up.
+for (let i = 0; i < N - 1; i++) {
+	seg(`d-${i}`, g(i, i), g(i + 1, i + 1), L.avenue());
+}
 
 // --- Turn-lane approaches into the central square --------------------------
 // Replace the four arms touching g(2,3) with turn-pocket approaches so a busy
