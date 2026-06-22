@@ -5,8 +5,9 @@ import type { GraphData } from './core/types';
 import { getDefaultTemplate } from './core/lane-template';
 import { resolveCrossings } from './core/crossings';
 import { computeIntersectionTrims } from './core/road-geometry';
-import { connectionsAtNode, sameConnectionRef } from './core/lane-connections';
-import type { LaneConnection } from './core/lane-connections';
+import { nodeConnectivity, sameConnectionRef } from './core/lane-connections';
+import type { LaneConnection, LaneEndpoint } from './core/lane-connections';
+import type { LaneRef } from './core/types';
 import { SceneManager } from './rendering/scene.svelte';
 import { NodeRenderer, type NodeTone } from './rendering/node-renderer';
 import { RoadRenderer } from './rendering/road-renderer';
@@ -29,6 +30,7 @@ export class Editor {
 	selectionRenderer!: SelectionRenderer;
 	connectionRenderer!: ConnectionRenderer;
 	private currentConnections: LaneConnection[] = [];
+	private currentEndpoints: LaneEndpoint[] = [];
 
 	mode = $state<Mode>('select');
 	drawStyle = $state<DrawStyle>('straight');
@@ -255,13 +257,77 @@ export class Editor {
 	refreshConnections() {
 		const nodeId = this.selectedNodes.size === 1 ? [...this.selectedNodes][0] : null;
 		const node = nodeId ? this.graph.nodes.get(nodeId) : undefined;
-		if (!node) {
+		// Only junctions (3+ arms) get connectors; at a bend the through
+		// movement is implied, and its lane dots would sit on the node centre
+		// and fight node dragging.
+		if (!node || node.connectedSegments.length < 3) {
 			this.currentConnections = [];
+			this.currentEndpoints = [];
 			this.connectionRenderer.clear();
 			return;
 		}
-		this.currentConnections = connectionsAtNode(this.graph, node);
-		this.connectionRenderer.show(this.currentConnections);
+		const { endpoints, connections } = nodeConnectivity(this.graph, node);
+		this.currentConnections = connections;
+		this.currentEndpoints = endpoints;
+		this.connectionRenderer.show(connections, endpoints);
+	}
+
+	// The nearest lane endpoint of a given flow to a world point, within a
+	// draggable threshold — for dragging a connector from a source lane to a
+	// target lane (TM:PE-style).
+	private endpointAt(worldX: number, worldZ: number, flow: 'in' | 'out'): LaneEndpoint | null {
+		const threshold = Math.max(1.4, this.sceneManager.worldPerPixel() * 9);
+		let best: LaneEndpoint | null = null;
+		let bestDistance = threshold;
+		for (const endpoint of this.currentEndpoints) {
+			if (endpoint.flow !== flow) continue;
+			const distance = Math.hypot(endpoint.point.x - worldX, endpoint.point.y - worldZ);
+			if (distance < bestDistance) {
+				bestDistance = distance;
+				best = endpoint;
+			}
+		}
+		return best;
+	}
+
+	connectSourceAt(worldX: number, worldZ: number): LaneEndpoint | null {
+		return this.endpointAt(worldX, worldZ, 'in');
+	}
+
+	connectTargetAt(worldX: number, worldZ: number): LaneEndpoint | null {
+		return this.endpointAt(worldX, worldZ, 'out');
+	}
+
+	showConnectRubberBand(from: { x: number; y: number }, toX: number, toZ: number) {
+		this.connectionRenderer.showRubberBand(from, { x: toX, y: toZ });
+	}
+
+	hideConnectRubberBand() {
+		this.connectionRenderer.hideRubberBand();
+	}
+
+	applyConnection(source: LaneEndpoint, target: LaneEndpoint) {
+		this.toggleConnectionRef(source.ref, target.ref);
+	}
+
+	private toggleConnectionRef(from: LaneRef, to: LaneRef) {
+		if (from.segmentId === to.segmentId) return;
+		const nodeId = this.selectedNodes.size === 1 ? [...this.selectedNodes][0] : null;
+		const node = nodeId ? this.graph.nodes.get(nodeId) : undefined;
+		if (!node) return;
+
+		const ref = { from, to };
+		const disabled = node.disabledConnections ?? [];
+		const without = disabled.filter((d) => !sameConnectionRef(d, ref));
+		node.disabledConnections =
+			without.length === disabled.length
+				? [...disabled, ref]
+				: without.length
+					? without
+					: undefined;
+
+		this.graph.save();
+		this.refreshConnections();
 	}
 
 	// The connector nearest a world point, within a clickable threshold, or
@@ -303,25 +369,9 @@ export class Editor {
 		return best;
 	}
 
-	// Flip a movement on/off at the selected junction by adding or removing it
-	// from the node's disabled set, then re-render the connectors.
+	// Flip a movement on/off at the selected junction (clicking its arc).
 	toggleConnection(connection: LaneConnection) {
-		const nodeId = this.selectedNodes.size === 1 ? [...this.selectedNodes][0] : null;
-		const node = nodeId ? this.graph.nodes.get(nodeId) : undefined;
-		if (!node) return;
-
-		const ref = { from: connection.from, to: connection.to };
-		const disabled = node.disabledConnections ?? [];
-		const without = disabled.filter((d) => !sameConnectionRef(d, ref));
-		node.disabledConnections =
-			without.length === disabled.length
-				? [...disabled, ref]
-				: without.length
-					? without
-					: undefined;
-
-		this.graph.save();
-		this.refreshConnections();
+		this.toggleConnectionRef(connection.from, connection.to);
 	}
 
 	selectSegment(segmentId: string) {

@@ -6,7 +6,7 @@ import type { Node } from '../core/node.svelte';
 import { getQuadraticBezierTangent } from '../geometry/bezier';
 import { CONTROL_SIZE } from '../rendering/selection-renderer';
 import { nodeHitAt, segmentHitAt, rectContents } from './picking';
-import type { LaneConnection } from '../core/lane-connections';
+import type { LaneConnection, LaneEndpoint } from '../core/lane-connections';
 
 // Snap radii are sized in screen pixels and converted to world units at
 // the current zoom; hit areas live in modes/picking.
@@ -33,6 +33,9 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 	// A click (no drag) on a connector of the already-selected junction
 	// toggles that movement on mouseup; a drag falls through to moving the node.
 	let pendingConnectorToggle: LaneConnection | null = null;
+	// Dragging from an incoming-lane dot to an outgoing-lane dot routes a
+	// movement (TM:PE-style); the rubber band follows the cursor meanwhile.
+	let connectSource: LaneEndpoint | null = null;
 	let dragDistance = 0;
 
 	const marqueeFillMaterial = new THREE.MeshBasicMaterial({
@@ -466,6 +469,17 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 		// take over from here.
 		editor.setHoveredSegment(null);
 
+		// Dragging from an incoming-lane dot starts routing a connector. The
+		// dots are small, so node dragging still works by grabbing elsewhere.
+		if (editor.selectedNodes.size === 1) {
+			const source = editor.connectSourceAt(worldPos.x, worldPos.z);
+			if (source) {
+				connectSource = source;
+				editor.showConnectRubberBand(source.point, worldPos.x, worldPos.z);
+				return;
+			}
+		}
+
 		const controlPointSegment = findControlPointAt(worldPos.x, worldPos.z);
 		if (controlPointSegment) {
 			isDragging = true;
@@ -536,6 +550,11 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 
 	const onMouseMove = (event: MouseEvent) => {
 		const worldPos = editor.sceneManager.screenToWorld(event.clientX, event.clientY);
+
+		if (connectSource) {
+			editor.showConnectRubberBand(connectSource.point, worldPos.x, worldPos.z);
+			return;
+		}
 
 		if (marqueeStart) {
 			updateMarqueeVisual(worldPos.x, worldPos.z);
@@ -618,6 +637,16 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 	};
 
 	const onMouseUp = (event: MouseEvent) => {
+		// Releasing a connector drag on an outgoing-lane dot routes the movement.
+		if (connectSource) {
+			const worldPos = editor.sceneManager.screenToWorld(event.clientX, event.clientY);
+			const target = editor.connectTargetAt(worldPos.x, worldPos.z);
+			if (target) editor.applyConnection(connectSource, target);
+			connectSource = null;
+			editor.hideConnectRubberBand();
+			return;
+		}
+
 		if (marqueeStart) {
 			const worldPos = editor.sceneManager.screenToWorld(event.clientX, event.clientY);
 			applyMarquee(worldPos.x, worldPos.z);
@@ -669,6 +698,8 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 		isDragging = false;
 		dragTarget = null;
 		marqueeStart = null;
+		connectSource = null;
+		editor.hideConnectRubberBand();
 		controlFrames.clear();
 		editor.setHoveredNode(null);
 		editor.setHoveredSegment(null);

@@ -116,10 +116,14 @@ export function defaultConnections(endpoints: LaneEndpoint[]): LaneConnection[] 
 	return connections;
 }
 
-// The default connectors at a node: builds the trimmed centerlines for its
-// arms, then the endpoints and their permissive connections.
-export function connectionsAtNode(graph: Graph, node: Node): LaneConnection[] {
-	if (node.connectedSegments.length < 2) return [];
+// The connectivity of a node: its travel-lane endpoints plus the connectors
+// between them (active = not in the node's disabled set). Builds the trimmed
+// centerlines for the node's arms once.
+export function nodeConnectivity(
+	graph: Graph,
+	node: Node
+): { endpoints: LaneEndpoint[]; connections: LaneConnection[] } {
+	if (node.connectedSegments.length < 2) return { endpoints: [], connections: [] };
 
 	const trims = computeIntersectionTrims(graph);
 	const centerlines = new Map<string, CenterlineSample[]>();
@@ -140,10 +144,11 @@ export function connectionsAtNode(graph: Graph, node: Node): LaneConnection[] {
 		if (samples.length >= 2) centerlines.set(segmentId, samples);
 	}
 
+	const endpoints = laneEndpointsAtNode(graph, node, centerlines);
 	const disabled = node.disabledConnections ?? [];
-	const connections = defaultConnections(laneEndpointsAtNode(graph, node, centerlines));
+	const connections = defaultConnections(endpoints);
 	for (const connection of connections) {
 		connection.active = !disabled.some((d) => sameConnectionRef(d, connection));
 	}
-	return connections;
+	return { endpoints, connections };
 }
