@@ -22,14 +22,19 @@ const DOT_RADIUS = 1.2;
 const RING_INNER = 0.62;
 const DOT_SEGMENTS = 20;
 const HOVER_SCALE = 1.35;
-const ARC_WIDTH = 0.35;
-const ARC_DASH = 1.2;
-const ARC_GAP = 0.9;
-const ARC_RESAMPLE = 0.3;
+const DOT_DIAMETER = 0.5;
+const DOT_SPACING = 0.95;
+const DOT_SEG = 10;
 const ARC_SAMPLES = 30;
 const ARC_ORDER = 4;
 const RUBBER_ORDER = 5;
 const DOT_ORDER = 7;
+
+// Unit-circle offsets reused to stamp every bead.
+const UNIT_CIRCLE = Array.from({ length: DOT_SEG + 1 }, (_, k) => {
+	const a = (k / DOT_SEG) * Math.PI * 2;
+	return { c: Math.cos(a), s: Math.sin(a) };
+});
 
 type RubberState = 'neutral' | 'valid' | 'invalid';
 
@@ -38,62 +43,33 @@ function cubic(p0: number, p1: number, p2: number, p3: number, t: number): numbe
 	return u * u * u * p0 + 3 * u * u * t * p1 + 3 * u * t * t * p2 + t * t * t * p3;
 }
 
-// A dashed flat ribbon along a polyline (XZ plane at height y). The polyline is
-// first resampled to a roughly uniform spacing — a bezier sampled in t is not
-// uniform in arc length, which left dashes ragged — then a quad is emitted for
-// every step whose midpoint lands in a dash.
-function dashedRibbon(
-	curve: { x: number; y: number }[],
-	width: number,
-	y: number
-): THREE.BufferGeometry {
-	const pts: { x: number; y: number }[] = [curve[0]];
+// A dotted ribbon along a polyline (XZ plane at height y): a row of small filled
+// circles spaced evenly by arc length. Reads as an editor line, never mistaken
+// for the (thin, solid) road markings.
+function dottedRibbon(curve: { x: number; y: number }[], y: number): THREE.BufferGeometry {
+	const positions: number[] = [];
+	const r = DOT_DIAMETER / 2;
+	let acc = 0;
+	let next = DOT_SPACING / 2;
 	for (let i = 0; i < curve.length - 1; i++) {
 		const a = curve[i];
 		const b = curve[i + 1];
-		const len = Math.hypot(b.x - a.x, b.y - a.y);
-		const n = Math.max(1, Math.round(len / ARC_RESAMPLE));
-		for (let k = 1; k <= n; k++) {
-			pts.push({ x: a.x + ((b.x - a.x) * k) / n, y: a.y + ((b.y - a.y) * k) / n });
-		}
-	}
-
-	const positions: number[] = [];
-	const half = width / 2;
-	const cycle = ARC_DASH + ARC_GAP;
-	let acc = 0;
-	for (let i = 0; i < pts.length - 1; i++) {
-		const a = pts[i];
-		const b = pts[i + 1];
 		const dx = b.x - a.x;
-		const dz = b.y - a.y;
-		const len = Math.hypot(dx, dz);
+		const dy = b.y - a.y;
+		const len = Math.hypot(dx, dy);
 		if (len < 1e-6) continue;
-		const mid = acc + len / 2;
+		while (next <= acc + len) {
+			const t = (next - acc) / len;
+			const cx = a.x + dx * t;
+			const cz = a.y + dy * t;
+			for (let k = 0; k < DOT_SEG; k++) {
+				const u0 = UNIT_CIRCLE[k];
+				const u1 = UNIT_CIRCLE[k + 1];
+				positions.push(cx, y, cz, cx + u0.c * r, y, cz + u0.s * r, cx + u1.c * r, y, cz + u1.s * r);
+			}
+			next += DOT_SPACING;
+		}
 		acc += len;
-		if (mid % cycle >= ARC_DASH) continue;
-		const nx = (-dz / len) * half;
-		const nz = (dx / len) * half;
-		positions.push(
-			a.x + nx,
-			y,
-			a.y + nz,
-			b.x + nx,
-			y,
-			b.y + nz,
-			a.x - nx,
-			y,
-			a.y - nz,
-			a.x - nx,
-			y,
-			a.y - nz,
-			b.x + nx,
-			y,
-			b.y + nz,
-			b.x - nx,
-			y,
-			b.y - nz
-		);
 	}
 	const geometry = new THREE.BufferGeometry();
 	geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
@@ -114,7 +90,7 @@ function arcRibbon(c: LaneConnection): THREE.BufferGeometry {
 			y: cubic(c.fromPoint.y, c1y, c2y, c.toPoint.y, t)
 		});
 	}
-	return dashedRibbon(curve, ARC_WIDTH, CONNECTION_Y);
+	return dottedRibbon(curve, CONNECTION_Y);
 }
 
 export class ConnectionRenderer {
@@ -239,7 +215,7 @@ export class ConnectionRenderer {
 		this.rubberMaterial.color.setHex(
 			state === 'valid' ? VALID_COLOR : state === 'invalid' ? INVALID_COLOR : RUBBER_COLOR
 		);
-		const mesh = new THREE.Mesh(dashedRibbon([from, to], ARC_WIDTH, DOT_Y), this.rubberMaterial);
+		const mesh = new THREE.Mesh(dottedRibbon([from, to], DOT_Y), this.rubberMaterial);
 		mesh.renderOrder = RUBBER_ORDER;
 		this.scene.add(mesh);
 		this.rubber = mesh;
