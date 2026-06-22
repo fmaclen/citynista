@@ -541,7 +541,9 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 		if (!isDragging || !dragTarget) {
 			const { node, segment } = pickAt(worldPos.x, worldPos.z);
 			editor.setHoveredNode(node?.id ?? null);
-			editor.setHoveredSegment(segment?.id ?? null);
+			// With a node selected, stay focused on it — don't light up other
+			// segments on hover. Click still reselects; Esc/empty ground clears.
+			editor.setHoveredSegment(editor.selectedNodes.size > 0 ? null : (segment?.id ?? null));
 			return;
 		}
 
