@@ -16,8 +16,8 @@ Status key: **now** (in progress) · **next** (agreed, queued) · **later**
   exit, red over an invalid one.
 - **done** — Modality (#217): clicking a road/node is ignored; exit only via Esc
   or a click on empty ground.
-- **next** — Apply the same thin-dashed editor-line styling to **setback stems**
-  and the **bezier curvature guides** (still hairlines).
+- **done** — All editor lines (connector arcs, setback stems, bezier guides)
+  share one beaded style from `rendering/editor-line.ts` — change the look there.
 - **later** — Re-enabling a blocked movement is "drag the same pair again."
   Revisit if it feels unclear.
 - **later** — Fallback if drag still confuses: TM:PE-style click-source-then-
@@ -27,8 +27,7 @@ Status key: **now** (in progress) · **next** (agreed, queued) · **later**
 
 - **next** — Apply the hover convention (blue + slight scale + grab cursor) to
   **setback handles** and any other overlay, not just connector dots.
-- **next** — Same thick/dashed editor-line styling for setback stems and the
-  bezier curvature guides.
+- **done** — Editor lines share one beaded style (`rendering/editor-line.ts`).
 - **idea** — Overlay handles are sized in world units, so they balloon when
   zoomed in. Consider constant screen-pixel sizing for all handles/dots.
 
