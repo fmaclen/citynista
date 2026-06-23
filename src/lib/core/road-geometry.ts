@@ -2397,7 +2397,6 @@ export function buildNodePaint(
 		...crosswalks,
 		...buildPathCrossingZebras(graph, node, centerlines, pair)
 	];
-	if (pairBendDeviation(graph, node, pair[0], pair[1]) < MIN_BEND_DEVIATION) return paths;
 
 	const arms = collectIntersectionArms(graph, node, centerlines, new Set([pair[0].id, pair[1].id]));
 	if (arms.length !== 2) return paths;
