@@ -315,9 +315,8 @@ export class RoadRenderer {
 				const isStart = segment.startNodeId === node.id;
 				const stop = isStart ? samples[0] : samples[samples.length - 1];
 				const inner = isStart ? samples[1] : samples[samples.length - 2];
-				const morph = transitionMorph(graph, node, segmentId);
 				parts.push(
-					`${segmentId}:${segment.lanesKey}:${stop.x},${stop.y},${inner.x},${inner.y}:tm:${morph?.key ?? '-'}`
+					`${segmentId}:${segment.lanesKey}:${stop.x},${stop.y},${inner.x},${inner.y}`
 				);
 			}
 			const hash = parts.join('|');

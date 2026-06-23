@@ -476,7 +476,37 @@ export interface TransitionMorph {
 // anchor's bounding span when the carriageway count changes, center strips
 // match across types (a grass center tapers to a median's width), and
 // unmatched strips end in a square cut.
-export function transitionMorph(
+// transitionMorph is a pure function of the node's local junction state (its
+// arms' cross-sections + geometry). Recomputing it for every segment end every
+// frame is the dominant cost of a drag rebuild, yet a drag only changes the
+// moved node's neighbourhood — so cache by a cheap signature of that state and
+// recompute only on a real change.
+const transitionMorphCache = new Map<string, { sig: string; morph: TransitionMorph | null }>();
+
+function morphSignature(graph: Graph, node: Node) {
+	let sig = `${node.x},${node.y}`;
+	for (const segId of [...node.connectedSegments].sort()) {
+		const seg = graph.segments.get(segId);
+		if (!seg) continue;
+		const isStart = seg.startNodeId === node.id;
+		const far = graph.nodes.get(isStart ? seg.endNodeId : seg.startNodeId);
+		sig += `|${segId}:${seg.lanesKey}:${isStart ? 's' : 'e'}:${seg.controlX ?? '_'},${seg.controlY ?? '_'}:${far?.x ?? '_'},${far?.y ?? '_'}`;
+	}
+	return sig;
+}
+
+export function transitionMorph(graph: Graph, node: Node, segmentId: string) {
+	if (transitionMorphCache.size > 4096) transitionMorphCache.clear();
+	const key = `${node.id}|${segmentId}`;
+	const sig = morphSignature(graph, node);
+	const cached = transitionMorphCache.get(key);
+	if (cached && cached.sig === sig) return cached.morph;
+	const morph = computeTransitionMorph(graph, node, segmentId);
+	transitionMorphCache.set(key, { sig, morph });
+	return morph;
+}
+
+function computeTransitionMorph(
 	graph: Graph,
 	node: Node,
 	segmentId: string
