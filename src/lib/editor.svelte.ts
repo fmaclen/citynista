@@ -11,8 +11,8 @@ import {
 	transitionTaper
 } from './core/road-geometry';
 import type { CenterlineSample, Point } from './core/road-geometry';
-import { nodeConnectivity, sameConnectionRef } from './core/lane-connections';
-import type { LaneEndpoint, LaneConnection } from './core/lane-connections';
+import { isDefaultMovement, nodeConnectivity, sameConnectionRef } from './core/lane-connections';
+import type { Barrier, LaneEndpoint, LaneConnection } from './core/lane-connections';
 import type { LaneRef } from './core/types';
 import { SceneManager } from './rendering/scene.svelte';
 import { NodeRenderer, type NodeTone } from './rendering/node-renderer';
@@ -78,9 +78,14 @@ export class Editor {
 	// The junction being edited in connector mode, and its current lane
 	// connectivity overlay (dots + movement arcs).
 	connectorNodeId: string | null = null;
-	private currentConnectors: { endpoints: LaneEndpoint[]; connections: LaneConnection[] } = {
+	private currentConnectors: {
+		endpoints: LaneEndpoint[];
+		connections: LaneConnection[];
+		barriers: Barrier[];
+	} = {
 		endpoints: [],
-		connections: []
+		connections: [],
+		barriers: []
 	};
 
 	mode = $state<Mode>('select');
@@ -468,7 +473,7 @@ export class Editor {
 	// toggling a movement recarves the junction pavement and persists.
 	enterConnectorMode(nodeId: string) {
 		const node = this.graph.nodes.get(nodeId);
-		if (!node || node.connectedSegments.length < 3) return;
+		if (!node || node.connectedSegments.length < 2) return;
 		this.clearSelection();
 		this.connectorNodeId = nodeId;
 		this.mode = 'connector';
@@ -482,7 +487,7 @@ export class Editor {
 	refreshConnectors() {
 		const node = this.connectorNodeId ? this.graph.nodes.get(this.connectorNodeId) : null;
 		if (!node) {
-			this.currentConnectors = { endpoints: [], connections: [] };
+			this.currentConnectors = { endpoints: [], connections: [], barriers: [] };
 			this.connectionRenderer.clear();
 			return;
 		}
@@ -513,11 +518,21 @@ export class Editor {
 		const node = this.connectorNodeId ? this.graph.nodes.get(this.connectorNodeId) : null;
 		if (!node) return;
 		const ref = { from, to };
-		const disabled = [...(node.disabledConnections ?? [])];
-		const existing = disabled.findIndex((d) => sameConnectionRef(d, ref));
-		if (existing >= 0) disabled.splice(existing, 1);
-		else disabled.push(ref);
-		node.disabledConnections = disabled.length > 0 ? disabled : undefined;
+		// A default movement is toggled by adding/removing it from the disabled
+		// set; a non-default one (U-turn, median break) by adding/removing it from
+		// the enabled set.
+		const toggle = (list: typeof node.disabledConnections) => {
+			const next = [...(list ?? [])];
+			const existing = next.findIndex((d) => sameConnectionRef(d, ref));
+			if (existing >= 0) next.splice(existing, 1);
+			else next.push(ref);
+			return next.length > 0 ? next : undefined;
+		};
+		if (isDefaultMovement(this.currentConnectors.endpoints, this.currentConnectors.barriers, from, to)) {
+			node.disabledConnections = toggle(node.disabledConnections);
+		} else {
+			node.enabledConnections = toggle(node.enabledConnections);
+		}
 		this.graph.save();
 		this.rebuildRoads();
 		this.refreshConnectors();

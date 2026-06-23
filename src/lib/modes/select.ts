@@ -646,12 +646,13 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 		controlFrames.clear();
 	};
 
-	// Double-clicking a junction (3+ arms) opens the lane connector for it.
+	// Double-clicking a node (≥2 arms, junctions and transitions) opens the lane
+	// connector for it.
 	const onDoubleClick = (event: MouseEvent) => {
 		if (event.button !== 0) return;
 		const worldPos = editor.sceneManager.screenToWorld(event.clientX, event.clientY);
 		const { node } = nodeHitAt(editor, worldPos.x, worldPos.z);
-		if (node && node.connectedSegments.length >= 3) {
+		if (node && node.connectedSegments.length >= 2) {
 			editor.enterConnectorMode(node.id);
 		}
 	};

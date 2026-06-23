@@ -5,6 +5,7 @@ import type { CenterlineSample, Point } from './road-geometry';
 import {
 	collectIntersectionArms,
 	computeIntersectionTrims,
+	medianBarriers,
 	offsetPoint,
 	sampleTrimmedCenterline
 } from './road-geometry';
@@ -113,42 +114,82 @@ export function laneEndpointsAtNode(
 	return endpoints;
 }
 
-// The permissive default: every incoming lane connects to every outgoing lane
-// on a different arm (no U-turns yet). Turn lanes are made by *restricting*
-// this set later, not by a special lane type.
-export function defaultConnections(endpoints: LaneEndpoint[]): LaneConnection[] {
-	const connections: LaneConnection[] = [];
+export type Barrier = { a: Point; b: Point };
 
+function segmentsCross(p1: Point, p2: Point, p3: Point, p4: Point): boolean {
+	const side = (a: Point, b: Point, c: Point) =>
+		Math.sign((b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x));
+	const d1 = side(p3, p4, p1);
+	const d2 = side(p3, p4, p2);
+	const d3 = side(p1, p2, p3);
+	const d4 = side(p1, p2, p4);
+	return d1 !== d2 && d3 !== d4 && d1 !== 0 && d2 !== 0 && d3 !== 0 && d4 !== 0;
+}
+
+function crossesBarrier(from: Point, to: Point, barriers: Barrier[]): boolean {
+	return barriers.some((bar) => segmentsCross(from, to, bar.a, bar.b));
+}
+
+function makeConnection(from: LaneEndpoint, to: LaneEndpoint): LaneConnection {
+	return {
+		from: from.ref,
+		to: to.ref,
+		fromPoint: from.point,
+		toPoint: to.point,
+		// Incoming traffic heads into the node (+into); outgoing leaves it (−into
+		// of its own arm).
+		fromDir: from.dir,
+		toDir: { x: -to.dir.x, y: -to.dir.y },
+		active: true
+	};
+}
+
+// Whether a movement is in the permissive default set: incoming → outgoing on a
+// DIFFERENT arm that does not cross a centre-median barrier. A U-turn or a
+// cross-median break is NOT default — it has to be enabled explicitly.
+export function isDefaultMovement(
+	endpoints: LaneEndpoint[],
+	barriers: Barrier[],
+	from: LaneRef,
+	to: LaneRef
+): boolean {
+	if (from.segmentId === to.segmentId) return false;
+	const f = endpoints.find((e) => sameLaneRef(e.ref, from) && e.flow === 'in');
+	const t = endpoints.find((e) => sameLaneRef(e.ref, to) && e.flow === 'out');
+	if (!f || !t) return false;
+	return !crossesBarrier(f.point, t.point, barriers);
+}
+
+// The permissive default: every incoming lane connects to every outgoing lane
+// on a different arm, except across a centre median (no U-turns either). Turn
+// lanes are made by *restricting* this set; U-turns and median breaks by
+// *adding* to it.
+export function defaultConnections(
+	endpoints: LaneEndpoint[],
+	barriers: Barrier[] = []
+): LaneConnection[] {
+	const connections: LaneConnection[] = [];
 	for (const from of endpoints) {
 		if (from.flow !== 'in') continue;
 		for (const to of endpoints) {
 			if (to.flow !== 'out') continue;
 			if (to.ref.segmentId === from.ref.segmentId) continue;
-			connections.push({
-				from: from.ref,
-				to: to.ref,
-				fromPoint: from.point,
-				toPoint: to.point,
-				// Incoming traffic heads into the node (+into); outgoing leaves
-				// it (−into of its own arm).
-				fromDir: from.dir,
-				toDir: { x: -to.dir.x, y: -to.dir.y },
-				active: true
-			});
+			if (crossesBarrier(from.point, to.point, barriers)) continue;
+			connections.push(makeConnection(from, to));
 		}
 	}
-
 	return connections;
 }
 
 // The connectivity of a node: its travel-lane endpoints plus the connectors
-// between them (active = not in the node's disabled set). Builds the trimmed
+// between them — the default set (minus the node's disabled movements) plus any
+// explicitly enabled extras (U-turns, median breaks). Builds the trimmed
 // centerlines for the node's arms once.
 export function nodeConnectivity(
 	graph: Graph,
 	node: Node
-): { endpoints: LaneEndpoint[]; connections: LaneConnection[] } {
-	if (node.connectedSegments.length < 2) return { endpoints: [], connections: [] };
+): { endpoints: LaneEndpoint[]; connections: LaneConnection[]; barriers: Barrier[] } {
+	if (node.connectedSegments.length < 2) return { endpoints: [], connections: [], barriers: [] };
 
 	const trims = computeIntersectionTrims(graph);
 	const centerlines = new Map<string, CenterlineSample[]>();
@@ -170,10 +211,22 @@ export function nodeConnectivity(
 	}
 
 	const endpoints = laneEndpointsAtNode(graph, node, centerlines);
+	const barriers = medianBarriers(graph, node, centerlines);
 	const disabled = node.disabledConnections ?? [];
-	const connections = defaultConnections(endpoints);
+	const enabled = node.enabledConnections ?? [];
+
+	const connections = defaultConnections(endpoints, barriers);
 	for (const connection of connections) {
 		connection.active = !disabled.some((d) => sameConnectionRef(d, connection));
 	}
-	return { endpoints, connections };
+
+	// Explicit extras beyond the default — drawn U-turns and median breaks.
+	for (const ref of enabled) {
+		if (connections.some((c) => sameConnectionRef(c, ref))) continue;
+		const f = endpoints.find((e) => sameLaneRef(e.ref, ref.from) && e.flow === 'in');
+		const t = endpoints.find((e) => sameLaneRef(e.ref, ref.to) && e.flow === 'out');
+		if (f && t) connections.push(makeConnection(f, t));
+	}
+
+	return { endpoints, connections, barriers };
 }

@@ -49,6 +49,8 @@ export interface NodeData {
 	// Movements turned OFF at this junction. Empty/omitted = every default
 	// (permissive) movement is allowed.
 	disabledConnections?: LaneConnectionRef[];
+	// Movements turned ON beyond the default set (U-turns, median breaks).
+	enabledConnections?: LaneConnectionRef[];
 }
 
 export interface SegmentData {

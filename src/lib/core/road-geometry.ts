@@ -1571,6 +1571,83 @@ export function collectIntersectionArms(
 	return arms;
 }
 
+// True when a cross-section carries a non-road lane (median/grass) between two
+// roadways — a centre median splitting opposing carriageways.
+function hasCenterMedian(lanes: Lane[]): boolean {
+	const intervals = getLaneIntervals(lanes);
+	for (let i = 0; i < intervals.length; i++) {
+		const surface = laneSurface(intervals[i].laneType);
+		if (surface !== 'island' && surface !== 'verge') continue;
+		const roadBefore = intervals.slice(0, i).some((iv) => laneSurface(iv.laneType) === 'roadway');
+		const roadAfter = intervals.slice(i + 1).some((iv) => laneSurface(iv.laneType) === 'roadway');
+		if (roadBefore && roadAfter) return true;
+	}
+	return false;
+}
+
+function segmentsCross(p1: Point, p2: Point, p3: Point, p4: Point): boolean {
+	const side = (a: Point, b: Point, c: Point) =>
+		Math.sign((b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x));
+	const d1 = side(p3, p4, p1);
+	const d2 = side(p3, p4, p2);
+	const d3 = side(p1, p2, p3);
+	const d4 = side(p1, p2, p4);
+	return d1 !== d2 && d3 !== d4 && d1 !== 0 && d2 !== 0 && d3 !== 0 && d4 !== 0;
+}
+
+// How far a median barrier reaches into each arm past the node, so it spans the
+// region where lane-connection dots sit (≈ MIN_DOT_OFFSET in lane-connections).
+const MEDIAN_BARRIER_REACH = 8;
+
+// Centre-median lines running uninterrupted through the node: a connector
+// crossing one would drive across a raised median, so the default set excludes
+// it (a U-turn or break must be added explicitly). A collinear road pair that
+// both carry a centre median is a barrier along the through road's axis —
+// unless another collinear road pair crosses it, which is a real intersection
+// where the median breaks for the crossing traffic.
+export function medianBarriers(
+	graph: Graph,
+	node: Node,
+	centerlines: Map<string, CenterlineSample[]>
+): { a: Point; b: Point }[] {
+	const arms = collectIntersectionArms(graph, node, centerlines).filter((arm) => arm.hasRoad);
+	if (arms.length < 2) return [];
+
+	const collinear = (a: IntersectionArm, b: IntersectionArm) =>
+		a.into.x * b.into.x + a.into.y * b.into.y < -0.5;
+	const pairs: [IntersectionArm, IntersectionArm][] = [];
+	for (let i = 0; i < arms.length; i++) {
+		for (let j = i + 1; j < arms.length; j++) {
+			if (collinear(arms[i], arms[j])) pairs.push([arms[i], arms[j]]);
+		}
+	}
+
+	// The barrier runs along the through road's median: from inside one arm,
+	// through the node, to inside the other. Built from each arm's axis (not its
+	// mouth, which at an untrimmed node sits on the node and collapses to a
+	// point), reaching out past where the lane dots are seated so a crossing
+	// connector intersects it.
+	const reach = (arm: IntersectionArm) =>
+		Math.max(Math.hypot(arm.stop.x - node.x, arm.stop.y - node.y), MEDIAN_BARRIER_REACH) +
+		MEDIAN_BARRIER_REACH;
+	const into = (arm: IntersectionArm) => ({
+		x: node.x - arm.into.x * reach(arm),
+		y: node.y - arm.into.y * reach(arm)
+	});
+
+	const barriers: { a: Point; b: Point }[] = [];
+	for (const [a, b] of pairs) {
+		if (!hasCenterMedian(a.lanes) || !hasCenterMedian(b.lanes)) continue;
+		const aEnd = into(a);
+		const bEnd = into(b);
+		const crossed = pairs.some(
+			([c, d]) => !(c === a && d === b) && segmentsCross(aEnd, bEnd, into(c), into(d))
+		);
+		if (!crossed) barriers.push({ a: aEnd, b: bEnd });
+	}
+	return barriers;
+}
+
 // The dominant carriageway material of an arm: concrete only when it out-widths
 // the asphalt lanes, otherwise asphalt (turn pockets count as asphalt).
 function armCarriageway(lanes: Lane[]): LaneType {

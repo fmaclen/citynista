@@ -55,7 +55,10 @@ export function setupConnectorMode(editor: Editor): ModeHandlers {
 			// red over anything else under the cursor.
 			const near = editor.connectorEndpointNear(world.x, world.z);
 			const over = near && !sameLaneRef(near.ref, dragStart.ref) ? near : null;
-			const valid = !!over && over.flow === 'out' && over.ref.segmentId !== dragStart.ref.segmentId;
+			// Any outgoing dot is a valid drop — a different arm (a turn/through),
+			// or the same arm (a U-turn). Cross-median moves and U-turns are added
+			// as explicit extras.
+			const valid = !!over && over.flow === 'out';
 			editor.connectionRenderer.setDragFeedback(dragStart.ref, over ? over.ref : null, valid);
 			editor.connectionRenderer.showRubberBand(
 				dragStart.point,
@@ -77,7 +80,7 @@ export function setupConnectorMode(editor: Editor): ModeHandlers {
 		if (dragStart) {
 			const world = editor.sceneManager.screenToWorld(event.clientX, event.clientY);
 			const near = editor.connectorEndpointNear(world.x, world.z);
-			if (near && near.flow === 'out' && near.ref.segmentId !== dragStart.ref.segmentId) {
+			if (near && near.flow === 'out' && !sameLaneRef(near.ref, dragStart.ref)) {
 				editor.toggleConnection(dragStart.ref, near.ref);
 			}
 			dragStart = null;

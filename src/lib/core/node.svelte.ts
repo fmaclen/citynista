@@ -7,6 +7,9 @@ export class Node {
 	connectedSegments: string[] = [];
 	// Movements turned off here; undefined = all default movements allowed.
 	disabledConnections = $state<LaneConnectionRef[] | undefined>(undefined);
+	// Movements turned ON that are not in the default set — a U-turn or a break
+	// across a median the default treats as a barrier.
+	enabledConnections = $state<LaneConnectionRef[] | undefined>(undefined);
 
 	constructor(id: string, x: number, y: number) {
 		this.id = id;
@@ -39,6 +42,12 @@ export class Node {
 				to: { ...c.to }
 			}));
 		}
+		if (this.enabledConnections && this.enabledConnections.length > 0) {
+			data.enabledConnections = this.enabledConnections.map((c) => ({
+				from: { ...c.from },
+				to: { ...c.to }
+			}));
+		}
 		return data;
 	}
 
@@ -46,6 +55,9 @@ export class Node {
 		const node = new Node(data.id, data.x, data.y);
 		if (data.disabledConnections && data.disabledConnections.length > 0) {
 			node.disabledConnections = data.disabledConnections;
+		}
+		if (data.enabledConnections && data.enabledConnections.length > 0) {
+			node.enabledConnections = data.enabledConnections;
 		}
 		return node;
 	}
