@@ -275,12 +275,16 @@ export function centerCrossedAt(
 	const pair = nodeThroughPair(graph, node);
 	if (!pair) return false;
 
-	const arms = collectIntersectionArms(graph, node, centerlines, new Set([pair[0].id, pair[1].id]));
+	const throughIds = new Set([pair[0].id, pair[1].id]);
+	const arms = collectIntersectionArms(graph, node, centerlines, throughIds);
 	if (arms.length === 0) return false;
 	const axis = arms[0].into;
 	const a = { x: node.x - axis.x * CENTER_CROSS_REACH, y: node.y - axis.y * CENTER_CROSS_REACH };
 	const b = { x: node.x + axis.x * CENTER_CROSS_REACH, y: node.y + axis.y * CENTER_CROSS_REACH };
 
+	// The centre line breaks wherever an active movement crosses it — a slip,
+	// turn, or U-turn carrying traffic across the through road's centreline. To
+	// keep the line continuous through a fork, disable the crossing movements.
 	return activeConnectionsAt(graph, node, centerlines).some((c) =>
 		segmentsCross(c.fromPoint, c.toPoint, a, b)
 	);

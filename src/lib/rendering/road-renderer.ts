@@ -6,6 +6,7 @@ import {
 	computeIntersectionTrims,
 	getLaneIntervals,
 	isContinuationNode,
+	nodeThroughPair,
 	sampleTrimmedCenterline,
 	transitionMorph,
 	transitionStraddle
@@ -198,9 +199,11 @@ export class RoadRenderer {
 		// road's centreline breaks the solid centre line there; everywhere else
 		// it runs through. Computed once so both the segments meeting the node
 		// and the node piece agree.
-		const centerBreak = new Map<string, boolean>();
+		const centerBreak = new Map<string, Set<string>>();
 		for (const node of graph.nodes.values()) {
-			if (centerCrossedAt(graph, node, centerlines)) centerBreak.set(node.id, true);
+			if (!centerCrossedAt(graph, node, centerlines)) continue;
+			const pair = nodeThroughPair(graph, node);
+			if (pair) centerBreak.set(node.id, new Set(pair.map((segment) => segment.id)));
 		}
 
 		const seen = new Set<string>();
@@ -211,8 +214,8 @@ export class RoadRenderer {
 
 			const startNode = graph.nodes.get(segment.startNodeId)!;
 			const endNode = graph.nodes.get(segment.endNodeId)!;
-			const centerBreakStart = centerBreak.get(startNode.id) ?? false;
-			const centerBreakEnd = centerBreak.get(endNode.id) ?? false;
+			const centerBreakStart = centerBreak.get(startNode.id)?.has(segment.id) ?? false;
+			const centerBreakEnd = centerBreak.get(endNode.id)?.has(segment.id) ?? false;
 			const joinStart = startNode.connectedSegments.length > 1;
 			const joinEnd = endNode.connectedSegments.length > 1;
 			// At two-segment same-type nodes the node piece carries medians and
@@ -282,12 +285,25 @@ export class RoadRenderer {
 
 			const key = `node:${node.id}`;
 			const parts: string[] = [`${node.x},${node.y}`];
-			// Disabled movements carve the junction pavement, so they belong in
-			// the piece hash — toggling a connector must rebuild the node.
+			const centerBroken = centerBreak.has(node.id);
+			parts.push(`cb:${centerBroken}`);
+			// Connector overrides carve the junction pavement and can decide
+			// whether the centre line breaks, so they belong in the piece hash.
 			if (node.disabledConnections?.length) {
 				parts.push(
 					'dc:' +
 						node.disabledConnections
+							.map(
+								(c) => `${c.from.segmentId}.${c.from.laneIndex}>${c.to.segmentId}.${c.to.laneIndex}`
+							)
+							.sort()
+							.join(',')
+				);
+			}
+			if (node.enabledConnections?.length) {
+				parts.push(
+					'ec:' +
+						node.enabledConnections
 							.map(
 								(c) => `${c.from.segmentId}.${c.from.laneIndex}>${c.to.segmentId}.${c.to.laneIndex}`
 							)
@@ -314,7 +330,7 @@ export class RoadRenderer {
 			const jitterValue = this.jitterFor(key);
 			const group = this.buildLayerGroup(buildNodeLayers(graph, node, centerlines), jitterValue);
 			for (const mesh of this.buildNodePaintMeshes(
-				buildNodePaint(graph, node, centerlines),
+				buildNodePaint(graph, node, centerlines, centerBroken),
 				jitterValue
 			)) {
 				group.add(mesh);

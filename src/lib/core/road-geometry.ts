@@ -2384,7 +2384,8 @@ const CROSSWALK_INSET = 0.4;
 export function buildNodePaint(
 	graph: Graph,
 	node: Node,
-	centerlines: Map<string, CenterlineSample[]>
+	centerlines: Map<string, CenterlineSample[]>,
+	centerBroken: boolean
 ): NodePaintPath[] {
 	// Road crosswalks render at every junction-grade node (3+ road arms),
 	// whether it's a plain junction or a merge with a through pair — only a pure
@@ -2397,11 +2398,6 @@ export function buildNodePaint(
 		...crosswalks,
 		...buildPathCrossingZebras(graph, node, centerlines, pair)
 	];
-	// At a straight pair the segment ribbons butt, so their own paint meets at
-	// the node — drawing it again here would double a continuous line and, at a
-	// merge where traffic diverges across the centre, paint a centre line that
-	// should break. Only a bend needs node paint (its corner bands).
-	if (pairBendDeviation(graph, node, pair[0], pair[1]) < MIN_BEND_DEVIATION) return paths;
 
 	const arms = collectIntersectionArms(graph, node, centerlines, new Set([pair[0].id, pair[1].id]));
 	if (arms.length !== 2) return paths;
@@ -2425,9 +2421,28 @@ export function buildNodePaint(
 	}
 
 	const bounds = laneBoundaryOffsets(lanes);
+	// A straight pair can still have its mouths pulled back by a setback; bridge
+	// only the centre boundary across that gap. Other lane dividers stay owned
+	// by the segment paint.
+	if (pairBendDeviation(graph, node, pair[0], pair[1]) < MIN_BEND_DEVIATION) {
+		if (centerBroken) return paths;
+		for (let j = 0; j + 1 < lanes.length; j++) {
+			const paint = lanePaintBetween(lanes[j], lanes[j + 1]);
+			if (!paint || paint.color !== 'center') continue;
+			const offset = bounds[j + 1];
+			paths.push({
+				color: paint.color,
+				dashed: paint.dashed,
+				points: [offsetPoint(armA.stop, armA.crossDir, offset), offsetPoint(armB.stop, dirB, offset)]
+			});
+		}
+		return paths;
+	}
+
 	for (let j = 0; j + 1 < lanes.length; j++) {
 		const paint = lanePaintBetween(lanes[j], lanes[j + 1]);
 		if (!paint) continue;
+		if (centerBroken && paint.color === 'center') continue;
 		const offset = bounds[j + 1];
 		paths.push({
 			color: paint.color,
