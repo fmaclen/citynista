@@ -66,6 +66,11 @@ interface NodeGeometryMetadata {
 	protectedBandsByType: Map<LaneType, Paths>;
 }
 
+interface CrossingConnector {
+	a: Point;
+	b: Point;
+}
+
 function createNodeGeometryMetadata() {
 	const sidewalkCuts: Paths = [];
 	return {
@@ -1097,7 +1102,8 @@ function addNodeGeometry(
 	node: Node,
 	centerlines: Map<string, CenterlineSample[]>,
 	bandsByType: Map<LaneType, Paths>,
-	metadata?: NodeGeometryMetadata
+	metadata?: NodeGeometryMetadata,
+	crossingConnectors: CrossingConnector[] = []
 ) {
 	const segments = validNodeSegments(graph, node);
 	if (segments.length < 2) return;
@@ -1120,7 +1126,7 @@ function addNodeGeometry(
 		if (merge) {
 			addMergeNode(graph, node, merge, centerlines, bandsByType);
 		} else {
-			addIntersection(graph, node, centerlines, bandsByType, metadata);
+			addIntersection(graph, node, centerlines, bandsByType, metadata, crossingConnectors);
 			// Paths land on the junction with straight aprons, outside the
 			// plate's corner ring — a narrow far-back path mouth between two
 			// wide road mouths would warp the corner curves.
@@ -1684,7 +1690,11 @@ function centerMedianIntervalInFrame(arm: IntersectionArm, flipped: boolean) {
 	};
 }
 
-function centerMedianPairs(node: Node, arms: IntersectionArm[]) {
+function centerMedianPairs(
+	node: Node,
+	arms: IntersectionArm[],
+	crossingConnectors: CrossingConnector[] = []
+) {
 	const candidates: CenterMedianPair[] = [];
 
 	for (let i = 0; i < arms.length; i++) {
@@ -1735,14 +1745,16 @@ function centerMedianPairs(node: Node, arms: IntersectionArm[]) {
 		(pair) => armUseCounts.get(pair.a) === 1 && armUseCounts.get(pair.b) === 1
 	);
 
-	return disjoint.filter(
-		(pair) =>
-			!disjoint.some(
-				(other) =>
-					other !== pair &&
-					segmentsCross(pair.axisA, pair.axisB, other.axisA, other.axisB)
-			)
-	);
+	return disjoint.filter((pair) => {
+		const crossedByDividedPair = disjoint.some(
+			(other) =>
+				other !== pair && segmentsCross(pair.axisA, pair.axisB, other.axisA, other.axisB)
+		);
+		if (crossedByDividedPair) return false;
+		return !crossingConnectors.some((connector) =>
+			segmentsCross(connector.a, connector.b, pair.axisA, pair.axisB)
+		);
+	});
 }
 
 function centerMedianBand(pair: CenterMedianPair) {
@@ -1771,11 +1783,16 @@ function centerMedianBand(pair: CenterMedianPair) {
 	return normalizeWinding(band);
 }
 
-function centerMedianContinuations(node: Node, arms: IntersectionArm[], pavement: Paths) {
+function centerMedianContinuations(
+	node: Node,
+	arms: IntersectionArm[],
+	pavement: Paths,
+	crossingConnectors: CrossingConnector[] = []
+) {
 	const continuations: CenterMedianContinuation[] = [];
 	if (pavement.length === 0) return continuations;
 
-	for (const pair of centerMedianPairs(node, arms)) {
+	for (const pair of centerMedianPairs(node, arms, crossingConnectors)) {
 		const clipped = executeBoolean(ClipperLib.ClipType.ctIntersection, [centerMedianBand(pair)], pavement);
 		if (clipped.length === 0) continue;
 		continuations.push({ laneType: pair.laneType, paths: clipped });
@@ -1806,7 +1823,8 @@ function addIntersection(
 	node: Node,
 	centerlines: Map<string, CenterlineSample[]>,
 	bandsByType: Map<LaneType, Paths>,
-	metadata?: NodeGeometryMetadata
+	metadata?: NodeGeometryMetadata,
+	crossingConnectors: CrossingConnector[] = []
 ) {
 	let arms = collectIntersectionArms(graph, node, centerlines);
 	if (arms.length < 2) return;
@@ -1873,7 +1891,7 @@ function addIntersection(
 	// movement allowed this is the clean convex patch.
 	const roadBands = getOrCreateBands(bandsByType, patchType);
 	const pavement = junctionPavement(node, roadArms);
-	const continuations = centerMedianContinuations(node, roadArms, pavement);
+	const continuations = centerMedianContinuations(node, roadArms, pavement, crossingConnectors);
 	const continuationCuts = continuations.flatMap((continuation) => continuation.paths);
 
 	for (const continuation of continuations) {
@@ -2785,13 +2803,14 @@ export function isContinuationNode(graph: Graph, node: Node, segmentId?: string)
 export function buildNodeLayers(
 	graph: Graph,
 	node: Node,
-	centerlines: Map<string, CenterlineSample[]>
+	centerlines: Map<string, CenterlineSample[]>,
+	crossingConnectors: { a: Point; b: Point }[] = []
 ): RoadLayer[] {
 	if (node.connectedSegments.length < 2) return [];
 
 	const bandsByType = new Map<LaneType, Paths>();
 	const nodeGeometry = createNodeGeometryMetadata();
-	addNodeGeometry(graph, node, centerlines, bandsByType, nodeGeometry);
+	addNodeGeometry(graph, node, centerlines, bandsByType, nodeGeometry, crossingConnectors);
 
 	const allBands: Paths = [];
 	for (const bands of bandsByType.values()) {

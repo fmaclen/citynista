@@ -36,7 +36,7 @@ import {
 	laneSurface
 } from '../core/lane-types';
 import type { Lane, TurnMovement } from '../core/types';
-import { centerCrossedAt } from '../core/lane-connections';
+import { activeConnectionsAt, centerCrossedAt } from '../core/lane-connections';
 
 const LAYER_Y: Record<RoadLayerId, number> = Object.fromEntries(
 	LANE_TYPE_LIST.map((type) => [type, laneLayerY(type)])
@@ -327,7 +327,14 @@ export class RoadRenderer {
 
 			this.removePiece(key);
 			const jitterValue = this.jitterFor(key);
-			const group = this.buildLayerGroup(buildNodeLayers(graph, node, centerlines), jitterValue);
+			const crossingConnectors = activeConnectionsAt(graph, node, centerlines).map((connection) => ({
+				a: connection.fromPoint,
+				b: connection.toPoint
+			}));
+			const group = this.buildLayerGroup(
+				buildNodeLayers(graph, node, centerlines, crossingConnectors),
+				jitterValue
+			);
 			for (const mesh of this.buildNodePaintMeshes(
 				buildNodePaint(graph, node, centerlines, centerBroken),
 				jitterValue
