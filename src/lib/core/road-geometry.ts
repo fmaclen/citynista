@@ -433,6 +433,9 @@ export interface TransitionMorph {
 	laneBoundaries: (number | null)[];
 	halfWidth: number;
 	length: number;
+	// True for the narrow side's identity morph — it never necks, so its lane
+	// paint is left alone; only the morphing side suppresses paint in its taper.
+	anchor: boolean;
 	// Compact form for piece hashes.
 	key: string;
 }
@@ -482,6 +485,7 @@ export function transitionMorph(
 			laneBoundaries: bounds.slice(1, -1),
 			halfWidth: halfSelf,
 			length,
+			anchor: true,
 			key: `${length}:${halfSelf}:anchor`
 		};
 	}
@@ -600,6 +604,7 @@ export function transitionMorph(
 		laneBoundaries,
 		halfWidth: halfOther,
 		length,
+		anchor: false,
 		key:
 			`${length}:${halfOther}:` +
 			`${targets.map((t) => (t ? `${t.start},${t.end}` : 'x')).join(';')}|` +

@@ -548,10 +548,18 @@ export class RoadRenderer {
 			const startTarget = morphStart ? morphStart.laneBoundaries[k] : undefined;
 			const endTarget = morphEnd ? morphEnd.laneBoundaries[k] : undefined;
 
-			let from = continuityJoinStart || morphStart ? 0 : PAINT_END_INSET;
-			let to = total - (continuityJoinEnd || morphEnd ? 0 : PAINT_END_INSET);
-			if (startTarget === null) from = Math.max(from, lengthStart);
-			if (endTarget === null) to = Math.min(to, total - lengthEnd);
+			// The morphing (wide) side suppresses its lane-divider paint inside the
+			// taper zone — the stretch between the node and the handle is a merge,
+			// its dashed lines left off — but the centre line runs straight
+			// through. The anchor (narrow) side never necks, so its paint runs to
+			// the seam as usual, as does a plain continuation.
+			const suppressInTaper = paint.color !== 'center';
+			const morphStartActive = !!morphStart && !morphStart.anchor && suppressInTaper;
+			const morphEndActive = !!morphEnd && !morphEnd.anchor && suppressInTaper;
+			let from = morphStartActive ? lengthStart : continuityJoinStart || morphStart ? 0 : PAINT_END_INSET;
+			let to = morphEndActive
+				? total - lengthEnd
+				: total - (continuityJoinEnd || morphEnd ? 0 : PAINT_END_INSET);
 
 			// A branching line ends early with a gap: once it has converged
 			// to within a sliver of the line it merges into, the lane is no
