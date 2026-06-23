@@ -627,6 +627,39 @@ export function transitionTaper(
 	return { segmentId: wide.id, length: morph.length };
 }
 
+// A straight width-transition straddles its node: the wide ribbon's taper runs
+// half its length PAST the node (extrapolated straight, collinear with the
+// narrow side) and the narrow side trims back the same amount to meet it — one
+// continuous ramp centred on the node, instead of the taper ending at it. Only
+// straight transitions (a bent one renders corner bands at the node, which the
+// extended ribbon would fight); null otherwise.
+export function transitionStraddle(
+	graph: Graph,
+	node: Node
+): {
+	wideId: string;
+	narrowId: string;
+	half: number;
+	wideAtStart: boolean;
+	narrowAtStart: boolean;
+} | null {
+	if (node.connectedSegments.length !== 2) return null;
+	const pair = nodeThroughPair(graph, node);
+	if (!pair) return null;
+	if (pairBendDeviation(graph, node, pair[0], pair[1]) >= MIN_BEND_DEVIATION) return null;
+	const taper = transitionTaper(graph, node);
+	if (!taper || taper.length <= 0) return null;
+	const wideSeg = pair[0].id === taper.segmentId ? pair[0] : pair[1];
+	const narrowSeg = pair[0].id === taper.segmentId ? pair[1] : pair[0];
+	return {
+		wideId: wideSeg.id,
+		narrowId: narrowSeg.id,
+		half: taper.length / 2,
+		wideAtStart: wideSeg.startNodeId === node.id,
+		narrowAtStart: narrowSeg.startNodeId === node.id
+	};
+}
+
 function laneBoundaryOffsets(lanes: Lane[]): number[] {
 	const bounds = [-getTotalWidth(lanes) / 2];
 	for (const lane of lanes) {
@@ -1119,7 +1152,6 @@ function addNodeGeometry(
 				}
 			}
 		}
-		addMedianContinuation(graph, node, centerlines, bandsByType);
 	} else {
 		addPairJoin(graph, node, centerlines, bandsByType);
 	}
@@ -1144,7 +1176,7 @@ function addMergeNode(
 		// full-section spoke from each through mouth to the centre (a no-op when
 		// the mouths already meet).
 		for (const arm of collectIntersectionArms(graph, node, centerlines)) {
-			if (!merge.throughIds.has(arm.segmentId)) continue;
+			if (!merge.throughIds.has(arm.segmentId) || arm.setback === undefined) continue;
 			getOrCreateBands(bandsByType, 'sidewalk').push(
 				armSpoke(node, arm, arm.halfWidth, arm.halfWidth)
 			);
@@ -1475,6 +1507,10 @@ export interface IntersectionArm {
 	hasRoad: boolean;
 	toward: SideProfile;
 	away: SideProfile;
+	// The manual setback at this end, if any. Spokes that seal the junction
+	// interior are only needed when a setback pulls this mouth back from the
+	// node; without one the mouth-to-mouth ring already covers the centre.
+	setback: number | undefined;
 }
 
 export function collectIntersectionArms(
@@ -1522,7 +1558,8 @@ export function collectIntersectionArms(
 			halfWidth: profile.halfWidth,
 			hasRoad: profile.hasRoad,
 			toward: isStart ? profile.positive : profile.negative,
-			away: isStart ? profile.negative : profile.positive
+			away: isStart ? profile.negative : profile.positive,
+			setback: isStart ? segment.setbackStart : segment.setbackEnd
 		});
 	}
 
@@ -1599,7 +1636,11 @@ function addIntersection(
 	}
 	const plateRing = normalizeWinding(plate.map((point) => toClipperPoint(point.x, point.y)));
 	const plateSpokes = arms.map((arm) => armSpoke(node, arm, arm.halfWidth, arm.halfWidth));
-	for (const path of unionPaths([plateRing, ...plateSpokes])) {
+	const plateCorners = arms.flatMap((arm) => [
+		offsetPoint(arm.stop, arm.side, arm.halfWidth),
+		offsetPoint(arm.stop, arm.side, -arm.halfWidth)
+	]);
+	for (const path of unionPaths([plateRing, ...clipSpokesToMouths(plateSpokes, plateCorners)])) {
 		sidewalkBands.push(path);
 	}
 
@@ -1865,6 +1906,48 @@ function toClipperPoint(x: number, y: number) {
 	return { X: Math.round(x * CLIPPER_SCALE), Y: Math.round(y * CLIPPER_SCALE) };
 }
 
+// Andrew's monotone chain. Used to bound the junction interior: the hull of the
+// arm mouth corners is the tightest convex region containing every mouth and the
+// node centre, so clipping the interior-fill spokes to it keeps the gaps they
+// patch (inside the hull) while shaving the tongues a wide arm's full-width
+// spoke pokes out past a sharp neighbour (outside the hull).
+function convexHull(points: Point[]): Point[] {
+	if (points.length < 3) return points;
+	const pts = [...points].sort((a, b) => a.x - b.x || a.y - b.y);
+	const cross = (o: Point, a: Point, b: Point) =>
+		(a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
+	const lower: Point[] = [];
+	for (const p of pts) {
+		while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], p) <= 0)
+			lower.pop();
+		lower.push(p);
+	}
+	const upper: Point[] = [];
+	for (let i = pts.length - 1; i >= 0; i--) {
+		const p = pts[i];
+		while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], p) <= 0)
+			upper.pop();
+		upper.push(p);
+	}
+	lower.pop();
+	upper.pop();
+	return lower.concat(upper);
+}
+
+// Spokes run each arm in to the node centre to seal the interior however the
+// mouths are set back, but a full-width spoke on a wide arm pokes a tongue out
+// past a sharp neighbour. Clip the spoke union to the convex hull of the mouth
+// corners — slightly expanded so it never bites into the mouths themselves — so
+// the fill stays and the tongue goes.
+function clipSpokesToMouths(spokes: Paths, mouthCorners: Point[]): Paths {
+	if (spokes.length === 0) return spokes;
+	const hull = convexHull(mouthCorners);
+	if (hull.length < 3) return spokes;
+	const hullPath = normalizeWinding(hull.map((p) => toClipperPoint(p.x, p.y)));
+	const padded = offsetPaths([hullPath], 0.5);
+	return executeBoolean(ClipperLib.ClipType.ctIntersection, unionPaths(spokes), padded);
+}
+
 export function executeBoolean(clipType: number, subject: Paths, clip: Paths): Paths {
 	const clipper = new ClipperLib.Clipper();
 	clipper.AddPaths(subject, ClipperLib.PolyType.ptSubject, true);
@@ -2054,10 +2137,16 @@ function junctionPavement(node: Node, arms: IntersectionArm[]): Paths {
 	}
 	const ringPath = normalizeWinding(ring.map((p) => toClipperPoint(p.x, p.y)));
 	// Connecting the mouths alone leaves a hole between two arms set back far
-	// from the node, so union a spoke that runs each carriageway in to the
-	// centre.
+	// from the node (and where mismatched arm widths self-intersect the ring), so
+	// union a spoke that runs each carriageway in to the centre. Clip the spokes
+	// to the mouth-corner hull so a wide arm's spoke fills the hole without
+	// poking a tongue out past a sharp, narrow neighbour.
 	const spokes = arms.map((arm) => armSpoke(node, arm, arm.away.roadEdge, arm.toward.roadEdge));
-	return unionPaths([ringPath, ...spokes]);
+	const corners = arms.flatMap((arm) => [
+		offsetPoint(arm.stop, arm.side, arm.toward.roadEdge),
+		offsetPoint(arm.stop, arm.side, -arm.away.roadEdge)
+	]);
+	return unionPaths([ringPath, ...clipSpokesToMouths(spokes, corners)]);
 }
 
 // A full-width quad from an arm's mouth in to just past the node centre. Unioned
@@ -2075,50 +2164,6 @@ function armSpoke(node: Node, arm: IntersectionArm, leftEdge: number, rightEdge:
 	const p2 = offsetPoint(p1, arm.into, reach);
 	const p3 = offsetPoint(p0, arm.into, reach);
 	return normalizeWinding([p0, p1, p2, p3].map((p) => toClipperPoint(p.x, p.y)));
-}
-
-// Continue each arm's medians/verges (a divided road's central strip) through
-// the junction, broken only where a roadway actually crosses them — so a median
-// no longer leaves a full gap at the intersection. A spoke per island/verge
-// interval, minus every roadway spoke (which sit beside it on through arms and
-// across it on crossing arms), added to that lane type's band (drawn above the
-// asphalt).
-function addMedianContinuation(
-	graph: Graph,
-	node: Node,
-	centerlines: Map<string, CenterlineSample[]>,
-	bandsByType: Map<LaneType, Paths>
-) {
-	const arms = collectIntersectionArms(graph, node, centerlines).filter((arm) => arm.hasRoad);
-	if (arms.length < 2) return;
-
-	const roadwaySpokes: Paths = [];
-	const islandSpokes = new Map<LaneType, Paths>();
-	for (const arm of arms) {
-		for (const interval of getLaneIntervals(arm.lanes)) {
-			const surface = laneSurface(interval.laneType);
-			const spoke = armSpoke(node, arm, -interval.start, interval.end);
-			if (surface === 'roadway') {
-				roadwaySpokes.push(spoke);
-			} else if (surface === 'island' || surface === 'verge') {
-				const list = islandSpokes.get(interval.laneType);
-				if (list) list.push(spoke);
-				else islandSpokes.set(interval.laneType, [spoke]);
-			}
-		}
-	}
-	if (islandSpokes.size === 0) return;
-
-	const roadways = unionPaths(roadwaySpokes);
-	for (const [laneType, spokes] of islandSpokes) {
-		const continued = executeBoolean(
-			ClipperLib.ClipType.ctDifference,
-			unionPaths(spokes),
-			roadways
-		);
-		const band = getOrCreateBands(bandsByType, laneType);
-		for (const path of continued) band.push(path);
-	}
 }
 
 export function pathsToPolygons(paths: Paths): PolygonWithHoles[] {

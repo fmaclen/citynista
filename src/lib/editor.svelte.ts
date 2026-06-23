@@ -7,6 +7,7 @@ import { resolveCrossings } from './core/crossings';
 import {
 	computeIntersectionTrims,
 	sampleTrimmedCenterline,
+	transitionStraddle,
 	transitionTaper
 } from './core/road-geometry';
 import type { CenterlineSample, Point } from './core/road-geometry';
@@ -30,6 +31,10 @@ export interface SetbackHandleInfo {
 	// Full (untrimmed) centerline, oriented node-side first, for projecting
 	// the drag to an arc-length setback.
 	centerline: CenterlineSample[];
+	// A straddling transition has a handle on each side at half the taper
+	// length; they are linked (drag one, both move) and the stored setback is
+	// twice the handle distance (the full taper spans both sides of the node).
+	straddle?: { link: { segmentId: string; atStart: boolean } };
 }
 import type { ModeHandlers, Mode, DrawStyle } from './modes/types';
 import { setupDrawMode } from './modes/draw';
@@ -318,10 +323,13 @@ export class Editor {
 			this.setbackRenderer.clear();
 			return;
 		}
-		// Junctions (3+ arms) get a handle per arm at its stop line. A 2-segment
-		// transition gets one handle on the wide side controlling the taper.
+		// Junctions (3+ arms) get a handle per arm at its stop line. A straight
+		// width-transition straddles its node, so it gets a linked handle on each
+		// side at half the taper length; a bent transition keeps one handle on
+		// the wide side.
 		const isJunction = node.connectedSegments.length >= 3;
 		const taper = isJunction ? null : transitionTaper(this.graph, node);
+		const straddle = isJunction ? null : transitionStraddle(this.graph, node);
 		if (!isJunction && !taper) {
 			this.currentSetbackHandles = [];
 			this.setbackRenderer.clear();
@@ -332,8 +340,9 @@ export class Editor {
 		const rich: SetbackHandleInfo[] = [];
 		const display: SetbackHandle[] = [];
 		for (const segmentId of node.connectedSegments) {
-			// At a transition only the wide (morphing) segment gets a handle.
-			if (taper && segmentId !== taper.segmentId) continue;
+			// A bent transition only handles the wide (morphing) segment; a
+			// straddle handles both sides; a junction handles every arm.
+			if (taper && !straddle && segmentId !== taper.segmentId) continue;
 			const segment = this.graph.segments.get(segmentId);
 			if (!segment) continue;
 			const startNode = this.graph.nodes.get(segment.startNodeId);
@@ -347,16 +356,38 @@ export class Editor {
 			let centerline = sampleTrimmedCenterline(segment, startNode, endNode, 0, 0);
 			if (!atStart) centerline = [...centerline].reverse();
 
-			// Seat the handle at its stop line (transition: at the taper start),
-			// but never closer to the node than the minimum, so a through-road's
-			// two stops don't stack on the node.
-			const trimDist = taper ? taper.length : atStart ? trim.start : trim.end;
+			// Seat the handle at its stop line — a straddle at half the taper
+			// length (the taper end on this side), a bent transition at the taper
+			// start, a junction at its trim — never closer than the minimum so a
+			// through-road's two stops don't stack on the node.
+			const trimDist = straddle
+				? straddle.half
+				: taper
+					? taper.length
+					: atStart
+						? trim.start
+						: trim.end;
 			const nodePoint = { x: node.x, y: node.y };
 			const handlePoint = pointAtArcLength(
 				centerline,
 				Math.max(trimDist, SETBACK_HANDLE_MIN_OFFSET)
 			);
-			rich.push({ segmentId, atStart, node: nodePoint, handle: handlePoint, centerline });
+			let straddleInfo: SetbackHandleInfo['straddle'];
+			if (straddle) {
+				const otherId = node.connectedSegments.find((id) => id !== segmentId);
+				const otherSeg = otherId ? this.graph.segments.get(otherId) : undefined;
+				if (otherId && otherSeg) {
+					straddleInfo = { link: { segmentId: otherId, atStart: otherSeg.startNodeId === node.id } };
+				}
+			}
+			rich.push({
+				segmentId,
+				atStart,
+				node: nodePoint,
+				handle: handlePoint,
+				centerline,
+				straddle: straddleInfo
+			});
 			display.push({ node: nodePoint, handle: handlePoint });
 		}
 
@@ -407,9 +438,21 @@ export class Editor {
 
 		const segment = this.graph.segments.get(handle.segmentId);
 		if (!segment) return;
-		const value = bestArc < 1 ? undefined : bestArc;
+		// A straddle handle sits at half the taper, so the stored setback (the
+		// full taper length) is twice the drag distance, and the linked segment
+		// on the other side gets the same value.
+		const value =
+			bestArc < 1 ? undefined : handle.straddle ? bestArc * 2 : bestArc;
 		if (handle.atStart) segment.setbackStart = value;
 		else segment.setbackEnd = value;
+
+		if (handle.straddle) {
+			const linked = this.graph.segments.get(handle.straddle.link.segmentId);
+			if (linked) {
+				if (handle.straddle.link.atStart) linked.setbackStart = value;
+				else linked.setbackEnd = value;
+			}
+		}
 
 		this.rebuildRoads();
 		this.refreshSetbackHandles();

@@ -7,7 +7,8 @@ import {
 	getLaneIntervals,
 	isContinuationNode,
 	sampleTrimmedCenterline,
-	transitionMorph
+	transitionMorph,
+	transitionStraddle
 } from '../core/road-geometry';
 import type { NodePaintPath, SegmentTrims } from '../core/road-geometry';
 import type {
@@ -46,6 +47,37 @@ const LAYER_COLORS: Record<RoadLayerId, string> = Object.fromEntries(
 // Segment ribbons reach slightly into their node pieces so no hairline
 // cracks can open between them.
 const JOIN_OVERLAP = 0.5;
+
+// Extend a centerline straight past one end, along its end tangent and keeping
+// the end's normal — used so a transition's wide ribbon carries its taper past
+// the node (collinear with the narrow side) for a single ramp straddling it.
+function extendCenterline(
+	samples: CenterlineSample[],
+	atStart: boolean,
+	distance: number
+): CenterlineSample[] {
+	if (samples.length < 2 || distance <= 0.01) return samples;
+	const b = atStart ? samples[0] : samples[samples.length - 1];
+	const a = atStart ? samples[1] : samples[samples.length - 2];
+	const dx = b.x - a.x;
+	const dy = b.y - a.y;
+	const len = Math.hypot(dx, dy);
+	if (len < 0.0001) return samples;
+	const ux = dx / len;
+	const uy = dy / len;
+	const extra: CenterlineSample[] = [];
+	const step = 1.5;
+	for (let d = step; d < distance; d += step) {
+		extra.push({ x: b.x + ux * d, y: b.y + uy * d, normalX: b.normalX, normalY: b.normalY });
+	}
+	extra.push({
+		x: b.x + ux * distance,
+		y: b.y + uy * distance,
+		normalX: b.normalX,
+		normalY: b.normalY
+	});
+	return atStart ? [...extra.reverse(), ...samples] : [...samples, ...extra];
+}
 
 // Lane paint: thin stripes drawn on the lane boundaries the strips already
 // define. Dashed white between same-direction travel lanes, solid white
@@ -116,19 +148,43 @@ export class RoadRenderer {
 	update(graph: Graph, trims: SegmentTrims = computeIntersectionTrims(graph)) {
 		const centerlines = new Map<string, CenterlineSample[]>();
 
+		// A straight width-transition straddles its node: the wide side extends
+		// half its taper past the node and the narrow side trims back the same
+		// amount, so the taper reads as one ramp centred on the node.
+		const straddleTrim = new Map<string, { start: number; end: number }>();
+		const straddleExtend = new Map<string, { start: number; end: number }>();
+		for (const node of graph.nodes.values()) {
+			const s = transitionStraddle(graph, node);
+			if (!s) continue;
+			const t = straddleTrim.get(s.narrowId) ?? { start: 0, end: 0 };
+			if (s.narrowAtStart) t.start += s.half;
+			else t.end += s.half;
+			straddleTrim.set(s.narrowId, t);
+			const e = straddleExtend.get(s.wideId) ?? { start: 0, end: 0 };
+			if (s.wideAtStart) e.start += s.half;
+			else e.end += s.half;
+			straddleExtend.set(s.wideId, e);
+		}
+
 		for (const segment of graph.segments.values()) {
 			const startNode = graph.nodes.get(segment.startNodeId);
 			const endNode = graph.nodes.get(segment.endNodeId);
 			if (!startNode || !endNode) continue;
 
 			const trim = trims.get(segment.id);
-			const samples = sampleTrimmedCenterline(
+			const extra = straddleTrim.get(segment.id);
+			let samples = sampleTrimmedCenterline(
 				segment,
 				startNode,
 				endNode,
-				trim?.start ?? 0,
-				trim?.end ?? 0
+				(trim?.start ?? 0) + (extra?.start ?? 0),
+				(trim?.end ?? 0) + (extra?.end ?? 0)
 			);
+			const ext = straddleExtend.get(segment.id);
+			if (ext && samples.length >= 2) {
+				if (ext.start > 0) samples = extendCenterline(samples, true, ext.start);
+				if (ext.end > 0) samples = extendCenterline(samples, false, ext.end);
+			}
 			if (samples.length >= 2) {
 				centerlines.set(segment.id, samples);
 			}
@@ -167,6 +223,10 @@ export class RoadRenderer {
 				segment.controlY ?? 'line',
 				trim?.start ?? 0,
 				trim?.end ?? 0,
+				straddleTrim.get(segment.id)?.start ?? 0,
+				straddleTrim.get(segment.id)?.end ?? 0,
+				straddleExtend.get(segment.id)?.start ?? 0,
+				straddleExtend.get(segment.id)?.end ?? 0,
 				joinStart,
 				joinEnd,
 				continuityJoinStart,
