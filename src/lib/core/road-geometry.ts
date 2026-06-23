@@ -1657,6 +1657,7 @@ const CENTER_MEDIAN_MIN_WIDTH = 0.1;
 interface CenterMedianContinuation {
 	laneType: LaneType;
 	paths: Paths;
+	cutPaths: Paths;
 }
 
 interface CenterMedianPair {
@@ -1845,11 +1846,12 @@ function addCenterMedianContinuation(
 	continuations: CenterMedianContinuation[],
 	laneType: LaneType,
 	band: Path,
-	pavement: Paths
+	pavement: Paths,
+	cutsPavement = true
 ) {
 	const clipped = executeBoolean(ClipperLib.ClipType.ctIntersection, [band], pavement);
 	if (clipped.length > 0) {
-		continuations.push({ laneType, paths: clipped });
+		continuations.push({ laneType, paths: clipped, cutPaths: cutsPavement ? clipped : [] });
 	}
 }
 
@@ -1874,15 +1876,28 @@ function centerMedianContinuations(
 		}
 
 		for (const half of centerMedianHalfBands(node, pair)) {
-			addCenterMedianContinuation(continuations, half.laneType, half.path, pavement);
+			// Mixed-role centre strips split fill from cut: verges sit below the
+			// roadway and need a pavement opening, while islands draw above it.
+			addCenterMedianContinuation(
+				continuations,
+				half.laneType,
+				half.path,
+				pavement,
+				laneSurface(half.laneType) === 'verge'
+			);
 		}
 	}
 
 	return continuations;
 }
 
-function protectNodeBand(metadata: NodeGeometryMetadata, laneType: LaneType, paths: Paths) {
-	metadata.sidewalkCuts.push(...paths);
+function protectNodeBand(
+	metadata: NodeGeometryMetadata,
+	laneType: LaneType,
+	paths: Paths,
+	cutPaths: Paths
+) {
+	metadata.sidewalkCuts.push(...cutPaths);
 	if (laneSurface(laneType) !== 'verge') return;
 
 	const protectedBands = metadata.protectedBandsByType.get(laneType);
@@ -1972,11 +1987,18 @@ function addIntersection(
 	const roadBands = getOrCreateBands(bandsByType, patchType);
 	const pavement = junctionPavement(node, roadArms);
 	const continuations = centerMedianContinuations(node, roadArms, pavement, crossingConnectors);
-	const continuationCuts = continuations.flatMap((continuation) => continuation.paths);
+	const continuationCuts = continuations.flatMap((continuation) => continuation.cutPaths);
 
 	for (const continuation of continuations) {
 		getOrCreateBands(bandsByType, continuation.laneType).push(...continuation.paths);
-		if (metadata) protectNodeBand(metadata, continuation.laneType, continuation.paths);
+		if (metadata) {
+			protectNodeBand(
+				metadata,
+				continuation.laneType,
+				continuation.paths,
+				continuation.cutPaths
+			);
+		}
 	}
 
 	const patchPaths =
