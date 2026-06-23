@@ -98,10 +98,6 @@ const PAINT_END_INSET = 0.2;
 // How far short of a node the solid centre line stops when a movement crosses
 // it there — a gap wide enough to read as a break, not a dashed continuation.
 const CENTER_BREAK_INSET = 3.5;
-// A branching lane line stops once it converges this close to the line it
-// merges into — the remaining sliver of lane is not usable, and real paint
-// leaves the same gap.
-const PAINT_BRANCH_GAP = 1.5;
 // A turn pocket's same-direction flank line holds back from the pocket's
 // open end — cars enter across the first stretch, so the paint starts
 // after it. The opposing-side line stays unbroken.
@@ -319,7 +315,10 @@ export class RoadRenderer {
 				const isStart = segment.startNodeId === node.id;
 				const stop = isStart ? samples[0] : samples[samples.length - 1];
 				const inner = isStart ? samples[1] : samples[samples.length - 2];
-				parts.push(`${segmentId}:${segment.lanesKey}:${stop.x},${stop.y},${inner.x},${inner.y}`);
+				const morph = transitionMorph(graph, node, segmentId);
+				parts.push(
+					`${segmentId}:${segment.lanesKey}:${stop.x},${stop.y},${inner.x},${inner.y}:tm:${morph?.key ?? '-'}`
+				);
 			}
 			const hash = parts.join('|');
 
@@ -589,35 +588,13 @@ export class RoadRenderer {
 			const startTarget = morphStart ? morphStart.laneBoundaries[k] : undefined;
 			const endTarget = morphEnd ? morphEnd.laneBoundaries[k] : undefined;
 
-			// The morphing (wide) side suppresses its lane-divider paint inside the
-			// taper zone — the stretch between the node and the handle is a merge,
-			// its dashed lines left off — but the centre line runs straight
-			// through. The anchor (narrow) side never necks, so its paint runs to
-			// the seam as usual, as does a plain continuation.
-			const suppressInTaper = paint.color !== 'center';
-			const morphStartActive = !!morphStart && !morphStart.anchor && suppressInTaper;
-			const morphEndActive = !!morphEnd && !morphEnd.anchor && suppressInTaper;
-			let from = morphStartActive ? lengthStart : continuityJoinStart || morphStart ? 0 : PAINT_END_INSET;
-			let to = morphEndActive
-				? total - lengthEnd
-				: total - (continuityJoinEnd || morphEnd ? 0 : PAINT_END_INSET);
-
-			// A branching line ends early with a gap: once it has converged
-			// to within a sliver of the line it merges into, the lane is no
-			// longer usable and real paint just stops.
-			const branchCut = (target: number | null | undefined, length: number) => {
-				if (target == null || Math.abs(offset - target) <= PAINT_BRANCH_GAP + 0.5) return 0;
-				let d = 0;
-				while (d < length) {
-					const eased = target + (offset - target) * morphEase(d, length);
-					if (Math.abs(eased - target) >= PAINT_BRANCH_GAP) return d;
-					d += 0.5;
-				}
-				return length;
-			};
-			from = Math.max(from, branchCut(startTarget, lengthStart));
-			const endCut = branchCut(endTarget, lengthEnd);
-			if (endCut > 0) to = Math.min(to, total - endCut);
+			// Boundary disposition comes from the transition morph. A matched
+			// boundary draws through the taper and follows its target offset;
+			// an unmatched boundary cuts where the morph zone begins.
+			let from = continuityJoinStart || morphStart ? 0 : PAINT_END_INSET;
+			let to = total - (continuityJoinEnd || morphEnd ? 0 : PAINT_END_INSET);
+			if (morphStart && startTarget == null) from = Math.max(from, lengthStart);
+			if (morphEnd && endTarget == null) to = Math.min(to, total - lengthEnd);
 
 			// The pocket's entrance is the transition end where it emerges
 			// from the median; the flank line starts after the entire taper
@@ -627,8 +604,12 @@ export class RoadRenderer {
 			const turnFlank =
 				paint.color === 'lane' && (lanes[k].type === 'turn' || lanes[k + 1].type === 'turn');
 			if (turnFlank) {
-				if (morphStart) from = Math.max(from, lengthStart + TURN_POCKET_ENTRANCE);
-				if (morphEnd) to = Math.min(to, total - lengthEnd - TURN_POCKET_ENTRANCE);
+				if (morphStart && startTarget != null) {
+					from = Math.max(from, lengthStart + TURN_POCKET_ENTRANCE);
+				}
+				if (morphEnd && endTarget != null) {
+					to = Math.min(to, total - lengthEnd - TURN_POCKET_ENTRANCE);
+				}
 			}
 
 			// The solid centre line stops short of a node where a movement crosses
