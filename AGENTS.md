@@ -1,10 +1,10 @@
 # AGENTS.md
 
-This file provides guidance to Codex (Codex.ai/code) when working with code in this repository.
+This file provides guidance to Codex (and other coding agents) when working with code in this repository.
 
 ## Project Overview
 
-Citynista is a web-based city planning tool prototype: draw street networks with multiple road types, shape them with bezier curves, and render them in a flat-shaded 2D top-down map style. The long-term goal is importing OpenStreetMap graphs and making them editable. Snappy editing is prioritized over high-fidelity rendering.
+Citynista is a web-based city planning tool prototype: draw street networks with multiple road types, shape them with bezier curves, and render them in a flat-shaded 2D top-down map style. The medium-term goal is procedurally generating buildings, vegetation, and other content inside the city blocks the road network encloses. OpenStreetMap import was prototyped and shelved — the public data proved too low-quality (noisy geometry, disconnected segments, sidewalks modeled as separate ways) to render cleanly, so the project drives its own drawn networks instead. Snappy editing is prioritized over high-fidelity rendering.
 
 ## Tech Stack
 
@@ -107,3 +107,6 @@ After drawing (and only then — moving segments in select mode never splits), `
 - always use strict typesafety, never use any, don't add return types, always rely on inference
 - use Svelte 5 runes (`$state`, `$effect`, `$derived`) instead of legacy reactivity
 - use `SvelteMap` and `SvelteSet` from 'svelte/reactivity' for reactive collections
+- never commit, push, or create branches — leave all changes in the working tree for review
+- match the surrounding comment density: this codebase explains its geometry rules in prose comments; keep that where you touch it, but don't add narration to obvious code
+- verify changes with `bun run check` (and the relevant `bun run test -- -g '...'` when behavior changes); the performance contract above (per-piece hashes, cost proportional to what changed) is binding for any geometry/render change
