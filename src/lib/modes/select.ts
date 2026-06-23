@@ -452,6 +452,24 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 		editor.rebuildRoads();
 	};
 
+	// A drag mutates node positions cheaply on every mousemove but the rebuild
+	// is heavy, so coalesce rebuilds to one per animation frame — high-frequency
+	// mousemoves otherwise saturate the main thread and tank the frame rate.
+	let applyRaf: number | null = null;
+	const scheduleApply = () => {
+		if (applyRaf !== null) return;
+		applyRaf = requestAnimationFrame(() => {
+			applyRaf = null;
+			applyChanges();
+		});
+	};
+	const flushApply = () => {
+		if (applyRaf === null) return;
+		cancelAnimationFrame(applyRaf);
+		applyRaf = null;
+		applyChanges();
+	};
+
 	const onMouseDown = (event: MouseEvent) => {
 		if (event.button !== 0) return;
 		if (event.altKey) return;
@@ -574,7 +592,7 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 					smoothTangentThrough(node);
 				}
 			}
-			applyChanges();
+			scheduleApply();
 			// Setback handles ride along with a moving junction.
 			editor.refreshSetbackHandles();
 		} else if (dragTarget.type === 'controlPoint') {
@@ -583,7 +601,7 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 			} else {
 				moveControlPoint(dragTarget.segmentId, dx, dz, 1);
 			}
-			applyChanges();
+			scheduleApply();
 		} else if (dragTarget.type === 'segments') {
 			// Dragging a path moves the selected segments rigidly; curvature only
 			// changes via the control-point handle. Shared endpoints move once.
@@ -607,7 +625,7 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 					moveControlPoint(segment.id, dx, dz, 1);
 				}
 			}
-			applyChanges();
+			scheduleApply();
 		}
 
 		dragStartX = worldPos.x;
@@ -639,6 +657,7 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 		// Moving things never splits segments — crossings only become
 		// intersections while drawing.
 		if (isDragging) {
+			flushApply();
 			editor.graph.save();
 		}
 		isDragging = false;
@@ -669,6 +688,10 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 	};
 
 	const cleanup = () => {
+		if (applyRaf !== null) {
+			cancelAnimationFrame(applyRaf);
+			applyRaf = null;
+		}
 		isDragging = false;
 		dragTarget = null;
 		marqueeStart = null;
