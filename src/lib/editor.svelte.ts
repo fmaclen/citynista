@@ -13,6 +13,7 @@ import {
 import type { CenterlineSample, Point } from './core/road-geometry';
 import { isDefaultMovement, nodeConnectivity, sameConnectionRef } from './core/lane-connections';
 import type { Barrier, LaneEndpoint, LaneConnection } from './core/lane-connections';
+import { getQuadraticBezierTangent } from './geometry/bezier';
 import { SceneManager } from './rendering/scene.svelte';
 import { NodeRenderer, type NodeTone } from './rendering/node-renderer';
 import { RoadRenderer } from './rendering/road-renderer';
@@ -83,9 +84,29 @@ interface ClipboardSegmentSnapshot {
 }
 
 interface SegmentClipboard {
+	kind: 'segments';
 	nodes: ClipboardNodeSnapshot[];
 	segments: ClipboardSegmentSnapshot[];
 }
+
+interface RelativeLaneRef {
+	armIndex: number;
+	laneIndex: number;
+}
+
+interface RelativeConnectionRef {
+	from: RelativeLaneRef;
+	to: RelativeLaneRef;
+}
+
+interface NodeClipboard {
+	kind: 'node';
+	armCount: number;
+	disabledConnections?: RelativeConnectionRef[];
+	enabledConnections?: RelativeConnectionRef[];
+}
+
+type EditorClipboard = SegmentClipboard | NodeClipboard;
 
 function cloneLanes(lanes: Lane[]) {
 	return lanes.map((lane) => ({ ...lane }));
@@ -141,7 +162,7 @@ export class Editor {
 	private boundClipboardKeyDown: ((e: KeyboardEvent) => void) | null = null;
 	private hoveredNodeId: string | null = null;
 	private hoveredSegmentId: string | null = null;
-	private segmentClipboard: SegmentClipboard | null = null;
+	private clipboard: EditorClipboard | null = null;
 
 	// Undo history as whole-graph snapshots, captured at the save boundary:
 	// every operation (a draw click, a finished drag, a lane tweak, a
@@ -250,12 +271,20 @@ export class Editor {
 			if (target instanceof HTMLElement && target.tagName !== 'BODY') return;
 			e.preventDefault();
 			if (key === 'c') {
-				this.copySelectedSegments();
+				this.copySelection();
 			} else {
-				this.pasteSegments();
+				this.paste();
 			}
 		};
 		window.addEventListener('keydown', this.boundClipboardKeyDown);
+	}
+
+	private copySelection() {
+		if (this.selectedSegments.size > 0) {
+			this.copySelectedSegments();
+		} else if (this.selectedNodes.size === 1) {
+			this.copySelectedNodeConnections();
+		}
 	}
 
 	private copySelectedSegments() {
@@ -293,25 +322,123 @@ export class Editor {
 		}
 
 		if (segments.length === 0) return;
-		this.segmentClipboard = {
+		this.clipboard = {
+			kind: 'segments',
 			nodes: [...nodes.values()],
 			segments
 		};
 	}
 
-	private pasteSegments() {
-		if (!this.segmentClipboard || this.segmentClipboard.segments.length === 0) return;
-		if (this.selectedSegments.size > 0) {
-			this.pasteLanesToSelectedSegments();
+	private sortedNodeArms(nodeId: string) {
+		const node = this.graph.nodes.get(nodeId);
+		if (!node) return [];
+
+		const arms: { segmentId: string; laneCount: number; angle: number }[] = [];
+		for (const segmentId of node.connectedSegments) {
+			const segment = this.graph.segments.get(segmentId);
+			if (!segment) continue;
+			const startNode = this.graph.nodes.get(segment.startNodeId);
+			const endNode = this.graph.nodes.get(segment.endNodeId);
+			if (!startNode || !endNode) continue;
+
+			const atStart = segment.startNodeId === node.id;
+			const straight = atStart
+				? { x: endNode.x - startNode.x, y: endNode.y - startNode.y }
+				: { x: startNode.x - endNode.x, y: startNode.y - endNode.y };
+			let direction = straight;
+			if (segment.controlX !== undefined && segment.controlY !== undefined) {
+				const tangent = getQuadraticBezierTangent(
+					startNode.x,
+					startNode.y,
+					segment.controlX,
+					segment.controlY,
+					endNode.x,
+					endNode.y,
+					atStart ? 0 : 1
+				);
+				direction = atStart ? tangent : { x: -tangent.x, y: -tangent.y };
+				if (Math.hypot(direction.x, direction.y) < 0.0001) direction = straight;
+			}
+			arms.push({
+				segmentId,
+				laneCount: segment.lanes.length,
+				angle: Math.atan2(direction.y, direction.x)
+			});
+		}
+
+		return arms
+			.sort((a, b) => a.angle - b.angle)
+			.map(({ segmentId, laneCount }) => ({ segmentId, laneCount }));
+	}
+
+	private relativeLaneRef(ref: LaneRef, armIndices: SvelteMap<string, number>) {
+		const armIndex = armIndices.get(ref.segmentId);
+		return armIndex === undefined ? null : { armIndex, laneIndex: ref.laneIndex };
+	}
+
+	private relativeConnectionRef(
+		connection: LaneConnectionRef,
+		armIndices: SvelteMap<string, number>
+	) {
+		const from = this.relativeLaneRef(connection.from, armIndices);
+		const to = this.relativeLaneRef(connection.to, armIndices);
+		return from && to ? { from, to } : null;
+	}
+
+	private relativeConnectionRefs(
+		connections: LaneConnectionRef[] | undefined,
+		armIndices: SvelteMap<string, number>
+	) {
+		if (!connections || connections.length === 0) return undefined;
+		const relative = connections
+			.map((connection) => this.relativeConnectionRef(connection, armIndices))
+			.filter((connection) => connection !== null);
+		return relative.length > 0 ? relative : undefined;
+	}
+
+	private copySelectedNodeConnections() {
+		const nodeId = [...this.selectedNodes][0];
+		const node = this.graph.nodes.get(nodeId);
+		if (!node) return;
+
+		const armIndices = new SvelteMap<string, number>();
+		const arms = this.sortedNodeArms(node.id);
+		arms.forEach((arm, index) => armIndices.set(arm.segmentId, index));
+
+		this.clipboard = {
+			kind: 'node',
+			armCount: arms.length,
+			disabledConnections: this.relativeConnectionRefs(node.disabledConnections, armIndices),
+			enabledConnections: this.relativeConnectionRefs(node.enabledConnections, armIndices)
+		};
+	}
+
+	private paste() {
+		const clipboard = this.clipboard;
+		if (!clipboard) return;
+		if (clipboard.kind === 'segments' && this.selectedSegments.size > 0) {
+			this.pasteLanesToSelectedSegments(clipboard);
 			return;
 		}
-		if (this.selectedNodes.size === 0) {
-			this.pasteNewSegments();
+		if (
+			clipboard.kind === 'node' &&
+			this.selectedNodes.size === 1 &&
+			this.selectedSegments.size === 0
+		) {
+			this.pasteNodeConnections(clipboard);
+			return;
+		}
+		if (
+			clipboard.kind === 'segments' &&
+			this.selectedNodes.size === 0 &&
+			this.selectedSegments.size === 0
+		) {
+			this.pasteNewSegments(clipboard);
 		}
 	}
 
-	private pasteLanesToSelectedSegments() {
-		const source = this.segmentClipboard?.segments[0];
+	private pasteLanesToSelectedSegments(clipboard: SegmentClipboard) {
+		const source = clipboard.segments[0];
 		if (!source) return;
 
 		for (const segmentId of this.selectedSegments) {
@@ -322,6 +449,46 @@ export class Editor {
 		}
 		this.rebuildRoads();
 		this.refreshSelectionVisuals();
+		this.graph.save();
+	}
+
+	private mappedLaneRef(ref: RelativeLaneRef, arms: { segmentId: string; laneCount: number }[]) {
+		const arm = arms[ref.armIndex];
+		if (!arm || ref.laneIndex < 0 || ref.laneIndex >= arm.laneCount) return null;
+		return { segmentId: arm.segmentId, laneIndex: ref.laneIndex };
+	}
+
+	private mappedConnectionRef(
+		connection: RelativeConnectionRef,
+		arms: { segmentId: string; laneCount: number }[]
+	) {
+		const from = this.mappedLaneRef(connection.from, arms);
+		const to = this.mappedLaneRef(connection.to, arms);
+		return from && to ? { from, to } : null;
+	}
+
+	private mappedConnectionRefs(
+		connections: RelativeConnectionRef[] | undefined,
+		arms: { segmentId: string; laneCount: number }[]
+	) {
+		if (!connections || connections.length === 0) return undefined;
+		const mapped = connections
+			.map((connection) => this.mappedConnectionRef(connection, arms))
+			.filter((connection) => connection !== null);
+		return mapped.length > 0 ? mapped : undefined;
+	}
+
+	private pasteNodeConnections(clipboard: NodeClipboard) {
+		const nodeId = [...this.selectedNodes][0];
+		const node = this.graph.nodes.get(nodeId);
+		if (!node) return;
+
+		const arms = this.sortedNodeArms(node.id);
+		if (arms.length !== clipboard.armCount) return;
+
+		node.disabledConnections = this.mappedConnectionRefs(clipboard.disabledConnections, arms);
+		node.enabledConnections = this.mappedConnectionRefs(clipboard.enabledConnections, arms);
+		this.rebuildRoads();
 		this.graph.save();
 	}
 
@@ -347,10 +514,7 @@ export class Editor {
 		return remapped.length > 0 ? remapped : undefined;
 	}
 
-	private pasteNewSegments() {
-		const clipboard = this.segmentClipboard;
-		if (!clipboard) return;
-
+	private pasteNewSegments(clipboard: SegmentClipboard) {
 		const nodeIds = new SvelteMap<string, string>();
 		const segmentIds = new SvelteMap<string, string>();
 

@@ -49,6 +49,106 @@ const GRAPH_DATA = {
 	]
 };
 
+const NODE_CONNECTION_LANES = [
+	{ type: 'sidewalk', width: 2, direction: 'bidirectional' },
+	{ type: 'road', width: 3, direction: 'backward' },
+	{ type: 'road', width: 3, direction: 'forward' },
+	{ type: 'sidewalk', width: 2, direction: 'bidirectional' }
+];
+
+const NODE_CONNECTION_GRAPH_DATA = {
+	nodes: [
+		{
+			id: 'node-a',
+			x: -220,
+			y: -30,
+			disabledConnections: [
+				{
+					from: { segmentId: 'segment-a-north', laneIndex: 1 },
+					to: { segmentId: 'segment-a-east', laneIndex: 2 }
+				},
+				{
+					from: { segmentId: 'segment-a-south', laneIndex: 2 },
+					to: { segmentId: 'segment-a-west', laneIndex: 1 }
+				},
+				{
+					from: { segmentId: 'segment-a-east', laneIndex: 0 },
+					to: { segmentId: 'segment-a-north', laneIndex: 3 }
+				}
+			]
+		},
+		{ id: 'node-a-north', x: -220, y: -110 },
+		{ id: 'node-a-east', x: -140, y: -30 },
+		{ id: 'node-a-south', x: -220, y: 50 },
+		{ id: 'node-a-west', x: -300, y: -30 },
+		{
+			id: 'node-b',
+			x: 100,
+			y: -30,
+			disabledConnections: [
+				{
+					from: { segmentId: 'segment-b-west', laneIndex: 1 },
+					to: { segmentId: 'segment-b-south', laneIndex: 2 }
+				}
+			]
+		},
+		{ id: 'node-b-north', x: 100, y: -110 },
+		{ id: 'node-b-east', x: 180, y: -30 },
+		{ id: 'node-b-south', x: 100, y: 50 },
+		{ id: 'node-b-west', x: 20, y: -30 }
+	],
+	segments: [
+		{
+			id: 'segment-a-north',
+			startNodeId: 'node-a',
+			endNodeId: 'node-a-north',
+			lanes: NODE_CONNECTION_LANES
+		},
+		{
+			id: 'segment-a-east',
+			startNodeId: 'node-a',
+			endNodeId: 'node-a-east',
+			lanes: NODE_CONNECTION_LANES
+		},
+		{
+			id: 'segment-a-south',
+			startNodeId: 'node-a',
+			endNodeId: 'node-a-south',
+			lanes: NODE_CONNECTION_LANES
+		},
+		{
+			id: 'segment-a-west',
+			startNodeId: 'node-a',
+			endNodeId: 'node-a-west',
+			lanes: NODE_CONNECTION_LANES
+		},
+		{
+			id: 'segment-b-north',
+			startNodeId: 'node-b',
+			endNodeId: 'node-b-north',
+			lanes: NODE_CONNECTION_LANES
+		},
+		{
+			id: 'segment-b-east',
+			startNodeId: 'node-b',
+			endNodeId: 'node-b-east',
+			lanes: NODE_CONNECTION_LANES
+		},
+		{
+			id: 'segment-b-south',
+			startNodeId: 'node-b',
+			endNodeId: 'node-b-south',
+			lanes: NODE_CONNECTION_LANES
+		},
+		{
+			id: 'segment-b-west',
+			startNodeId: 'node-b',
+			endNodeId: 'node-b-west',
+			lanes: NODE_CONNECTION_LANES
+		}
+	]
+};
+
 const SCALE = 720 / 500;
 const toScreen = (x: number, y: number) => ({ x: 640 + x * SCALE, y: 360 + y * SCALE });
 
@@ -60,14 +160,17 @@ interface SavedLane {
 	markings?: boolean;
 }
 
+interface SavedConnection {
+	from: { segmentId: string; laneIndex: number };
+	to: { segmentId: string; laneIndex: number };
+}
+
 interface SavedNode {
 	id: string;
 	x: number;
 	y: number;
-	disabledConnections?: {
-		from: { segmentId: string; laneIndex: number };
-		to: { segmentId: string; laneIndex: number };
-	}[];
+	disabledConnections?: SavedConnection[];
+	enabledConnections?: SavedConnection[];
 }
 
 interface SavedSegment {
@@ -92,14 +195,14 @@ const laneKey = (lanes: SavedLane[]) =>
 		)
 		.join(',');
 
-async function seedGraph(page: import('@playwright/test').Page) {
+async function seedGraph(page: import('@playwright/test').Page, data = GRAPH_DATA) {
 	await page.goto('/?topdown');
 	await expect(page.locator('canvas')).toBeVisible();
 	await page.evaluate(
 		({ key, data }) => {
 			localStorage.setItem(key, JSON.stringify(data));
 		},
-		{ key: STORAGE_KEY, data: GRAPH_DATA }
+		{ key: STORAGE_KEY, data }
 	);
 	await page.reload();
 	await expect(page.locator('canvas')).toBeVisible();
@@ -116,6 +219,59 @@ async function selectSegment(page: import('@playwright/test').Page, x: number, y
 	await page.locator('canvas').click({ position: toScreen(x, y) });
 	await expect(page.locator('aside')).toBeVisible();
 }
+
+async function selectNode(page: import('@playwright/test').Page, x: number, y: number) {
+	await page.locator('canvas').click({ position: toScreen(x, y) });
+}
+
+const sortedArms = (graph: SavedGraph, nodeId: string) => {
+	const node = graph.nodes.find((n) => n.id === nodeId);
+	if (!node) return [];
+
+	return graph.segments
+		.filter((segment) => segment.startNodeId === nodeId || segment.endNodeId === nodeId)
+		.map((segment) => {
+			const otherNodeId = segment.startNodeId === nodeId ? segment.endNodeId : segment.startNodeId;
+			const other = graph.nodes.find((n) => n.id === otherNodeId);
+			const dx = other ? other.x - node.x : 0;
+			const dy = other ? other.y - node.y : 0;
+			return {
+				segmentId: segment.id,
+				laneCount: segment.lanes.length,
+				angle: Math.atan2(dy, dx)
+			};
+		})
+		.sort((a, b) => a.angle - b.angle)
+		.map(({ segmentId, laneCount }) => ({ segmentId, laneCount }));
+};
+
+const remapConnections = (
+	connections: SavedConnection[],
+	sourceArms: { segmentId: string; laneCount: number }[],
+	targetArms: { segmentId: string; laneCount: number }[]
+) => {
+	const sourceArmIndices = new Map(sourceArms.map((arm, index) => [arm.segmentId, index]));
+	return connections
+		.map((connection) => {
+			const fromArmIndex = sourceArmIndices.get(connection.from.segmentId);
+			const toArmIndex = sourceArmIndices.get(connection.to.segmentId);
+			const fromArm = fromArmIndex !== undefined ? targetArms[fromArmIndex] : undefined;
+			const toArm = toArmIndex !== undefined ? targetArms[toArmIndex] : undefined;
+			if (
+				!fromArm ||
+				!toArm ||
+				connection.from.laneIndex >= fromArm.laneCount ||
+				connection.to.laneIndex >= toArm.laneCount
+			) {
+				return null;
+			}
+			return {
+				from: { segmentId: fromArm.segmentId, laneIndex: connection.from.laneIndex },
+				to: { segmentId: toArm.segmentId, laneIndex: connection.to.laneIndex }
+			};
+		})
+		.filter((connection) => connection !== null);
+};
 
 test.describe('segment copy/paste', () => {
 	test.beforeEach(async ({ page }) => {
@@ -179,5 +335,33 @@ test.describe('segment copy/paste', () => {
 				to: { segmentId: clone!.id, laneIndex: 2 }
 			}
 		]);
+	});
+
+	test('pastes copied node connector config onto a matching junction', async ({ page }) => {
+		await seedGraph(page, NODE_CONNECTION_GRAPH_DATA);
+
+		await selectNode(page, -220, -30);
+		await page.keyboard.press('Meta+c');
+		await selectNode(page, 100, -30);
+		await page.keyboard.press('Meta+v');
+
+		const sourceConnections = NODE_CONNECTION_GRAPH_DATA.nodes[0].disabledConnections;
+		const sourceArms = sortedArms(NODE_CONNECTION_GRAPH_DATA, 'node-a');
+		const targetArms = sortedArms(NODE_CONNECTION_GRAPH_DATA, 'node-b');
+		const expectedConnections = remapConnections(sourceConnections, sourceArms, targetArms);
+
+		await expect
+			.poll(async () => {
+				const graph = await savedGraph(page);
+				const target = graph?.nodes.find((node) => node.id === 'node-b');
+				return target?.disabledConnections ?? null;
+			})
+			.toEqual(expectedConnections);
+
+		const graph = await savedGraph(page);
+		const source = graph?.nodes.find((node) => node.id === 'node-a');
+		const target = graph?.nodes.find((node) => node.id === 'node-b');
+		expect(source?.disabledConnections).toEqual(sourceConnections);
+		expect(target?.enabledConnections).toBeUndefined();
 	});
 });
