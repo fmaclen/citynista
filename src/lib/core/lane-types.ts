@@ -1,4 +1,4 @@
-import type { LaneType, TurnMovement } from './types';
+import type { Lane, LaneType, TurnMovement } from './types';
 
 // Every rule about how lanes render and connect is keyed to a lane type's
 // SURFACE CLASS, never to its name — adding a lane type is one row here.
@@ -113,6 +113,19 @@ export function laneColor(type: LaneType): string {
 	return LANE_TYPE_SPECS[type].color;
 }
 
+export function laneStructureToken(lane: Lane) {
+	const access = lane.type === 'turn' ? 'turn' : isAccessoryRoadway(lane.type) ? 'a' : '';
+	return `${laneSurface(lane.type)}:${access}:${lane.direction}:${lane.width}`;
+}
+
+export function lanesStructureKey(lanes: Lane[]) {
+	return lanes.map(laneStructureToken).join('|');
+}
+
+function isPlainTravelLane(type: LaneType) {
+	return isRoadway(type) && !isAccessoryRoadway(type) && type !== 'turn';
+}
+
 // Paint on the boundary between two adjacent lanes: dashed white between
 // same-direction travel lanes, solid muted yellow between opposing flows,
 // solid white where a travel lane meets an accessory roadway. Boundaries
@@ -141,8 +154,8 @@ export function lanePaintBetween(
 		return { color: a.direction !== b.direction ? 'center' : 'lane', dashed: false };
 	}
 	if (laneSurface(a.type) !== 'roadway' || laneSurface(b.type) !== 'roadway') return null;
-	const plainA = a.type === 'road' || a.type === 'concrete';
-	const plainB = b.type === 'road' || b.type === 'concrete';
+	const plainA = isPlainTravelLane(a.type);
+	const plainB = isPlainTravelLane(b.type);
 	if (plainA && plainB) {
 		if (a.direction !== b.direction) return { color: 'center', dashed: false };
 		return { color: 'lane', dashed: true };

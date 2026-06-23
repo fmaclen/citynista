@@ -10,6 +10,7 @@ import {
 	isRoadway,
 	lanePaintBetween,
 	laneSurface,
+	lanesStructureKey,
 	LANE_TYPE_LIST
 } from './lane-types';
 import { getQuadraticBezierPoint, getQuadraticBezierTangent } from '../geometry/bezier';
@@ -311,7 +312,7 @@ function mergeInfo(graph: Graph, node: Node): MergeInfo | null {
 	let bestDeviation = THROUGH_MAX_DEVIATION;
 	for (let i = 0; i < majors.length; i++) {
 		for (let j = i + 1; j < majors.length; j++) {
-			const sameKey = majors[i].lanesKey === majors[j].lanesKey;
+			const sameKey = lanesStructureKey(majors[i].lanes) === lanesStructureKey(majors[j].lanes);
 			const deviation = pairBendDeviation(graph, node, majors[i], majors[j]) - (sameKey ? 0.01 : 0);
 			if (deviation < bestDeviation) {
 				bestDeviation = deviation;
@@ -369,7 +370,7 @@ export function nodeThroughPair(graph: Graph, node: Node): [Segment, Segment] | 
 // by morphing both segments' ribbons.
 function isTransitionNode(graph: Graph, node: Node): boolean {
 	const pair = nodeThroughPair(graph, node);
-	return pair !== null && pair[0].lanesKey !== pair[1].lanesKey;
+	return pair !== null && lanesStructureKey(pair[0].lanes) !== lanesStructureKey(pair[1].lanes);
 }
 
 function mirrorIntervals(intervals: LaneInterval[]): LaneInterval[] {
@@ -467,10 +468,12 @@ export function transitionMorph(
 	const selfIntervals = getLaneIntervals(self.lanes);
 
 	// Deterministic from both sides: the narrower segment anchors; equal
-	// widths fall back to the lane-stack key.
+	// widths fall back to the structural lane-stack key.
+	const selfStructureKey = lanesStructureKey(self.lanes);
+	const otherStructureKey = lanesStructureKey(other.lanes);
 	const selfIsAnchor =
 		halfSelf < halfOther - 0.01 ||
-		(Math.abs(halfSelf - halfOther) <= 0.01 && self.lanesKey <= other.lanesKey);
+		(Math.abs(halfSelf - halfOther) <= 0.01 && selfStructureKey <= otherStructureKey);
 
 	if (selfIsAnchor) {
 		// The anchor never morphs, so its length is only carried for the
@@ -623,9 +626,11 @@ export function transitionTaper(
 	if (!pair) return null;
 	const halfA = getTotalWidth(pair[0].lanes) / 2;
 	const halfB = getTotalWidth(pair[1].lanes) / 2;
+	const structureKeyA = lanesStructureKey(pair[0].lanes);
+	const structureKeyB = lanesStructureKey(pair[1].lanes);
 	const aIsAnchor =
 		halfA < halfB - 0.01 ||
-		(Math.abs(halfA - halfB) <= 0.01 && pair[0].lanesKey <= pair[1].lanesKey);
+		(Math.abs(halfA - halfB) <= 0.01 && structureKeyA <= structureKeyB);
 	const wide = aIsAnchor ? pair[1] : pair[0];
 	const morph = transitionMorph(graph, node, wide.id);
 	if (!morph) return null;
@@ -859,7 +864,7 @@ export function computeIntersectionTrims(graph: Graph): SegmentTrims {
 			segmentId: string;
 			halfWidth: number;
 			hasRoad: boolean;
-			lanesKey: string;
+			structureKey: string;
 			outward: Point;
 		}
 		const arms: TrimArm[] = [];
@@ -871,7 +876,7 @@ export function computeIntersectionTrims(graph: Graph): SegmentTrims {
 				segmentId: segment.id,
 				halfWidth: segment.totalWidth / 2,
 				hasRoad: segmentHasRoad(segment),
-				lanesKey: segment.lanesKey,
+				structureKey: lanesStructureKey(segment.lanes),
 				outward
 			});
 		}
@@ -909,7 +914,7 @@ export function computeIntersectionTrims(graph: Graph): SegmentTrims {
 			minorJunction =
 				minors.length >= 3 ||
 				(minors.length === 2 &&
-					(minors[0].lanesKey !== minors[1].lanesKey ||
+					(minors[0].structureKey !== minors[1].structureKey ||
 						minors[0].outward.x * minors[1].outward.x + minors[0].outward.y * minors[1].outward.y >
 							CORNER_PATCH_MIN_DOT));
 		}
@@ -1462,21 +1467,23 @@ function addPairJoin(
 	if (arms.length !== 2) return;
 
 	// Corner band intervals live in pair[0]'s frame; sweep from that arm.
-	const armA = arms[0].lanesKey === pair[0].lanesKey ? arms[0] : arms[1];
+	const armA = arms[0].segmentId === pair[0].id ? arms[0] : arms[1];
 	const armB = armA === arms[0] ? arms[1] : arms[0];
 
 	let intervals = getLaneIntervals(pair[0].lanes);
-	let anchorKey = pair[0].lanesKey;
-	if (pair[0].lanesKey !== pair[1].lanesKey) {
+	let anchorStructureKey = lanesStructureKey(pair[0].lanes);
+	const pairStructureKeyA = anchorStructureKey;
+	const pairStructureKeyB = lanesStructureKey(pair[1].lanes);
+	if (pairStructureKeyA !== pairStructureKeyB) {
 		// The node cross-section is the anchor's (see transitionMorph),
 		// expressed in pair[0]'s frame.
 		const halfA = getTotalWidth(pair[0].lanes) / 2;
 		const halfB = getTotalWidth(pair[1].lanes) / 2;
 		const anchorIsA =
 			halfA < halfB - 0.01 ||
-			(Math.abs(halfA - halfB) <= 0.01 && pair[0].lanesKey <= pair[1].lanesKey);
+			(Math.abs(halfA - halfB) <= 0.01 && pairStructureKeyA <= pairStructureKeyB);
 		if (!anchorIsA) {
-			anchorKey = pair[1].lanesKey;
+			anchorStructureKey = pairStructureKeyB;
 			intervals = getLaneIntervals(pair[1].lanes);
 			if (armA.startsHere === armB.startsHere) {
 				intervals = mirrorIntervals(intervals);
@@ -1491,8 +1498,8 @@ function addPairJoin(
 		armB,
 		bandsByType,
 		intervals,
-		armA.lanesKey === anchorKey ? 0.5 : 0,
-		armB.lanesKey === anchorKey ? 0.5 : 0
+		armA.structureKey === anchorStructureKey ? 0.5 : 0,
+		armB.structureKey === anchorStructureKey ? 0.5 : 0
 	);
 }
 
@@ -1508,6 +1515,7 @@ export interface IntersectionArm {
 	startsHere: boolean;
 	lanes: Lane[];
 	lanesKey: string;
+	structureKey: string;
 	halfWidth: number;
 	hasRoad: boolean;
 	toward: SideProfile;
@@ -1560,6 +1568,7 @@ export function collectIntersectionArms(
 			startsHere: isStart,
 			lanes: segment.lanes,
 			lanesKey: segment.lanesKey,
+			structureKey: lanesStructureKey(segment.lanes),
 			halfWidth: profile.halfWidth,
 			hasRoad: profile.hasRoad,
 			toward: isStart ? profile.positive : profile.negative,
@@ -2401,7 +2410,7 @@ export function buildNodePaint(
 
 	const arms = collectIntersectionArms(graph, node, centerlines, new Set([pair[0].id, pair[1].id]));
 	if (arms.length !== 2) return paths;
-	const armA = arms[0].lanesKey === pair[0].lanesKey ? arms[0] : arms[1];
+	const armA = arms[0].segmentId === pair[0].id ? arms[0] : arms[1];
 	const armB = armA === arms[0] ? arms[1] : arms[0];
 	const flipped = armA.startsHere === armB.startsHere;
 	const dirB = flipped ? { x: -armB.crossDir.x, y: -armB.crossDir.y } : armB.crossDir;
@@ -2409,12 +2418,14 @@ export function buildNodePaint(
 	// The node cross-section is the anchor's, expressed in armA's frame —
 	// the same selection addPairJoin makes for the corner bands.
 	let lanes = pair[0].lanes;
-	if (pair[0].lanesKey !== pair[1].lanesKey) {
+	const pairStructureKeyA = lanesStructureKey(pair[0].lanes);
+	const pairStructureKeyB = lanesStructureKey(pair[1].lanes);
+	if (pairStructureKeyA !== pairStructureKeyB) {
 		const halfA = getTotalWidth(pair[0].lanes) / 2;
 		const halfB = getTotalWidth(pair[1].lanes) / 2;
 		const anchorIsA =
 			halfA < halfB - 0.01 ||
-			(Math.abs(halfA - halfB) <= 0.01 && pair[0].lanesKey <= pair[1].lanesKey);
+			(Math.abs(halfA - halfB) <= 0.01 && pairStructureKeyA <= pairStructureKeyB);
 		if (!anchorIsA) {
 			lanes = flipped ? [...pair[1].lanes].reverse() : pair[1].lanes;
 		}
@@ -2608,14 +2619,14 @@ function buildPathCrossingZebras(
 
 export function isContinuationNode(graph: Graph, node: Node, segmentId?: string): boolean {
 	const pair = connectionPair(graph, node);
-	if (pair) return pair[0].lanesKey === pair[1].lanesKey;
+	if (pair) return lanesStructureKey(pair[0].lanes) === lanesStructureKey(pair[1].lanes);
 	// At a merge node only the through pair continues; its mergers stop at
 	// their mouths like junction arms, and a cross-section change renders
 	// as a transition (morph) instead of a continuation.
 	if (segmentId === undefined) return false;
 	const merge = mergeInfo(graph, node);
 	if (!merge || !merge.throughIds.has(segmentId)) return false;
-	return merge.through[0].lanesKey === merge.through[1].lanesKey;
+	return lanesStructureKey(merge.through[0].lanes) === lanesStructureKey(merge.through[1].lanes);
 }
 
 // Geometry for a single node: the join wedges of a gentle bend or the
