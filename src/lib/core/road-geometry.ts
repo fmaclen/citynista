@@ -61,8 +61,22 @@ interface LaneInterval {
 	end: number;
 }
 
+interface NodeGeometryMetadata {
+	sidewalkCuts: Paths;
+	protectedBandsByType: Map<LaneType, Paths>;
+}
+
+function createNodeGeometryMetadata() {
+	const sidewalkCuts: Paths = [];
+	return {
+		sidewalkCuts,
+		protectedBandsByType: new Map<LaneType, Paths>()
+	};
+}
+
 export function buildRoadLayers(graph: Graph): RoadLayer[] {
 	const bandsByType = new Map<LaneType, Paths>();
+	const nodeGeometry = createNodeGeometryMetadata();
 	const trims = computeIntersectionTrims(graph);
 	const centerlines = new Map<string, CenterlineSample[]>();
 
@@ -97,7 +111,7 @@ export function buildRoadLayers(graph: Graph): RoadLayer[] {
 
 	for (const node of graph.nodes.values()) {
 		if (node.connectedSegments.length < 2) continue;
-		addNodeGeometry(graph, node, centerlines, bandsByType);
+		addNodeGeometry(graph, node, centerlines, bandsByType, nodeGeometry);
 	}
 
 	const junctionDiscs = buildJunctionDiscs(graph);
@@ -112,7 +126,10 @@ export function buildRoadLayers(graph: Graph): RoadLayer[] {
 	// band plus junction curb fillets. Road, grass, and median draw on top of
 	// it, so it shows through only along edges and in junction pockets —
 	// and no hairline crevice between layers can exist by construction.
-	const plate = applyCurbRounding(unionPaths(allBands), CURB_RADIUS.sidewalk, junctionDiscs);
+	let plate = applyCurbRounding(unionPaths(allBands), CURB_RADIUS.sidewalk, junctionDiscs);
+	if (nodeGeometry.sidewalkCuts.length > 0) {
+		plate = subtractPaths(plate, unionPaths(nodeGeometry.sidewalkCuts));
+	}
 
 	const layerPaths = new Map<RoadLayerId, Paths>();
 	layerPaths.set('sidewalk', plate);
@@ -136,6 +153,10 @@ export function buildRoadLayers(graph: Graph): RoadLayer[] {
 			const pavement = [...roadwayBands, ...(bandsByType.get('sidewalk') ?? [])];
 			if (pavement.length > 0) {
 				paths = subtractPaths(paths, pavement);
+			}
+			const protectedBands = nodeGeometry.protectedBandsByType.get(layerId);
+			if (protectedBands && protectedBands.length > 0) {
+				paths = unionPaths([...paths, ...protectedBands]);
 			}
 		}
 		layerPaths.set(layerId, paths);
@@ -1075,7 +1096,8 @@ function addNodeGeometry(
 	graph: Graph,
 	node: Node,
 	centerlines: Map<string, CenterlineSample[]>,
-	bandsByType: Map<LaneType, Paths>
+	bandsByType: Map<LaneType, Paths>,
+	metadata?: NodeGeometryMetadata
 ) {
 	const segments = validNodeSegments(graph, node);
 	if (segments.length < 2) return;
@@ -1098,7 +1120,7 @@ function addNodeGeometry(
 		if (merge) {
 			addMergeNode(graph, node, merge, centerlines, bandsByType);
 		} else {
-			addIntersection(graph, node, centerlines, bandsByType);
+			addIntersection(graph, node, centerlines, bandsByType, metadata);
 			// Paths land on the junction with straight aprons, outside the
 			// plate's corner ring — a narrow far-back path mouth between two
 			// wide road mouths would warp the corner curves.
@@ -1531,15 +1553,18 @@ export function collectIntersectionArms(
 // True when a cross-section carries a non-road lane (median/grass) between two
 // roadways — a centre median splitting opposing carriageways.
 function hasCenterMedian(lanes: Lane[]): boolean {
+	return centerMedianInterval(lanes) !== null;
+}
+
+function centerMedianInterval(lanes: Lane[]) {
 	const intervals = getLaneIntervals(lanes);
 	for (let i = 0; i < intervals.length; i++) {
-		const surface = laneSurface(intervals[i].laneType);
-		if (surface !== 'island' && surface !== 'verge') continue;
+		if (!isIslandLike(intervals[i].laneType)) continue;
 		const roadBefore = intervals.slice(0, i).some((iv) => laneSurface(iv.laneType) === 'roadway');
 		const roadAfter = intervals.slice(i + 1).some((iv) => laneSurface(iv.laneType) === 'roadway');
-		if (roadBefore && roadAfter) return true;
+		if (roadBefore && roadAfter) return intervals[i];
 	}
-	return false;
+	return null;
 }
 
 function segmentsCross(p1: Point, p2: Point, p3: Point, p4: Point): boolean {
@@ -1620,6 +1645,156 @@ function armCarriageway(lanes: Lane[]): LaneType {
 // How far junction surfaces reach back into each segment past its stop line,
 // underlapping the road strips so antialiasing never leaks the ground colour.
 const MOUTH_OVERLAP = 0.5;
+const CENTER_MEDIAN_PAIR_DOT = -0.85;
+const CENTER_MEDIAN_MIN_WIDTH = 0.1;
+
+interface CenterMedianContinuation {
+	laneType: LaneType;
+	paths: Paths;
+}
+
+interface CenterMedianPair {
+	a: IntersectionArm;
+	b: IntersectionArm;
+	start: number;
+	end: number;
+	laneType: LaneType;
+	axisA: Point;
+	axisB: Point;
+}
+
+function centerMedianAxisEnd(node: Node, arm: IntersectionArm) {
+	const reach =
+		Math.max(Math.hypot(arm.stop.x - node.x, arm.stop.y - node.y), MEDIAN_BARRIER_REACH) +
+		MEDIAN_BARRIER_REACH;
+	return {
+		x: node.x - arm.into.x * reach,
+		y: node.y - arm.into.y * reach
+	};
+}
+
+function centerMedianIntervalInFrame(arm: IntersectionArm, flipped: boolean) {
+	const interval = centerMedianInterval(arm.lanes);
+	if (!interval) return null;
+	if (!flipped) return interval;
+	return {
+		laneType: interval.laneType,
+		start: -interval.end,
+		end: -interval.start
+	};
+}
+
+function centerMedianPairs(node: Node, arms: IntersectionArm[]) {
+	const candidates: CenterMedianPair[] = [];
+
+	for (let i = 0; i < arms.length; i++) {
+		for (let j = i + 1; j < arms.length; j++) {
+			const a = arms[i];
+			const b = arms[j];
+			if (a.into.x * b.into.x + a.into.y * b.into.y >= CENTER_MEDIAN_PAIR_DOT) continue;
+
+			const intervalA = centerMedianIntervalInFrame(a, false);
+			if (!intervalA) continue;
+
+			const flipped = a.startsHere === b.startsHere;
+			const intervalB = centerMedianIntervalInFrame(b, flipped);
+			if (!intervalB) continue;
+
+			const start = Math.max(intervalA.start, intervalB.start);
+			const end = Math.min(intervalA.end, intervalB.end);
+			if (end - start <= CENTER_MEDIAN_MIN_WIDTH) continue;
+
+			const rawB = centerMedianInterval(b.lanes);
+			const laneType =
+				intervalA.laneType === rawB?.laneType
+					? intervalA.laneType
+					: a.segmentId < b.segmentId
+						? intervalA.laneType
+						: rawB?.laneType;
+			if (!laneType) continue;
+
+			candidates.push({
+				a,
+				b,
+				start,
+				end,
+				laneType,
+				axisA: centerMedianAxisEnd(node, a),
+				axisB: centerMedianAxisEnd(node, b)
+			});
+		}
+	}
+
+	const armUseCounts = new Map<IntersectionArm, number>();
+	for (const pair of candidates) {
+		armUseCounts.set(pair.a, (armUseCounts.get(pair.a) ?? 0) + 1);
+		armUseCounts.set(pair.b, (armUseCounts.get(pair.b) ?? 0) + 1);
+	}
+
+	const disjoint = candidates.filter(
+		(pair) => armUseCounts.get(pair.a) === 1 && armUseCounts.get(pair.b) === 1
+	);
+
+	return disjoint.filter(
+		(pair) =>
+			!disjoint.some(
+				(other) =>
+					other !== pair &&
+					segmentsCross(pair.axisA, pair.axisB, other.axisA, other.axisB)
+			)
+	);
+}
+
+function centerMedianBand(pair: CenterMedianPair) {
+	const flipped = pair.a.startsHere === pair.b.startsHere;
+	const dirB = flipped ? { x: -pair.b.crossDir.x, y: -pair.b.crossDir.y } : pair.b.crossDir;
+	const mouthA = offsetPoint(pair.a.stop, pair.a.into, -MOUTH_OVERLAP);
+	const mouthB = offsetPoint(pair.b.stop, pair.b.into, -MOUTH_OVERLAP);
+
+	const edgeCurve = (offset: number) =>
+		sampleCornerCurve(
+			offsetPoint(mouthA, pair.a.crossDir, offset),
+			pair.a.into,
+			offsetPoint(mouthB, dirB, offset),
+			pair.b.into
+		);
+
+	const low = edgeCurve(pair.start);
+	const high = edgeCurve(pair.end);
+	const band: Path = [];
+	for (const point of high) {
+		band.push(toClipperPoint(point.x, point.y));
+	}
+	for (let i = low.length - 1; i >= 0; i--) {
+		band.push(toClipperPoint(low[i].x, low[i].y));
+	}
+	return normalizeWinding(band);
+}
+
+function centerMedianContinuations(node: Node, arms: IntersectionArm[], pavement: Paths) {
+	const continuations: CenterMedianContinuation[] = [];
+	if (pavement.length === 0) return continuations;
+
+	for (const pair of centerMedianPairs(node, arms)) {
+		const clipped = executeBoolean(ClipperLib.ClipType.ctIntersection, [centerMedianBand(pair)], pavement);
+		if (clipped.length === 0) continue;
+		continuations.push({ laneType: pair.laneType, paths: clipped });
+	}
+
+	return continuations;
+}
+
+function protectNodeBand(metadata: NodeGeometryMetadata, laneType: LaneType, paths: Paths) {
+	metadata.sidewalkCuts.push(...paths);
+	if (laneSurface(laneType) !== 'verge') return;
+
+	const protectedBands = metadata.protectedBandsByType.get(laneType);
+	if (protectedBands) {
+		protectedBands.push(...paths);
+	} else {
+		metadata.protectedBandsByType.set(laneType, [...paths]);
+	}
+}
 
 // A patch node is built explicitly: every road already stops at its trimmed
 // stop line; a paved patch connects the road-bearing mouths, and sidewalk
@@ -1630,7 +1805,8 @@ function addIntersection(
 	graph: Graph,
 	node: Node,
 	centerlines: Map<string, CenterlineSample[]>,
-	bandsByType: Map<LaneType, Paths>
+	bandsByType: Map<LaneType, Paths>,
+	metadata?: NodeGeometryMetadata
 ) {
 	let arms = collectIntersectionArms(graph, node, centerlines);
 	if (arms.length < 2) return;
@@ -1696,7 +1872,18 @@ function addIntersection(
 	// movement between adjacent arms) carved back to sidewalk. With every
 	// movement allowed this is the clean convex patch.
 	const roadBands = getOrCreateBands(bandsByType, patchType);
-	for (const path of junctionPavement(node, roadArms)) {
+	const pavement = junctionPavement(node, roadArms);
+	const continuations = centerMedianContinuations(node, roadArms, pavement);
+	const continuationCuts = continuations.flatMap((continuation) => continuation.paths);
+
+	for (const continuation of continuations) {
+		getOrCreateBands(bandsByType, continuation.laneType).push(...continuation.paths);
+		if (metadata) protectNodeBand(metadata, continuation.laneType, continuation.paths);
+	}
+
+	const patchPaths =
+		continuationCuts.length > 0 ? subtractPaths(pavement, unionPaths(continuationCuts)) : pavement;
+	for (const path of patchPaths) {
 		roadBands.push(path);
 	}
 }
@@ -2603,7 +2790,8 @@ export function buildNodeLayers(
 	if (node.connectedSegments.length < 2) return [];
 
 	const bandsByType = new Map<LaneType, Paths>();
-	addNodeGeometry(graph, node, centerlines, bandsByType);
+	const nodeGeometry = createNodeGeometryMetadata();
+	addNodeGeometry(graph, node, centerlines, bandsByType, nodeGeometry);
 
 	const allBands: Paths = [];
 	for (const bands of bandsByType.values()) {
@@ -2627,7 +2815,10 @@ export function buildNodeLayers(
 
 	// The sidewalk layer doubles as the junction's full pavement plate — same
 	// layering trick as segment ribbons.
-	const plate = applyCurbRounding(unionPaths(allBands), CURB_RADIUS.sidewalk, discs);
+	let plate = applyCurbRounding(unionPaths(allBands), CURB_RADIUS.sidewalk, discs);
+	if (nodeGeometry.sidewalkCuts.length > 0) {
+		plate = subtractPaths(plate, unionPaths(nodeGeometry.sidewalkCuts));
+	}
 
 	const layers: RoadLayer[] = [];
 
