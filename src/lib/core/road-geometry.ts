@@ -2386,10 +2386,17 @@ export function buildNodePaint(
 	node: Node,
 	centerlines: Map<string, CenterlineSample[]>
 ): NodePaintPath[] {
+	// Road crosswalks render at every junction-grade node (3+ road arms),
+	// whether it's a plain junction or a merge with a through pair — only a pure
+	// 2-arm pair (a bend/transition) is gated out by buildJunctionCrosswalks.
+	const crosswalks = buildJunctionCrosswalks(graph, node, centerlines);
 	const pair = nodeThroughPair(graph, node);
-	if (!pair) return buildJunctionCrosswalks(graph, node, centerlines);
+	if (!pair) return crosswalks;
 
-	const paths: NodePaintPath[] = buildPathCrossingZebras(graph, node, centerlines, pair);
+	const paths: NodePaintPath[] = [
+		...crosswalks,
+		...buildPathCrossingZebras(graph, node, centerlines, pair)
+	];
 	if (pairBendDeviation(graph, node, pair[0], pair[1]) < MIN_BEND_DEVIATION) return paths;
 
 	const arms = collectIntersectionArms(graph, node, centerlines, new Set([pair[0].id, pair[1].id]));
