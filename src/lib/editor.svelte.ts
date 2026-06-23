@@ -1,7 +1,7 @@
 import { getContext, setContext, untrack } from 'svelte';
 import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 import { Graph } from './core/graph.svelte';
-import type { GraphData } from './core/types';
+import type { GraphData, Lane, LaneConnectionRef, LaneRef } from './core/types';
 import { getDefaultTemplate } from './core/lane-template';
 import { resolveCrossings } from './core/crossings';
 import {
@@ -13,7 +13,6 @@ import {
 import type { CenterlineSample, Point } from './core/road-geometry';
 import { isDefaultMovement, nodeConnectivity, sameConnectionRef } from './core/lane-connections';
 import type { Barrier, LaneEndpoint, LaneConnection } from './core/lane-connections';
-import type { LaneRef } from './core/types';
 import { SceneManager } from './rendering/scene.svelte';
 import { NodeRenderer, type NodeTone } from './rendering/node-renderer';
 import { RoadRenderer } from './rendering/road-renderer';
@@ -64,6 +63,45 @@ function pointAtArcLength(points: Point[], target: number): Point {
 }
 
 const EDITOR_CONTEXT_KEY = Symbol('editor');
+const PASTE_OFFSET = 16;
+
+interface ClipboardNodeSnapshot {
+	id: string;
+	x: number;
+	y: number;
+	disabledConnections?: LaneConnectionRef[];
+	enabledConnections?: LaneConnectionRef[];
+}
+
+interface ClipboardSegmentSnapshot {
+	id: string;
+	startNodeId: string;
+	endNodeId: string;
+	controlX?: number;
+	controlY?: number;
+	lanes: Lane[];
+}
+
+interface SegmentClipboard {
+	nodes: ClipboardNodeSnapshot[];
+	segments: ClipboardSegmentSnapshot[];
+}
+
+function cloneLanes(lanes: Lane[]) {
+	return lanes.map((lane) => ({ ...lane }));
+}
+
+function cloneConnectionRef(connection: LaneConnectionRef): LaneConnectionRef {
+	return {
+		from: { ...connection.from },
+		to: { ...connection.to }
+	};
+}
+
+function cloneConnectionRefs(connections: LaneConnectionRef[] | undefined) {
+	if (!connections || connections.length === 0) return undefined;
+	return connections.map(cloneConnectionRef);
+}
 
 export class Editor {
 	graph = new Graph();
@@ -100,8 +138,10 @@ export class Editor {
 	private modeHandlers: ModeHandlers | null = null;
 	private boundKeyDown: ((e: KeyboardEvent) => void) | null = null;
 	private boundHistoryKeyDown: ((e: KeyboardEvent) => void) | null = null;
+	private boundClipboardKeyDown: ((e: KeyboardEvent) => void) | null = null;
 	private hoveredNodeId: string | null = null;
 	private hoveredSegmentId: string | null = null;
+	private segmentClipboard: SegmentClipboard | null = null;
 
 	// Undo history as whole-graph snapshots, captured at the save boundary:
 	// every operation (a draw click, a finished drag, a lane tweak, a
@@ -142,6 +182,7 @@ export class Editor {
 		this.graph.onSaved = (serialized) => this.recordHistory(serialized);
 		this.setupCanvasEvents();
 		this.setupHistoryKeys();
+		this.setupClipboardKeys();
 		// The mode effect already ran before init; install the default mode now.
 		this.setupMode(this.mode);
 	}
@@ -198,6 +239,154 @@ export class Editor {
 			}
 		};
 		window.addEventListener('keydown', this.boundHistoryKeyDown);
+	}
+
+	private setupClipboardKeys() {
+		this.boundClipboardKeyDown = (e: KeyboardEvent) => {
+			if (!(e.metaKey || e.ctrlKey)) return;
+			const key = e.key.toLowerCase();
+			if (key !== 'c' && key !== 'v') return;
+			const target = e.target;
+			if (target instanceof HTMLElement && target.tagName !== 'BODY') return;
+			e.preventDefault();
+			if (key === 'c') {
+				this.copySelectedSegments();
+			} else {
+				this.pasteSegments();
+			}
+		};
+		window.addEventListener('keydown', this.boundClipboardKeyDown);
+	}
+
+	private copySelectedSegments() {
+		if (this.selectedSegments.size === 0) return;
+
+		const nodes = new SvelteMap<string, ClipboardNodeSnapshot>();
+		const segments: ClipboardSegmentSnapshot[] = [];
+
+		for (const segmentId of this.selectedSegments) {
+			const segment = this.graph.segments.get(segmentId);
+			if (!segment) continue;
+			const startNode = this.graph.nodes.get(segment.startNodeId);
+			const endNode = this.graph.nodes.get(segment.endNodeId);
+			if (!startNode || !endNode) continue;
+
+			for (const node of [startNode, endNode]) {
+				if (nodes.has(node.id)) continue;
+				nodes.set(node.id, {
+					id: node.id,
+					x: node.x,
+					y: node.y,
+					disabledConnections: cloneConnectionRefs(node.disabledConnections),
+					enabledConnections: cloneConnectionRefs(node.enabledConnections)
+				});
+			}
+
+			segments.push({
+				id: segment.id,
+				startNodeId: segment.startNodeId,
+				endNodeId: segment.endNodeId,
+				controlX: segment.controlX,
+				controlY: segment.controlY,
+				lanes: cloneLanes(segment.lanes)
+			});
+		}
+
+		if (segments.length === 0) return;
+		this.segmentClipboard = {
+			nodes: [...nodes.values()],
+			segments
+		};
+	}
+
+	private pasteSegments() {
+		if (!this.segmentClipboard || this.segmentClipboard.segments.length === 0) return;
+		if (this.selectedSegments.size > 0) {
+			this.pasteLanesToSelectedSegments();
+			return;
+		}
+		if (this.selectedNodes.size === 0) {
+			this.pasteNewSegments();
+		}
+	}
+
+	private pasteLanesToSelectedSegments() {
+		const source = this.segmentClipboard?.segments[0];
+		if (!source) return;
+
+		for (const segmentId of this.selectedSegments) {
+			const segment = this.graph.segments.get(segmentId);
+			if (segment) {
+				segment.lanes = cloneLanes(source.lanes);
+			}
+		}
+		this.rebuildRoads();
+		this.refreshSelectionVisuals();
+		this.graph.save();
+	}
+
+	private remapLaneRef(ref: LaneRef, segmentIds: SvelteMap<string, string>) {
+		const segmentId = segmentIds.get(ref.segmentId);
+		return segmentId ? { segmentId, laneIndex: ref.laneIndex } : null;
+	}
+
+	private remapConnectionRef(connection: LaneConnectionRef, segmentIds: SvelteMap<string, string>) {
+		const from = this.remapLaneRef(connection.from, segmentIds);
+		const to = this.remapLaneRef(connection.to, segmentIds);
+		return from && to ? { from, to } : null;
+	}
+
+	private remapConnectionRefs(
+		connections: LaneConnectionRef[] | undefined,
+		segmentIds: SvelteMap<string, string>
+	) {
+		if (!connections || connections.length === 0) return undefined;
+		const remapped = connections
+			.map((connection) => this.remapConnectionRef(connection, segmentIds))
+			.filter((connection) => connection !== null);
+		return remapped.length > 0 ? remapped : undefined;
+	}
+
+	private pasteNewSegments() {
+		const clipboard = this.segmentClipboard;
+		if (!clipboard) return;
+
+		const nodeIds = new SvelteMap<string, string>();
+		const segmentIds = new SvelteMap<string, string>();
+
+		for (const snapshot of clipboard.nodes) {
+			const node = this.graph.createNode(snapshot.x + PASTE_OFFSET, snapshot.y + PASTE_OFFSET);
+			nodeIds.set(snapshot.id, node.id);
+			this.nodeRenderer.createNode(node);
+		}
+
+		for (const snapshot of clipboard.segments) {
+			const startNodeId = nodeIds.get(snapshot.startNodeId);
+			const endNodeId = nodeIds.get(snapshot.endNodeId);
+			if (!startNodeId || !endNodeId) continue;
+
+			const segment = this.graph.createSegment(startNodeId, endNodeId, cloneLanes(snapshot.lanes));
+			segmentIds.set(snapshot.id, segment.id);
+			if (snapshot.controlX !== undefined && snapshot.controlY !== undefined) {
+				segment.setControlPoint(snapshot.controlX + PASTE_OFFSET, snapshot.controlY + PASTE_OFFSET);
+			}
+		}
+
+		for (const snapshot of clipboard.nodes) {
+			const nodeId = nodeIds.get(snapshot.id);
+			const node = nodeId ? this.graph.nodes.get(nodeId) : undefined;
+			if (!node) continue;
+			node.disabledConnections = this.remapConnectionRefs(snapshot.disabledConnections, segmentIds);
+			node.enabledConnections = this.remapConnectionRefs(snapshot.enabledConnections, segmentIds);
+		}
+
+		this.clearSelection();
+		for (const segmentId of segmentIds.values()) {
+			this.selectSegment(segmentId);
+		}
+		this.rebuildRoads();
+		this.refreshSelectionVisuals();
+		this.graph.save();
 	}
 
 	private loadSavedData() {
@@ -382,7 +571,9 @@ export class Editor {
 				const otherId = node.connectedSegments.find((id) => id !== segmentId);
 				const otherSeg = otherId ? this.graph.segments.get(otherId) : undefined;
 				if (otherId && otherSeg) {
-					straddleInfo = { link: { segmentId: otherId, atStart: otherSeg.startNodeId === node.id } };
+					straddleInfo = {
+						link: { segmentId: otherId, atStart: otherSeg.startNodeId === node.id }
+					};
 				}
 			}
 			rich.push({
@@ -446,8 +637,7 @@ export class Editor {
 		// A straddle handle sits at half the taper, so the stored setback (the
 		// full taper length) is twice the drag distance, and the linked segment
 		// on the other side gets the same value.
-		const value =
-			bestArc < 1 ? undefined : handle.straddle ? bestArc * 2 : bestArc;
+		const value = bestArc < 1 ? undefined : handle.straddle ? bestArc * 2 : bestArc;
 		if (handle.atStart) segment.setbackStart = value;
 		else segment.setbackEnd = value;
 
@@ -528,7 +718,9 @@ export class Editor {
 			else next.push(ref);
 			return next.length > 0 ? next : undefined;
 		};
-		if (isDefaultMovement(this.currentConnectors.endpoints, this.currentConnectors.barriers, from, to)) {
+		if (
+			isDefaultMovement(this.currentConnectors.endpoints, this.currentConnectors.barriers, from, to)
+		) {
 			node.disabledConnections = toggle(node.disabledConnections);
 		} else {
 			node.enabledConnections = toggle(node.enabledConnections);
@@ -741,6 +933,9 @@ export class Editor {
 		}
 		if (this.boundHistoryKeyDown) {
 			window.removeEventListener('keydown', this.boundHistoryKeyDown);
+		}
+		if (this.boundClipboardKeyDown) {
+			window.removeEventListener('keydown', this.boundClipboardKeyDown);
 		}
 		this.setbackRenderer?.dispose();
 		this.connectionRenderer?.dispose();
