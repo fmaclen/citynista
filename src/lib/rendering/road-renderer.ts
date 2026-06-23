@@ -35,6 +35,7 @@ import {
 	laneSurface
 } from '../core/lane-types';
 import type { Lane, TurnMovement } from '../core/types';
+import { centerCrossedAt } from '../core/lane-connections';
 
 const LAYER_Y: Record<RoadLayerId, number> = Object.fromEntries(
 	LANE_TYPE_LIST.map((type) => [type, laneLayerY(type)])
@@ -93,6 +94,9 @@ const PAINT_DASH = 2.2;
 const PAINT_GAP = 2.6;
 const PAINT_SOLID_STEP = 2.5;
 const PAINT_END_INSET = 0.2;
+// How far short of a node the solid centre line stops when a movement crosses
+// it there — a gap wide enough to read as a break, not a dashed continuation.
+const CENTER_BREAK_INSET = 3.5;
 // A branching lane line stops once it converges this close to the line it
 // merges into — the remaining sliver of lane is not usable, and real paint
 // leaves the same gap.
@@ -190,6 +194,15 @@ export class RoadRenderer {
 			}
 		}
 
+		// A node where an active movement carries traffic across the through
+		// road's centreline breaks the solid centre line there; everywhere else
+		// it runs through. Computed once so both the segments meeting the node
+		// and the node piece agree.
+		const centerBreak = new Map<string, boolean>();
+		for (const node of graph.nodes.values()) {
+			if (centerCrossedAt(graph, node, centerlines)) centerBreak.set(node.id, true);
+		}
+
 		const seen = new Set<string>();
 
 		for (const segment of graph.segments.values()) {
@@ -198,6 +211,8 @@ export class RoadRenderer {
 
 			const startNode = graph.nodes.get(segment.startNodeId)!;
 			const endNode = graph.nodes.get(segment.endNodeId)!;
+			const centerBreakStart = centerBreak.get(startNode.id) ?? false;
+			const centerBreakEnd = centerBreak.get(endNode.id) ?? false;
 			const joinStart = startNode.connectedSegments.length > 1;
 			const joinEnd = endNode.connectedSegments.length > 1;
 			// At two-segment same-type nodes the node piece carries medians and
@@ -234,7 +249,9 @@ export class RoadRenderer {
 				morphStart?.key ?? '-',
 				morphEnd?.key ?? '-',
 				turnSignStart,
-				turnSignEnd
+				turnSignEnd,
+				centerBreakStart,
+				centerBreakEnd
 			].join('|');
 
 			seen.add(key);
@@ -252,6 +269,8 @@ export class RoadRenderer {
 				morphEnd,
 				turnSignStart,
 				turnSignEnd,
+				centerBreakStart,
+				centerBreakEnd,
 				this.jitterFor(key)
 			);
 			this.rootGroup.add(group);
@@ -329,6 +348,8 @@ export class RoadRenderer {
 		morphEnd: TransitionMorph | null,
 		turnSignStart: number,
 		turnSignEnd: number,
+		centerBreakStart: boolean,
+		centerBreakEnd: boolean,
 		jitter: number
 	): THREE.Group {
 		const group = new THREE.Group();
@@ -495,6 +516,8 @@ export class RoadRenderer {
 			continuityJoinEnd,
 			turnSignStart,
 			turnSignEnd,
+			centerBreakStart,
+			centerBreakEnd,
 			jitter
 		)) {
 			group.add(mesh);
@@ -521,6 +544,8 @@ export class RoadRenderer {
 		continuityJoinEnd: boolean,
 		turnSignStart: number,
 		turnSignEnd: number,
+		centerBreakStart: boolean,
+		centerBreakEnd: boolean,
 		jitter: number
 	): THREE.Mesh[] {
 		const cumulative: number[] = [0];
@@ -588,6 +613,14 @@ export class RoadRenderer {
 			if (turnFlank) {
 				if (morphStart) from = Math.max(from, lengthStart + TURN_POCKET_ENTRANCE);
 				if (morphEnd) to = Math.min(to, total - lengthEnd - TURN_POCKET_ENTRANCE);
+			}
+
+			// The solid centre line stops short of a node where a movement crosses
+			// it (a slip/turn/U-turn opening the carriageway) so it breaks there
+			// instead of running straight through the diverging traffic.
+			if (paint.color === 'center') {
+				if (centerBreakStart) from = Math.max(from, CENTER_BREAK_INSET);
+				if (centerBreakEnd) to = Math.min(to, total - CENTER_BREAK_INSET);
 			}
 			if (to - from < 0.5) continue;
 

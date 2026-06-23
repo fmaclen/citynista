@@ -360,7 +360,7 @@ const TRANSITION_MAX_LENGTH = 60;
 
 // The two segments that continue through a node: the connection pair, or a
 // merge node's through pair.
-function nodeThroughPair(graph: Graph, node: Node): [Segment, Segment] | null {
+export function nodeThroughPair(graph: Graph, node: Node): [Segment, Segment] | null {
 	if (isPatchNode(graph, node)) return mergeInfo(graph, node)?.through ?? null;
 	return connectionPair(graph, node);
 }
@@ -2397,6 +2397,11 @@ export function buildNodePaint(
 		...crosswalks,
 		...buildPathCrossingZebras(graph, node, centerlines, pair)
 	];
+	// At a straight pair the segment ribbons butt, so their own paint meets at
+	// the node — drawing it again here would double a continuous line and, at a
+	// merge where traffic diverges across the centre, paint a centre line that
+	// should break. Only a bend needs node paint (its corner bands).
+	if (pairBendDeviation(graph, node, pair[0], pair[1]) < MIN_BEND_DEVIATION) return paths;
 
 	const arms = collectIntersectionArms(graph, node, centerlines, new Set([pair[0].id, pair[1].id]));
 	if (arms.length !== 2) return paths;
@@ -2508,12 +2513,22 @@ function buildJunctionCrosswalks(
 	const roadArms = arms.filter((arm) => arm.hasRoad);
 	if (roadArms.length < 3) return [];
 
+	// At a merge the through pair runs straight through with no stop line, so it
+	// is not crossed — only the arms that join it are (the mergers, e.g. slip
+	// ramps). A merging arm without its own sidewalks is still crossed at the
+	// corner when the intersection has sidewalks elsewhere.
+	const merge = mergeInfo(graph, node);
+	const through = merge?.throughIds ?? new Set<string>();
+	const hasSidewalk = (arm: IntersectionArm) =>
+		arm.lanes.some((lane) => laneSurface(lane.type) === 'walkway');
+	const nodeHasSidewalk = roadArms.some(hasSidewalk);
+
 	// At a stop line every island has already ended — the crossing zone is
 	// pure pavement, so bars run continuously across the drivable span,
-	// median gaps included. An arm without sidewalks gets no crosswalk:
-	// there is nothing for pedestrians to cross between.
+	// median gaps included.
 	for (const arm of roadArms) {
-		if (!arm.lanes.some((lane) => laneSurface(lane.type) === 'walkway')) continue;
+		if (through.has(arm.segmentId)) continue;
+		if (!hasSidewalk(arm) && !(merge && nodeHasSidewalk)) continue;
 		const inner = offsetPoint(arm.stop, arm.into, CROSSWALK_INSET);
 		const outer = offsetPoint(arm.stop, arm.into, CROSSWALK_INSET + CROSSWALK_DEPTH);
 		const from = -arm.away.roadEdge;

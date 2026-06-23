@@ -6,6 +6,7 @@ import {
 	collectIntersectionArms,
 	computeIntersectionTrims,
 	medianBarriers,
+	nodeThroughPair,
 	offsetPoint,
 	sampleTrimmedCenterline
 } from './road-geometry';
@@ -229,4 +230,58 @@ export function nodeConnectivity(
 	}
 
 	return { endpoints, connections, barriers };
+}
+
+// The movements that actually exist at a node, reusing the network's already
+// trimmed centerlines instead of recomputing them — the default set minus the
+// node's disabled movements, plus any explicitly enabled extras.
+export function activeConnectionsAt(
+	graph: Graph,
+	node: Node,
+	centerlines: Map<string, CenterlineSample[]>
+): LaneConnection[] {
+	if (node.connectedSegments.length < 2) return [];
+
+	const endpoints = laneEndpointsAtNode(graph, node, centerlines);
+	const barriers = medianBarriers(graph, node, centerlines);
+	const disabled = node.disabledConnections ?? [];
+	const enabled = node.enabledConnections ?? [];
+
+	const connections = defaultConnections(endpoints, barriers).filter(
+		(c) => !disabled.some((d) => sameConnectionRef(d, c))
+	);
+	for (const ref of enabled) {
+		if (connections.some((c) => sameConnectionRef(c, ref))) continue;
+		const f = endpoints.find((e) => sameLaneRef(e.ref, ref.from) && e.flow === 'in');
+		const t = endpoints.find((e) => sameLaneRef(e.ref, ref.to) && e.flow === 'out');
+		if (f && t) connections.push(makeConnection(f, t));
+	}
+	return connections;
+}
+
+// How far the centre axis reaches either side of the node — far enough to
+// catch a connector dot (seated MIN_DOT_OFFSET out) peeling across the centre.
+const CENTER_CROSS_REACH = MIN_DOT_OFFSET + 2;
+
+// Whether an active movement crosses the through road's centreline at the node
+// — a slip/turn/U-turn that carries traffic from one carriageway to the
+// opposing one. The solid centre line breaks where this happens and runs
+// through where it doesn't, so its continuity follows the actual connectivity.
+export function centerCrossedAt(
+	graph: Graph,
+	node: Node,
+	centerlines: Map<string, CenterlineSample[]>
+): boolean {
+	const pair = nodeThroughPair(graph, node);
+	if (!pair) return false;
+
+	const arms = collectIntersectionArms(graph, node, centerlines, new Set([pair[0].id, pair[1].id]));
+	if (arms.length === 0) return false;
+	const axis = arms[0].into;
+	const a = { x: node.x - axis.x * CENTER_CROSS_REACH, y: node.y - axis.y * CENTER_CROSS_REACH };
+	const b = { x: node.x + axis.x * CENTER_CROSS_REACH, y: node.y + axis.y * CENTER_CROSS_REACH };
+
+	return activeConnectionsAt(graph, node, centerlines).some((c) =>
+		segmentsCross(c.fromPoint, c.toPoint, a, b)
+	);
 }
