@@ -1664,7 +1664,8 @@ interface CenterMedianPair {
 	b: IntersectionArm;
 	start: number;
 	end: number;
-	laneType: LaneType;
+	laneTypeA: LaneType;
+	laneTypeB: LaneType;
 	axisA: Point;
 	axisB: Point;
 }
@@ -1714,21 +1715,13 @@ function centerMedianPairs(
 			const end = Math.min(intervalA.end, intervalB.end);
 			if (end - start <= CENTER_MEDIAN_MIN_WIDTH) continue;
 
-			const rawB = centerMedianInterval(b.lanes);
-			const laneType =
-				intervalA.laneType === rawB?.laneType
-					? intervalA.laneType
-					: a.segmentId < b.segmentId
-						? intervalA.laneType
-						: rawB?.laneType;
-			if (!laneType) continue;
-
 			candidates.push({
 				a,
 				b,
 				start,
 				end,
-				laneType,
+				laneTypeA: intervalA.laneType,
+				laneTypeB: intervalB.laneType,
 				axisA: centerMedianAxisEnd(node, a),
 				axisB: centerMedianAxisEnd(node, b)
 			});
@@ -1757,22 +1750,31 @@ function centerMedianPairs(
 	});
 }
 
-function centerMedianBand(pair: CenterMedianPair) {
+function centerMedianAlignedDirB(pair: CenterMedianPair) {
 	const flipped = pair.a.startsHere === pair.b.startsHere;
-	const dirB = flipped ? { x: -pair.b.crossDir.x, y: -pair.b.crossDir.y } : pair.b.crossDir;
-	const mouthA = offsetPoint(pair.a.stop, pair.a.into, -MOUTH_OVERLAP);
-	const mouthB = offsetPoint(pair.b.stop, pair.b.into, -MOUTH_OVERLAP);
+	return flipped ? { x: -pair.b.crossDir.x, y: -pair.b.crossDir.y } : pair.b.crossDir;
+}
 
+function centerMedianBandPath(
+	fromCenter: Point,
+	fromInto: Point,
+	fromCrossDir: Point,
+	toCenter: Point,
+	toInto: Point,
+	toCrossDir: Point,
+	start: number,
+	end: number
+) {
 	const edgeCurve = (offset: number) =>
 		sampleCornerCurve(
-			offsetPoint(mouthA, pair.a.crossDir, offset),
-			pair.a.into,
-			offsetPoint(mouthB, dirB, offset),
-			pair.b.into
+			offsetPoint(fromCenter, fromCrossDir, offset),
+			fromInto,
+			offsetPoint(toCenter, toCrossDir, offset),
+			toInto
 		);
 
-	const low = edgeCurve(pair.start);
-	const high = edgeCurve(pair.end);
+	const low = edgeCurve(start);
+	const high = edgeCurve(end);
 	const band: Path = [];
 	for (const point of high) {
 		band.push(toClipperPoint(point.x, point.y));
@@ -1781,6 +1783,74 @@ function centerMedianBand(pair: CenterMedianPair) {
 		band.push(toClipperPoint(low[i].x, low[i].y));
 	}
 	return normalizeWinding(band);
+}
+
+function centerMedianBand(pair: CenterMedianPair) {
+	const dirB = centerMedianAlignedDirB(pair);
+	const mouthA = offsetPoint(pair.a.stop, pair.a.into, -MOUTH_OVERLAP);
+	const mouthB = offsetPoint(pair.b.stop, pair.b.into, -MOUTH_OVERLAP);
+
+	return centerMedianBandPath(
+		mouthA,
+		pair.a.into,
+		pair.a.crossDir,
+		mouthB,
+		pair.b.into,
+		dirB,
+		pair.start,
+		pair.end
+	);
+}
+
+function centerMedianHalfBands(node: Node, pair: CenterMedianPair) {
+	const dirB = centerMedianAlignedDirB(pair);
+	const centerDir =
+		normalizeVector({ x: pair.a.crossDir.x + dirB.x, y: pair.a.crossDir.y + dirB.y }) ??
+		pair.a.crossDir;
+	const mouthA = offsetPoint(pair.a.stop, pair.a.into, -MOUTH_OVERLAP);
+	const mouthB = offsetPoint(pair.b.stop, pair.b.into, -MOUTH_OVERLAP);
+	const center = { x: node.x, y: node.y };
+
+	return [
+		{
+			laneType: pair.laneTypeA,
+			path: centerMedianBandPath(
+				mouthA,
+				pair.a.into,
+				pair.a.crossDir,
+				center,
+				pair.b.into,
+				centerDir,
+				pair.start,
+				pair.end
+			)
+		},
+		{
+			laneType: pair.laneTypeB,
+			path: centerMedianBandPath(
+				mouthB,
+				pair.b.into,
+				dirB,
+				center,
+				pair.a.into,
+				centerDir,
+				pair.start,
+				pair.end
+			)
+		}
+	];
+}
+
+function addCenterMedianContinuation(
+	continuations: CenterMedianContinuation[],
+	laneType: LaneType,
+	band: Path,
+	pavement: Paths
+) {
+	const clipped = executeBoolean(ClipperLib.ClipType.ctIntersection, [band], pavement);
+	if (clipped.length > 0) {
+		continuations.push({ laneType, paths: clipped });
+	}
 }
 
 function centerMedianContinuations(
@@ -1793,9 +1863,19 @@ function centerMedianContinuations(
 	if (pavement.length === 0) return continuations;
 
 	for (const pair of centerMedianPairs(node, arms, crossingConnectors)) {
-		const clipped = executeBoolean(ClipperLib.ClipType.ctIntersection, [centerMedianBand(pair)], pavement);
-		if (clipped.length === 0) continue;
-		continuations.push({ laneType: pair.laneType, paths: clipped });
+		if (pair.laneTypeA === pair.laneTypeB) {
+			addCenterMedianContinuation(
+				continuations,
+				pair.laneTypeA,
+				centerMedianBand(pair),
+				pavement
+			);
+			continue;
+		}
+
+		for (const half of centerMedianHalfBands(node, pair)) {
+			addCenterMedianContinuation(continuations, half.laneType, half.path, pavement);
+		}
 	}
 
 	return continuations;
