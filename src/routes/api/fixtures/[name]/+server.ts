@@ -1,6 +1,6 @@
 import { json, error } from '@sveltejs/kit';
 import { dev } from '$app/environment';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, writeFile, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 
 const NAME_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
@@ -21,4 +21,19 @@ export async function PUT({ params, request }) {
 	await writeFile(join(dir, `${params.name}.json`), JSON.stringify(data, null, '\t') + '\n');
 
 	return json({ saved: params.name });
+}
+
+// Dev-only: deletes static/fixtures/<name>.json. The kebab-case pattern refuses
+// underscore-prefixed names, so the hidden test fixtures can't be removed here.
+export async function DELETE({ params }) {
+	if (!dev) error(404, 'Not found');
+	if (!NAME_PATTERN.test(params.name)) error(400, 'Fixture names are kebab-case slugs');
+
+	try {
+		await unlink(join(process.cwd(), 'static', 'fixtures', `${params.name}.json`));
+	} catch {
+		error(404, 'Fixture not found');
+	}
+
+	return json({ deleted: params.name });
 }

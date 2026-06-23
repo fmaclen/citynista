@@ -4,7 +4,7 @@ const STORAGE_KEY = 'citynista-graph-v2';
 
 test.describe('Fixtures', () => {
 	test('booting with ?fixture= loads the shared graph', async ({ page }) => {
-		await page.goto('/?fixture=median-corner&topdown');
+		await page.goto('/?fixture=_median-corner&topdown');
 		await expect(page.locator('canvas')).toBeVisible();
 
 		await page.waitForFunction(
