@@ -2,7 +2,7 @@ import { getContext, setContext, untrack } from 'svelte';
 import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 import { Graph } from './core/graph.svelte';
 import type { GraphData, Lane, LaneConnectionRef, LaneRef } from './core/types';
-import { getDefaultTemplate } from './core/lane-template';
+import { getDefaultTemplate, serializeLanes, reverseLanes } from './core/lane-template';
 import { resolveCrossings } from './core/crossings';
 import {
 	computeIntersectionTrims,
@@ -156,6 +156,13 @@ export class Editor {
 	canRedo = $state(false);
 	selectedNodes = new SvelteSet<string>();
 	selectedSegments = new SvelteSet<string>();
+	// A single selected node that just passes through two same-section segments
+	// can be dissolved back into one road; the toolbar offers it only then.
+	joinableNodeId = $derived.by(() => {
+		if (this.selectedNodes.size !== 1 || this.selectedSegments.size !== 0) return null;
+		const nodeId = [...this.selectedNodes][0];
+		return this.canJoinNode(nodeId) ? nodeId : null;
+	});
 
 	private modeHandlers: ModeHandlers | null = null;
 	private boundKeyDown: ((e: KeyboardEvent) => void) | null = null;
@@ -999,6 +1006,59 @@ export class Editor {
 				this.nodeRingRadius(endNode)
 			);
 		}
+	}
+
+	// Joinable when the node bridges exactly two segments whose cross-sections
+	// match once read in the same flow direction through it.
+	canJoinNode(nodeId: string) {
+		const node = this.graph.nodes.get(nodeId);
+		if (!node || node.connectedSegments.length !== 2) return false;
+		const segA = this.graph.segments.get(node.connectedSegments[0]);
+		const segB = this.graph.segments.get(node.connectedSegments[1]);
+		if (!segA || !segB) return false;
+		const farA = segA.startNodeId === nodeId ? segA.endNodeId : segA.startNodeId;
+		const farB = segB.startNodeId === nodeId ? segB.endNodeId : segB.startNodeId;
+		if (farA === farB) return false;
+		const flowA = segA.endNodeId === nodeId ? segA.lanes : reverseLanes(segA.lanes);
+		const flowB = segB.startNodeId === nodeId ? segB.lanes : reverseLanes(segB.lanes);
+		return serializeLanes(flowA) === serializeLanes(flowB);
+	}
+
+	joinNode(nodeId: string) {
+		const node = this.graph.nodes.get(nodeId);
+		if (!node || node.connectedSegments.length !== 2) return;
+		const segA = this.graph.segments.get(node.connectedSegments[0]);
+		const segB = this.graph.segments.get(node.connectedSegments[1]);
+		if (!segA || !segB) return;
+		const farAId = segA.startNodeId === nodeId ? segA.endNodeId : segA.startNodeId;
+		const farBId = segB.startNodeId === nodeId ? segB.endNodeId : segB.startNodeId;
+		const farA = this.graph.nodes.get(farAId);
+		const farB = this.graph.nodes.get(farBId);
+		if (!farA || !farB || farAId === farBId) return;
+
+		const flowA = segA.endNodeId === nodeId ? segA.lanes : reverseLanes(segA.lanes);
+		const flowB = segB.startNodeId === nodeId ? segB.lanes : reverseLanes(segB.lanes);
+		if (serializeLanes(flowA) !== serializeLanes(flowB)) return;
+
+		const merged = this.graph.createSegment(farAId, farBId, cloneLanes(flowA));
+		// Keep the shape: bow the merged road through where the node sat unless the
+		// three points were already collinear, in which case it stays straight.
+		const ax = farB.x - farA.x;
+		const ay = farB.y - farA.y;
+		const cross = ax * (node.y - farA.y) - ay * (node.x - farA.x);
+		const lengthSq = ax * ax + ay * ay;
+		if (lengthSq > 1e-6 && (cross * cross) / lengthSq > 0.25) {
+			merged.setControlPoint(2 * node.x - (farA.x + farB.x) / 2, 2 * node.y - (farA.y + farB.y) / 2);
+		}
+
+		this.graph.deleteSegment(segA.id);
+		this.graph.deleteSegment(segB.id);
+		this.graph.deleteNode(nodeId);
+		this.nodeRenderer.removeNode(nodeId);
+		this.clearSelection();
+		this.selectSegment(merged.id);
+		this.rebuildRoads();
+		this.graph.save();
 	}
 
 	deleteSelected() {

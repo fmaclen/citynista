@@ -78,3 +78,21 @@ export function serializeLanes(lanes: Lane[]): string {
 		)
 		.join(',');
 }
+
+// The same cross-section read end-to-end the other way: lane order reverses and
+// travel directions flip, so two segments meeting at a node can be compared in a
+// shared flow direction.
+export function reverseLanes(lanes: Lane[]): Lane[] {
+	return lanes
+		.slice()
+		.reverse()
+		.map((lane) => ({
+			...lane,
+			direction:
+				lane.direction === 'forward'
+					? 'backward'
+					: lane.direction === 'backward'
+						? 'forward'
+						: lane.direction
+		}));
+}

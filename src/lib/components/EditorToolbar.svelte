@@ -3,7 +3,17 @@
 	import type { DrawStyle } from '$lib/modes/types';
 	import { LANE_COLORS, LANE_TEMPLATES, getTotalWidth } from '$lib/core/lane-template';
 	import { Button } from '$lib/components/ui/button';
-	import { MousePointer2, Redo2, Scissors, Slash, Spline, Undo2, Tractor, Waves } from '@lucide/svelte';
+	import {
+		Combine,
+		MousePointer2,
+		Redo2,
+		Scissors,
+		Slash,
+		Spline,
+		Undo2,
+		Tractor,
+		Waves
+	} from '@lucide/svelte';
 
 	const editor = getEditorContext();
 
@@ -157,5 +167,18 @@
 		>
 			<Tractor class="h-4 w-4" />
 		</Button>
+
+		{#if editor.joinableNodeId}
+			<div class="mx-1 h-6 w-px bg-border"></div>
+
+			<Button
+				variant="ghost"
+				size="icon"
+				onclick={press(() => editor.joinNode(editor.joinableNodeId!))}
+				title="Join — dissolve this node back into one road"
+			>
+				<Combine class="h-4 w-4" />
+			</Button>
+		{/if}
 	</nav>
 </div>
