@@ -113,7 +113,8 @@ export function laneEndpointsAtNode(
 
 export type Barrier = { a: Point; b: Point };
 type MovementBucket = 'left' | 'through' | 'right';
-type BucketedDestinations = { bucket: MovementBucket; endpoints: LaneEndpoint[] };
+type DestinationArm = { endpoints: LaneEndpoint[] };
+type BucketedDestinations = { bucket: MovementBucket; arms: DestinationArm[] };
 
 const DEFAULT_THROUGH_DOT = Math.cos(Math.PI / 4);
 const BUCKET_ORDER: MovementBucket[] = ['left', 'through', 'right'];
@@ -130,6 +131,46 @@ function segmentsCross(p1: Point, p2: Point, p3: Point, p4: Point): boolean {
 
 function crossesBarrier(from: Point, to: Point, barriers: Barrier[]): boolean {
 	return barriers.some((bar) => segmentsCross(from, to, bar.a, bar.b));
+}
+
+function bucketReachable(
+	incoming: LaneEndpoint[],
+	bucket: BucketedDestinations,
+	barriers: Barrier[]
+) {
+	return bucket.arms.some((arm) =>
+		arm.endpoints.some((to) => incoming.some((from) => !crossesBarrier(from.point, to.point, barriers)))
+	);
+}
+
+function orderedOutgoing(endpoints: LaneEndpoint[]) {
+	if (endpoints.length <= 1) return endpoints;
+	const outDir = { x: -endpoints[0].dir.x, y: -endpoints[0].dir.y };
+	const left = { x: -outDir.y, y: outDir.x };
+	return [...endpoints].sort(
+		(a, b) =>
+			b.point.x * left.x +
+			b.point.y * left.y -
+			(a.point.x * left.x + a.point.y * left.y)
+	);
+}
+
+function monotonicLanePairs(incoming: LaneEndpoint[], outgoing: LaneEndpoint[]) {
+	const pairs: { from: LaneEndpoint; to: LaneEndpoint }[] = [];
+	if (incoming.length === 0 || outgoing.length === 0) return pairs;
+
+	if (incoming.length <= outgoing.length) {
+		for (let outIndex = 0; outIndex < outgoing.length; outIndex++) {
+			const inIndex = Math.floor((outIndex * incoming.length) / outgoing.length);
+			pairs.push({ from: incoming[inIndex], to: outgoing[outIndex] });
+		}
+	} else {
+		for (let inIndex = 0; inIndex < incoming.length; inIndex++) {
+			const outIndex = Math.floor((inIndex * outgoing.length) / incoming.length);
+			pairs.push({ from: incoming[inIndex], to: outgoing[outIndex] });
+		}
+	}
+	return pairs;
 }
 
 function makeConnection(from: LaneEndpoint, to: LaneEndpoint): LaneConnection {
@@ -230,7 +271,7 @@ export function defaultConnections(
 				(a.point.x * left.x + a.point.y * left.y)
 		);
 
-		const bucketed = new Map<MovementBucket, LaneEndpoint[]>();
+		const bucketed = new Map<MovementBucket, DestinationArm[]>();
 		for (const [otherSegmentId, otherEndpoints] of endpointsBySegment) {
 			if (otherSegmentId === segmentId) continue;
 			const outgoing = otherEndpoints.filter((endpoint) => endpoint.flow === 'out');
@@ -238,23 +279,26 @@ export function defaultConnections(
 			const bucket = classifyDefaultDestination(incoming[0], outgoing[0]);
 			if (!bucket) continue;
 			const destinations = bucketed.get(bucket) ?? [];
-			destinations.push(...outgoing);
+			destinations.push({ endpoints: orderedOutgoing(outgoing) });
 			bucketed.set(bucket, destinations);
 		}
 
 		const buckets: BucketedDestinations[] = BUCKET_ORDER.flatMap((bucket) => {
 			const destinations = bucketed.get(bucket);
-			return destinations ? [{ bucket, endpoints: destinations }] : [];
+			const bucketedDestinations = destinations ? { bucket, arms: destinations } : null;
+			return bucketedDestinations && bucketReachable(incoming, bucketedDestinations, barriers)
+				? [bucketedDestinations]
+				: [];
 		});
 		if (buckets.length === 0) continue;
 		const orderedBuckets = buckets.map((bucket) => bucket.bucket);
 
-		for (let laneIndex = 0; laneIndex < incoming.length; laneIndex++) {
-			const from = incoming[laneIndex];
-			const assigned = assignedBuckets(laneIndex, incoming.length, orderedBuckets);
-			for (const bucket of buckets) {
-				if (!assigned.includes(bucket.bucket)) continue;
-				for (const to of bucket.endpoints) {
+		for (const bucket of buckets) {
+			const assignedIncoming = incoming.filter((_, index) =>
+				assignedBuckets(index, incoming.length, orderedBuckets).includes(bucket.bucket)
+			);
+			for (const arm of bucket.arms) {
+				for (const { from, to } of monotonicLanePairs(assignedIncoming, arm.endpoints)) {
 					if (crossesBarrier(from.point, to.point, barriers)) continue;
 					connections.push(makeConnection(from, to));
 				}
@@ -352,7 +396,8 @@ const CENTER_CROSS_REACH = MIN_DOT_OFFSET + 2;
 export function centerCrossedAt(
 	graph: Graph,
 	node: Node,
-	centerlines: Map<string, CenterlineSample[]>
+	centerlines: Map<string, CenterlineSample[]>,
+	connections = activeConnectionsAt(graph, node, centerlines)
 ): boolean {
 	const pair = nodeThroughPair(graph, node);
 	if (!pair) return false;
@@ -367,7 +412,5 @@ export function centerCrossedAt(
 	// The centre line breaks wherever an active movement crosses it — a slip,
 	// turn, or U-turn carrying traffic across the through road's centreline. To
 	// keep the line continuous through a fork, disable the crossing movements.
-	return activeConnectionsAt(graph, node, centerlines).some((c) =>
-		segmentsCross(c.fromPoint, c.toPoint, a, b)
-	);
+	return connections.some((c) => segmentsCross(c.fromPoint, c.toPoint, a, b));
 }

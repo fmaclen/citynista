@@ -302,7 +302,7 @@ export class RoadRenderer {
 		// and the node piece agree.
 		const centerBreak = new Map<string, Set<string>>();
 		for (const node of graph.nodes.values()) {
-			if (!centerCrossedAt(graph, node, centerlines)) continue;
+			if (!centerCrossedAt(graph, node, centerlines, activeConnectionsByNode.get(node.id))) continue;
 			const pair = nodeThroughPair(graph, node);
 			if (pair) centerBreak.set(node.id, new Set(pair.map((segment) => segment.id)));
 		}
