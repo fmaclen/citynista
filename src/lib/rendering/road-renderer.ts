@@ -109,9 +109,11 @@ const CENTER_BREAK_INSET = 3.5;
 const THROUGH_DOT = Math.cos(Math.PI / 6);
 const ARROW_END_INSET = 4;
 const ARROW_FIT = 3;
-// Islands pinched below this width by a transition end square at the
-// threshold instead of riding to the seam as a sliver.
+// An unmatched island winding down to a nose ends square once it narrows
+// below this width, instead of riding to the seam as a sliver. A matched
+// island continuing into a real (non-zero) counterpart is exempt.
 const ISLAND_MIN_WIDTH = 0.8;
+const NOSE_TARGET_EPS = 1e-3;
 const PAINT_COLORS = { lane: '#C9C9C0', center: '#C3B47C', walk: '#9A9A94' } as const;
 type PaintColor = keyof typeof PAINT_COLORS;
 type ArrowMovement = 'left' | 'through' | 'right';
@@ -596,16 +598,17 @@ export class RoadRenderer {
 			// sliver, and never poking straight into the active taper
 			// (trimCenterline caps trims at 45% of the length, so it cannot
 			// be used here).
-			// A strip whose target pinches it below a usable width ends in a
-			// square cut where the pinch crosses the threshold — a median
-			// funneling into a narrow road must never ride to the seam as a
-			// sliver wall. The morph restarts from the eased cross-section
-			// at the cut, so the visible taper stays smooth.
+			// An unmatched island whose target winds it down to a nose ends in a
+			// square cut where it crosses the usable-width threshold — never a
+			// sliver wall. A matched island continuing into a real counterpart
+			// (non-zero target) rides to the seam however narrow, meeting it
+			// instead of exposing the plate. The morph restarts from the eased
+			// cross-section at the cut, so the visible taper stays smooth.
 			const ownWidth = interval.end - interval.start;
 			const pinch = (target: { start: number; end: number } | null | undefined, length: number) => {
 				if (!target) return null;
 				const targetWidth = target.end - target.start;
-				if (targetWidth >= ISLAND_MIN_WIDTH || ownWidth <= targetWidth) return null;
+				if (targetWidth > NOSE_TARGET_EPS || ownWidth <= targetWidth) return null;
 				let d = 0;
 				while (d < length) {
 					const width = targetWidth + (ownWidth - targetWidth) * morphEase(d, length);
