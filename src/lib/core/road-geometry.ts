@@ -905,7 +905,8 @@ function laneBoundaryTargets(
 	}
 	for (const self of selfBoundaries) {
 		if (!self || usedSelf.has(self.index)) continue;
-		result[self.index] = bufferBoundaryTarget(self, anchorLanes);
+		// A dropped or added lane: gap the dashed line, never bend it to a buffer.
+		result[self.index] = self.dashed ? null : bufferBoundaryTarget(self, anchorLanes);
 	}
 	return result;
 }
