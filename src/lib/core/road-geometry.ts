@@ -839,31 +839,6 @@ function paintBoundaryCompatible(self: PaintBoundary, target: PaintBoundary) {
 	return self.flow === target.flow && self.accessKey === target.accessKey;
 }
 
-function bufferBoundaryTarget(self: PaintBoundary, anchorLanes: Lane[]) {
-	const bounds = laneBoundaryOffsets(anchorLanes);
-	let best: { offset: number; distance: number } | null = null;
-	for (let j = 0; j + 1 < anchorLanes.length; j++) {
-		const leftSurface = surfaceClassOf(laneLayer(anchorLanes[j]));
-		const rightSurface = surfaceClassOf(laneLayer(anchorLanes[j + 1]));
-		const leftRoadway = leftSurface === 'roadway';
-		const rightRoadway = rightSurface === 'roadway';
-		const leftBuffer = leftSurface === 'island' || leftSurface === 'verge';
-		const rightBuffer = rightSurface === 'island' || rightSurface === 'verge';
-		if (!((leftRoadway && rightBuffer) || (leftBuffer && rightRoadway))) continue;
-
-		const offset = bounds[j + 1];
-		const distance = Math.abs(self.offset - offset);
-		if (
-			!best ||
-			distance < best.distance - 0.001 ||
-			(Math.abs(distance - best.distance) <= 0.001 && offset < best.offset)
-		) {
-			best = { offset, distance };
-		}
-	}
-	return best?.offset ?? null;
-}
-
 // Per-lane boundary targets at a transition: painted boundaries continue
 // when the opposite cross-section has the same paint identity and compatible
 // flow/access. A boundary that dies into a median/verge gets that buffer edge
@@ -905,8 +880,10 @@ function laneBoundaryTargets(
 	}
 	for (const self of selfBoundaries) {
 		if (!self || usedSelf.has(self.index)) continue;
-		// A dropped or added lane: gap the dashed line, never bend it to a buffer.
-		result[self.index] = self.dashed ? null : bufferBoundaryTarget(self, anchorLanes);
+		// A dropped/added lane gaps its dashed line; an unmatched solid centre
+		// line runs straight to meet the median that replaces it (both sit at the
+		// centre) rather than bending toward the median's edge.
+		result[self.index] = self.dashed ? null : self.offset;
 	}
 	return result;
 }
