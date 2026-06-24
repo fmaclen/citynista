@@ -3,7 +3,7 @@ import type { Path, Paths, PolyNode, PolyTree } from 'clipper-lib';
 import type { Graph } from './graph.svelte';
 import type { Node } from './node.svelte';
 import type { Segment } from './segment.svelte';
-import type { Lane, LaneConnectionRef, LaneDirection, LaneMaterial } from './types';
+import type { Lane, LaneConnectionRef, LaneMaterial } from './types';
 import { getTotalWidth } from './lane-template';
 import {
 	isIslandLike,
@@ -778,118 +778,94 @@ function laneBoundaryOffsets(lanes: Lane[]): number[] {
 	return bounds;
 }
 
-interface PaintBoundary {
-	index: number;
-	offset: number;
-	color: 'lane' | 'center';
-	dashed: boolean;
-	flow: 'same' | 'opposing';
-	// Travel direction of the boundary's lanes (forward/backward for a same-flow
-	// dashed line; bidirectional otherwise). A dashed line only continues into a
-	// counterpart of the same direction, never across the median.
-	direction: LaneDirection;
-	accessKey: string;
-}
-
 function paintDirection(lane: Lane, flipDirections: boolean) {
 	if (!flipDirections || lane.direction === 'bidirectional') return lane.direction;
 	return lane.direction === 'forward' ? 'backward' : 'forward';
 }
 
-function laneAccessKey(lane: Lane) {
-	if (lane.role === 'vehicle') return 'general';
-	return surfaceClassOf(laneLayer(lane));
-}
-
-function boundaryAccessKey(a: Lane, b: Lane) {
-	return [laneAccessKey(a), laneAccessKey(b)].sort().join('|');
-}
-
-function boundaryFlow(a: LaneDirection, b: LaneDirection) {
-	return a === b ? 'same' : 'opposing';
-}
-
-function paintBoundaries(lanes: Lane[], flipDirections: boolean) {
+// Paintable cross-section markings represented by logical lane correspondence:
+// dashed lines are ordered from the divider outward per direction, while a
+// centre divider exists whenever both vehicle direction groups are present.
+function markingStructure(lanes: Lane[], flipDirections: boolean) {
 	const bounds = laneBoundaryOffsets(lanes);
-	const boundaries: (PaintBoundary | null)[] = [];
-	for (let j = 0; j + 1 < lanes.length; j++) {
-		const left = { ...lanes[j], direction: paintDirection(lanes[j], flipDirections) };
-		const right = { ...lanes[j + 1], direction: paintDirection(lanes[j + 1], flipDirections) };
+	const forwardDashes: { index: number; offset: number }[] = [];
+	const backwardDashes: { index: number; offset: number }[] = [];
+	let centerLine: { index: number; offset: number } | null = null;
+
+	for (let k = 0; k + 1 < lanes.length; k++) {
+		const leftDir = paintDirection(lanes[k], flipDirections);
+		const rightDir = paintDirection(lanes[k + 1], flipDirections);
+		const left = { ...lanes[k], direction: leftDir };
+		const right = { ...lanes[k + 1], direction: rightDir };
 		const paint = lanePaintBetween(left, right);
-		boundaries.push(
-			paint
-				? {
-						index: j,
-						offset: bounds[j + 1],
-						color: paint.color,
-						dashed: paint.dashed,
-						flow: boundaryFlow(left.direction, right.direction),
-						direction: left.direction === right.direction ? left.direction : 'bidirectional',
-						accessKey: boundaryAccessKey(left, right)
-					}
-				: null
-		);
+		if (!paint) continue;
+		const offset = bounds[k + 1];
+		if (paint.color === 'center') centerLine = { index: k, offset };
+		else if (leftDir === 'forward') forwardDashes.push({ index: k, offset });
+		else backwardDashes.push({ index: k, offset });
 	}
-	return boundaries;
+
+	const forwardLanes: number[] = [];
+	const backwardLanes: number[] = [];
+	for (let i = 0; i < lanes.length; i++) {
+		if (lanes[i].role !== 'vehicle') continue;
+		const dir = paintDirection(lanes[i], flipDirections);
+		if (dir === 'forward') forwardLanes.push(i);
+		else if (dir === 'backward') backwardLanes.push(i);
+	}
+	let divider: { offset: number } | null = null;
+	if (forwardLanes.length > 0 && backwardLanes.length > 0) {
+		const maxB = Math.max(...backwardLanes);
+		const minF = Math.min(...forwardLanes);
+		const maxF = Math.max(...forwardLanes);
+		const minB = Math.min(...backwardLanes);
+		const offset =
+			maxB < minF
+				? (bounds[maxB + 1] + bounds[minF]) / 2
+				: (bounds[maxF + 1] + bounds[minB]) / 2;
+		divider = { offset };
+	}
+
+	const ref = divider ? divider.offset : 0;
+	const centreOut = (a: { offset: number }, b: { offset: number }) =>
+		Math.abs(a.offset - ref) - Math.abs(b.offset - ref) || a.offset - b.offset;
+	forwardDashes.sort(centreOut);
+	backwardDashes.sort(centreOut);
+
+	return { forwardDashes, backwardDashes, centerLine, divider };
 }
 
-function paintBoundaryCompatible(self: PaintBoundary, target: PaintBoundary) {
-	if (self.color !== target.color || self.dashed !== target.dashed) return false;
-	if (self.color === 'center') {
-		return self.flow === 'opposing' && target.flow === 'opposing';
-	}
-	if (self.dashed) {
-		return self.flow === 'same' && target.flow === 'same' && self.direction === target.direction;
-	}
-	return self.flow === target.flow && self.accessKey === target.accessKey;
-}
-
-// Per-lane boundary targets at a transition: painted boundaries continue
-// when the opposite cross-section has the same paint identity and compatible
-// flow/access. A boundary that dies into a median/verge gets that buffer edge
-// as its terminal target; everything else cuts at the morph zone. On the
-// anchor side, a match keeps the boundary at its own offset; on the morphing
-// side, it targets the matched anchor offset.
+// Per-lane boundary targets at a transition: dashed lane lines continue by
+// centre-out correspondence within their travel direction, and centre lines
+// continue only into another logical centre divider; all unmatched markings
+// cut at the morph zone.
 function laneBoundaryTargets(
 	selfLanes: Lane[],
 	anchorLanes: Lane[],
 	flipDirections: boolean,
 	keepOwnOffsets: boolean
 ): (number | null)[] {
-	const selfBoundaries = paintBoundaries(selfLanes, false);
-	const anchorBoundaries = paintBoundaries(anchorLanes, flipDirections);
-	const result: (number | null)[] = selfBoundaries.map(() => null);
-	const pairs: { self: PaintBoundary; target: PaintBoundary; distance: number }[] = [];
+	const result: (number | null)[] = selfLanes.slice(1).map(() => null);
+	const self = markingStructure(selfLanes, false);
+	const anchor = markingStructure(anchorLanes, flipDirections);
 
-	for (const self of selfBoundaries) {
-		if (!self) continue;
-		for (const target of anchorBoundaries) {
-			if (!target || !paintBoundaryCompatible(self, target)) continue;
-			pairs.push({ self, target, distance: Math.abs(self.offset - target.offset) });
+	const pairDashes = (
+		selfDashes: { index: number; offset: number }[],
+		anchorDashes: { index: number; offset: number }[]
+	) => {
+		for (let i = 0; i < selfDashes.length; i++) {
+			const counterpart = anchorDashes[i];
+			if (!counterpart) continue;
+			result[selfDashes[i].index] = keepOwnOffsets ? selfDashes[i].offset : counterpart.offset;
 		}
+	};
+	pairDashes(self.forwardDashes, anchor.forwardDashes);
+	pairDashes(self.backwardDashes, anchor.backwardDashes);
+
+	if (self.centerLine && anchor.divider) {
+		result[self.centerLine.index] = keepOwnOffsets ? self.centerLine.offset : anchor.divider.offset;
 	}
 
-	pairs.sort((a, b) => {
-		if (Math.abs(a.distance - b.distance) > 0.001) return a.distance - b.distance;
-		if (a.self.index !== b.self.index) return a.self.index - b.self.index;
-		return a.target.index - b.target.index;
-	});
-
-	const usedSelf = new Set<number>();
-	const usedTarget = new Set<number>();
-	for (const pair of pairs) {
-		if (usedSelf.has(pair.self.index) || usedTarget.has(pair.target.index)) continue;
-		usedSelf.add(pair.self.index);
-		usedTarget.add(pair.target.index);
-		result[pair.self.index] = keepOwnOffsets ? pair.self.offset : pair.target.offset;
-	}
-	for (const self of selfBoundaries) {
-		if (!self || usedSelf.has(self.index)) continue;
-		// A dropped/added lane gaps its dashed line; an unmatched solid centre
-		// line runs straight to meet the median that replaces it (both sit at the
-		// centre) rather than bending toward the median's edge.
-		result[self.index] = self.dashed ? null : self.offset;
-	}
 	return result;
 }
 
