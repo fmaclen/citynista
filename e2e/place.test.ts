@@ -71,6 +71,21 @@ test.describe('Paste placement', () => {
 		expect([clone.startNodeId, clone.endNodeId]).toContain('node-1');
 	});
 
+	test('pasting onto the just-copied segment makes a floating copy', async ({ page }) => {
+		// Copy segment-0 and leave it selected, then paste without deselecting:
+		// this should place a floating copy, not do a no-op lane paste onto itself.
+		await page.locator('canvas').click({ position: toScreen(-50, 0) });
+		await expect(page.locator('aside')).toBeVisible();
+		await page.keyboard.press('Meta+c');
+
+		await page.keyboard.press('Meta+v');
+		const drop = toScreen(0, 80);
+		await page.mouse.move(drop.x, drop.y);
+		await page.mouse.click(drop.x, drop.y);
+
+		await expect.poll(async () => (await savedGraph(page))?.segments.length).toBe(2);
+	});
+
 	test('Escape cancels placement without creating anything', async ({ page }) => {
 		await copySegment(page);
 

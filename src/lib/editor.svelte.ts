@@ -425,25 +425,24 @@ export class Editor {
 	private paste() {
 		const clipboard = this.clipboard;
 		if (!clipboard) return;
-		if (clipboard.kind === 'segments' && this.selectedSegments.size > 0) {
+
+		if (clipboard.kind === 'node') {
+			if (this.selectedNodes.size === 1 && this.selectedSegments.size === 0) {
+				this.pasteNodeConnections(clipboard);
+			}
+			return;
+		}
+
+		// Lane paste only when the selection includes a segment OTHER than the one
+		// just copied — pasting onto (only) the source means "make a floating copy".
+		const copiedIds = new Set(clipboard.segments.map((segment) => segment.id));
+		const ontoOtherSegments = [...this.selectedSegments].some((id) => !copiedIds.has(id));
+		if (ontoOtherSegments) {
 			this.pasteLanesToSelectedSegments(clipboard);
 			return;
 		}
-		if (
-			clipboard.kind === 'node' &&
-			this.selectedNodes.size === 1 &&
-			this.selectedSegments.size === 0
-		) {
-			this.pasteNodeConnections(clipboard);
-			return;
-		}
-		if (
-			clipboard.kind === 'segments' &&
-			this.selectedNodes.size === 0 &&
-			this.selectedSegments.size === 0
-		) {
-			this.startPlacement(clipboard);
-		}
+
+		this.startPlacement(clipboard);
 	}
 
 	private startPlacement(clipboard: SegmentClipboard) {
