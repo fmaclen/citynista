@@ -463,6 +463,10 @@ export interface TransitionMorph {
 	// counterpart at all — it ends in a square cut where the morph begins
 	// instead of pinching into a sliver.
 	intervals: ({ start: number; end: number } | null)[];
+	// Synthetic roadway drawn under unmatched buffers. Only intervals that
+	// failed island/verge matching get an entry; continuing buffers stay clean
+	// so their material is never recolored by asphalt underneath.
+	roadwayUnderfills: ({ laneType: RoadLayerId; start: number; end: number } | null)[];
 	// Target offset at the node for each interior lane boundary (between
 	// lanes[j] and lanes[j+1]) — lane paint follows these so lines stay
 	// straight where a lane exists on both sides and converge into their
@@ -556,6 +560,7 @@ function computeTransitionMorph(
 		const laneBoundaries = laneBoundaryTargets(self.lanes, otherLanesInSelfFrame, flipped, true);
 		return {
 			intervals: selfIntervals.map((interval) => ({ start: interval.start, end: interval.end })),
+			roadwayUnderfills: selfIntervals.map(() => null),
 			laneBoundaries,
 			halfWidth: halfSelf,
 			length,
@@ -574,7 +579,33 @@ function computeTransitionMorph(
 		end: interval.end
 	});
 
+	const roadwayTarget = (
+		interval: { start: number; end: number },
+		anchorRoadways: LaneInterval[]
+	) => {
+		const boundStart = Math.min(...anchorRoadways.map((i) => i.start));
+		const boundEnd = Math.max(...anchorRoadways.map((i) => i.end));
+		const width = Math.min(interval.end - interval.start, boundEnd - boundStart);
+		const center = Math.min(
+			boundEnd - width / 2,
+			Math.max(boundStart + width / 2, (interval.start + interval.end) / 2)
+		);
+		return { start: center - width / 2, end: center + width / 2 };
+	};
+
+	const roadwayUnderfillLayer = (index: number) => {
+		const adjacent = [selfIntervals[index - 1], selfIntervals[index + 1]]
+			.filter((interval) => interval && isRoadway(interval.laneType))
+			.map((interval) => interval.laneType);
+		return adjacent.length > 0 && adjacent.every((laneType) => laneType === 'roadway:concrete')
+			? roadwayLayer('concrete')
+			: roadwayLayer('asphalt');
+	};
+
+	const roadwayUnderfills: TransitionMorph['roadwayUnderfills'] = selfIntervals.map(() => null);
+
 	const targets = selfIntervals.map((interval) => {
+		const index = selfIntervals.indexOf(interval);
 		const surface = surfaceClassOf(interval.laneType);
 		if (surface === 'walkway') {
 			// Pavement walkways render via the full-width plate; other walkway
@@ -602,16 +633,9 @@ function computeTransitionMorph(
 				};
 			}
 
-			const boundStart = Math.min(...anchorRoadways.map((i) => i.start));
-			const boundEnd = Math.max(...anchorRoadways.map((i) => i.end));
-			const width = Math.min(interval.end - interval.start, boundEnd - boundStart);
-			const center = Math.min(
-				boundEnd - width / 2,
-				Math.max(boundStart + width / 2, (interval.start + interval.end) / 2)
-			);
 			// Accessory roadways ride the taper too and end square exactly
 			// at the seam — paint ends square; only curbs get noses.
-			return { start: center - width / 2, end: center + width / 2 };
+			return roadwayTarget(interval, anchorRoadways);
 		}
 
 		const match = islandMatch(interval, anchorIntervals);
@@ -629,12 +653,22 @@ function computeTransitionMorph(
 			const zoneStart = Math.min(...anchorRoadways.map((i) => i.start));
 			const zoneEnd = Math.max(...anchorRoadways.map((i) => i.end));
 			const center = Math.min(zoneEnd, Math.max(zoneStart, ownCenter));
+			roadwayUnderfills[index] = {
+				laneType: roadwayUnderfillLayer(index),
+				...roadwayTarget(interval, anchorRoadways)
+			};
 			return { start: center, end: center };
 		}
 
 		// Unmatched verges end square where the narrowing begins: their
 		// cross-section stops existing mid-taper, and sweeping them across
 		// the plate reads as the sidewalk breaking apart.
+		if (anchorRoadways.length > 0) {
+			roadwayUnderfills[index] = {
+				laneType: roadwayUnderfillLayer(index),
+				...roadwayTarget(interval, anchorRoadways)
+			};
+		}
 		return null;
 	});
 
@@ -667,6 +701,7 @@ function computeTransitionMorph(
 
 	return {
 		intervals: targets,
+		roadwayUnderfills,
 		laneBoundaries,
 		halfWidth: halfOther,
 		length,
@@ -674,6 +709,9 @@ function computeTransitionMorph(
 		key:
 			`${length}:${halfOther}:` +
 			`${targets.map((t) => (t ? `${t.start},${t.end}` : 'x')).join(';')}|` +
+			`${roadwayUnderfills
+				.map((u) => (u ? `${u.laneType},${u.start},${u.end}` : 'x'))
+				.join(';')}|` +
 			laneBoundaries.map((b) => (b === null ? 'x' : Math.round(b * 100))).join(',')
 	};
 }
@@ -1891,8 +1929,8 @@ function centerMedianBand(pair: CenterMedianPair) {
 		mouthB,
 		pair.b.into,
 		dirB,
-		pair.start - BAND_PAD,
-		pair.end + BAND_PAD
+		pair.start - TRIANGULATION_EPSILON,
+		pair.end + TRIANGULATION_EPSILON
 	);
 }
 
@@ -1915,8 +1953,8 @@ function centerMedianHalfBands(node: Node, pair: CenterMedianPair) {
 				center,
 				pair.b.into,
 				centerDir,
-				pair.start - BAND_PAD,
-				pair.end + BAND_PAD
+				pair.start - TRIANGULATION_EPSILON,
+				pair.end + TRIANGULATION_EPSILON
 			)
 		},
 		{
@@ -1928,8 +1966,8 @@ function centerMedianHalfBands(node: Node, pair: CenterMedianPair) {
 				center,
 				pair.a.into,
 				centerDir,
-				pair.start - BAND_PAD,
-				pair.end + BAND_PAD
+				pair.start - TRIANGULATION_EPSILON,
+				pair.end + TRIANGULATION_EPSILON
 			)
 		}
 	];

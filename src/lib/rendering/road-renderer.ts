@@ -52,6 +52,7 @@ const LAYER_COLORS: Record<RoadLayerId, string> = Object.fromEntries(
 ) as Record<RoadLayerId, string>;
 
 const TOP_LAYER_Y = Math.max(...ROAD_LAYER_LIST.map((layer) => laneLayerY(layer)));
+const ROADWAY_UNDERFILL_Y = LAYER_Y.plate + 0.025;
 
 // Segment ribbons reach slightly into their node pieces so no hairline
 // cracks can open between them.
@@ -522,6 +523,8 @@ export class RoadRenderer {
 
 			const targetStart = morphStart ? morphStart.intervals[k] : undefined;
 			const targetEnd = morphEnd ? morphEnd.intervals[k] : undefined;
+			const underfillStart = morphStart ? morphStart.roadwayUnderfills[k] : undefined;
+			const underfillEnd = morphEnd ? morphEnd.roadwayUnderfills[k] : undefined;
 			const stripMorph: StripMorph | undefined =
 				targetStart || targetEnd
 					? {
@@ -533,6 +536,36 @@ export class RoadRenderer {
 								: undefined
 						}
 					: undefined;
+
+			if (underfillStart || underfillEnd) {
+				const layerId = (underfillStart ?? underfillEnd)!.laneType;
+				const stubSafeStart = continuityJoinStart || layerId === 'roadway:asphalt';
+				const stubSafeEnd = continuityJoinEnd || layerId === 'roadway:asphalt';
+				group.add(
+					this.buildStrip(
+						samples,
+						interval.start,
+						interval.end,
+						layerId,
+						stubSafeStart ? startExt : 0,
+						stubSafeEnd ? endExt : 0,
+						jitter,
+						{
+							start: underfillStart
+								? {
+										length: lengthStart,
+										offsetA: underfillStart.start,
+										offsetB: underfillStart.end
+									}
+								: undefined,
+							end: underfillEnd
+								? { length: lengthEnd, offsetA: underfillEnd.start, offsetB: underfillEnd.end }
+								: undefined
+						},
+						ROADWAY_UNDERFILL_Y
+					)
+				);
+			}
 
 			if (surface === 'roadway') {
 				// Overlap stubs past a node are only invisible for plain road
@@ -1100,10 +1133,11 @@ export class RoadRenderer {
 		extendStart: number,
 		extendEnd: number,
 		jitter: number,
-		morph?: StripMorph
+		morph?: StripMorph,
+		yOverride?: number
 	): THREE.Mesh {
 		const points = extendSamples(samples, extendStart, extendEnd);
-		const y = LAYER_Y[layerId] + this.elevation + jitter;
+		const y = (yOverride ?? LAYER_Y[layerId]) + this.elevation + jitter;
 
 		// Distances along the strip, measured from the original (unextended)
 		// ends so extension points sit at clamped morph factor 0.
