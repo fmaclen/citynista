@@ -822,9 +822,16 @@ export class RoadRenderer {
 			};
 		};
 
-		const quad = (ax: number, az: number, bx: number, bz: number, sideX: number, sideY: number) => {
+		const quad = (
+			ax: number,
+			az: number,
+			bx: number,
+			bz: number,
+			sideX: number,
+			sideY: number,
+			w: number
+		) => {
 			const target = positions.lane;
-			const w = 0.18;
 			target.push(
 				ax - sideX * w,
 				0,
@@ -851,42 +858,52 @@ export class RoadRenderer {
 			d: number,
 			offset: number,
 			travelSign: number,
-			movements: ArrowMovement[]
+			movements: ArrowMovement[],
+			laneWidth: number
 		) => {
 			const p = sampleAt(d);
 			const tx = p.tx * travelSign;
 			const ty = p.ty * travelSign;
 			const leftX = -ty;
 			const leftY = tx;
-			const baseX = p.x + p.nx * offset;
-			const baseZ = p.z + p.ny * offset;
 			const target = positions.lane;
 			const hasLeft = movements.includes('left');
 			const hasThrough = movements.includes('through');
 			const hasRight = movements.includes('right');
 
+			// Scale the glyph to the lane so it always fits with margin, and bias
+			// the base sideways so a one-sided combo (straight + a single branch)
+			// stays visually centred in the lane instead of leaning toward the branch.
+			const s = Math.max(0.4, Math.min(0.62, laneWidth * 0.16));
+			const w = 0.16 * s;
+			const branchLateral = 1.2 * s;
+			const lean = (hasLeft ? 1 : 0) - (hasRight ? 1 : 0);
+			const recenter = hasThrough && lean !== 0 ? -lean * branchLateral * 0.5 : 0;
+			const baseX = p.x + p.nx * offset + leftX * recenter;
+			const baseZ = p.z + p.ny * offset + leftY * recenter;
+
 			const head = (tipX: number, tipZ: number, dirX: number, dirY: number) => {
 				const sideX = -dirY;
 				const sideY = dirX;
 				target.push(
-					tipX + dirX * 0.85,
+					tipX + dirX * 0.85 * s,
 					0,
-					tipZ + dirY * 0.85,
-					tipX + sideX * 0.55,
+					tipZ + dirY * 0.85 * s,
+					tipX + sideX * 0.55 * s,
 					0,
-					tipZ + sideY * 0.55,
-					tipX - sideX * 0.55,
+					tipZ + sideY * 0.55 * s,
+					tipX - sideX * 0.55 * s,
 					0,
-					tipZ - sideY * 0.55
+					tipZ - sideY * 0.55 * s
 				);
 			};
 
 			if (hasThrough && !hasLeft && !hasRight) {
-				const tailX = baseX - tx * 1.6;
-				const tailZ = baseZ - ty * 1.6;
-				const tipX = baseX + tx * 1.6;
-				const tipZ = baseZ + ty * 1.6;
-				quad(tailX, tailZ, tipX, tipZ, leftX, leftY);
+				const tailX = baseX - tx * 1.6 * s;
+				const tailZ = baseZ - ty * 1.6 * s;
+				const tipX = baseX + tx * 1.6 * s;
+				const tipZ = baseZ + ty * 1.6 * s;
+				quad(tailX, tailZ, tipX, tipZ, leftX, leftY, w);
 				head(tipX, tipZ, tx, ty);
 				return;
 			}
@@ -895,41 +912,43 @@ export class RoadRenderer {
 				const bendSign = hasLeft ? 1 : -1;
 				const bx = leftX * bendSign;
 				const by = leftY * bendSign;
-				const shiftedBaseX = baseX - bx * 0.9;
-				const shiftedBaseZ = baseZ - by * 0.9;
-				const stemTailX = shiftedBaseX - tx * 1.7;
-				const stemTailZ = shiftedBaseZ - ty * 1.7;
-				const elbowX = shiftedBaseX + tx * 0.7;
-				const elbowZ = shiftedBaseZ + ty * 0.7;
-				quad(stemTailX, stemTailZ, elbowX, elbowZ, leftX, leftY);
-				const tipX = elbowX + bx * 1.0;
-				const tipZ = elbowZ + by * 1.0;
-				quad(elbowX, elbowZ, tipX, tipZ, tx, ty);
+				const shiftedBaseX = baseX - bx * 0.9 * s;
+				const shiftedBaseZ = baseZ - by * 0.9 * s;
+				const stemTailX = shiftedBaseX - tx * 1.7 * s;
+				const stemTailZ = shiftedBaseZ - ty * 1.7 * s;
+				const elbowX = shiftedBaseX + tx * 0.7 * s;
+				const elbowZ = shiftedBaseZ + ty * 0.7 * s;
+				quad(stemTailX, stemTailZ, elbowX, elbowZ, leftX, leftY, w);
+				const tipX = elbowX + bx * 1.0 * s;
+				const tipZ = elbowZ + by * 1.0 * s;
+				quad(elbowX, elbowZ, tipX, tipZ, tx, ty, w);
 				quad(
-					elbowX - bx * 0.18,
-					elbowZ - by * 0.18,
-					elbowX + bx * 0.18,
-					elbowZ + by * 0.18,
+					elbowX - bx * 0.18 * s,
+					elbowZ - by * 0.18 * s,
+					elbowX + bx * 0.18 * s,
+					elbowZ + by * 0.18 * s,
 					tx,
-					ty
+					ty,
+					w
 				);
 				head(tipX, tipZ, bx, by);
 				return;
 			}
 
-			const tailX = baseX - tx * 1.8;
-			const tailZ = baseZ - ty * 1.8;
-			const forkX = baseX + tx * 0.45;
-			const forkZ = baseZ + ty * 0.45;
-			const straightTipX = baseX + tx * 1.55;
-			const straightTipZ = baseZ + ty * 1.55;
+			const tailX = baseX - tx * 1.8 * s;
+			const tailZ = baseZ - ty * 1.8 * s;
+			const forkX = baseX + tx * 0.45 * s;
+			const forkZ = baseZ + ty * 0.45 * s;
+			const straightTipX = baseX + tx * 1.55 * s;
+			const straightTipZ = baseZ + ty * 1.55 * s;
 			quad(
 				tailX,
 				tailZ,
 				hasThrough ? straightTipX : forkX,
 				hasThrough ? straightTipZ : forkZ,
 				leftX,
-				leftY
+				leftY,
+				w
 			);
 			if (hasThrough) head(straightTipX, straightTipZ, tx, ty);
 
@@ -942,9 +961,9 @@ export class RoadRenderer {
 				const dirY = by / bl;
 				const sideX = -dirY;
 				const sideY = dirX;
-				const tipX = forkX + dirX * 1.35;
-				const tipZ = forkZ + dirY * 1.35;
-				quad(forkX - tx * 0.12, forkZ - ty * 0.12, tipX, tipZ, sideX, sideY);
+				const tipX = forkX + dirX * 1.35 * s;
+				const tipZ = forkZ + dirY * 1.35 * s;
+				quad(forkX - tx * 0.12 * s, forkZ - ty * 0.12 * s, tipX, tipZ, sideX, sideY, w);
 				head(tipX, tipZ, dirX, dirY);
 			};
 
@@ -961,7 +980,7 @@ export class RoadRenderer {
 			for (const lane of arrows.lanes) {
 				const offset = laneCenters[lane.laneIndex];
 				if (offset === undefined) continue;
-				drawArrow(base, offset, travelSign, lane.movements);
+				drawArrow(base, offset, travelSign, lane.movements, lanes[lane.laneIndex]?.width ?? 3);
 			}
 		};
 		drawEndArrows(arrowStart, true);
