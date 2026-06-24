@@ -784,6 +784,10 @@ interface PaintBoundary {
 	color: 'lane' | 'center';
 	dashed: boolean;
 	flow: 'same' | 'opposing';
+	// Travel direction of the boundary's lanes (forward/backward for a same-flow
+	// dashed line; bidirectional otherwise). A dashed line only continues into a
+	// counterpart of the same direction, never across the median.
+	direction: LaneDirection;
 	accessKey: string;
 }
 
@@ -820,6 +824,7 @@ function paintBoundaries(lanes: Lane[], flipDirections: boolean) {
 						color: paint.color,
 						dashed: paint.dashed,
 						flow: boundaryFlow(left.direction, right.direction),
+						direction: left.direction === right.direction ? left.direction : 'bidirectional',
 						accessKey: boundaryAccessKey(left, right)
 					}
 				: null
@@ -834,7 +839,7 @@ function paintBoundaryCompatible(self: PaintBoundary, target: PaintBoundary) {
 		return self.flow === 'opposing' && target.flow === 'opposing';
 	}
 	if (self.dashed) {
-		return self.flow === 'same' && target.flow === 'same';
+		return self.flow === 'same' && target.flow === 'same' && self.direction === target.direction;
 	}
 	return self.flow === target.flow && self.accessKey === target.accessKey;
 }
