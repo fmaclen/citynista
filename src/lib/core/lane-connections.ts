@@ -112,6 +112,11 @@ export function laneEndpointsAtNode(
 }
 
 export type Barrier = { a: Point; b: Point };
+type MovementBucket = 'left' | 'through' | 'right';
+type BucketedDestinations = { bucket: MovementBucket; endpoints: LaneEndpoint[] };
+
+const DEFAULT_THROUGH_DOT = Math.cos(Math.PI / 4);
+const BUCKET_ORDER: MovementBucket[] = ['left', 'through', 'right'];
 
 function segmentsCross(p1: Point, p2: Point, p3: Point, p4: Point): boolean {
 	const side = (a: Point, b: Point, c: Point) =>
@@ -141,38 +146,119 @@ function makeConnection(from: LaneEndpoint, to: LaneEndpoint): LaneConnection {
 	};
 }
 
-// Whether a movement is in the permissive default set: incoming → outgoing on a
-// DIFFERENT arm that does not cross a centre-median barrier. A U-turn or a
-// cross-median break is NOT default — it has to be enabled explicitly.
+function normalized(point: Point): Point | null {
+	const length = Math.hypot(point.x, point.y);
+	if (length < 0.0001) return null;
+	return { x: point.x / length, y: point.y / length };
+}
+
+function classifyDefaultDestination(from: LaneEndpoint, to: LaneEndpoint): MovementBucket | null {
+	const fromDir = normalized(from.dir);
+	const toDir = normalized({ x: -to.dir.x, y: -to.dir.y });
+	if (!fromDir || !toDir) return null;
+
+	const dot = fromDir.x * toDir.x + fromDir.y * toDir.y;
+	if (dot >= DEFAULT_THROUGH_DOT) return 'through';
+
+	const cross = fromDir.x * toDir.y - fromDir.y * toDir.x;
+	if (cross > 0.0001) return 'left';
+	if (cross < -0.0001) return 'right';
+	return null;
+}
+
+function assignedBuckets(laneIndex: number, laneCount: number, buckets: MovementBucket[]) {
+	if (buckets.length <= 1 || laneCount === 1) return buckets;
+	if (laneCount < buckets.length) {
+		return laneIndex === 0 ? buckets.slice(0, 2) : buckets.slice(1);
+	}
+
+	const counts = buckets.map(() => 1);
+	const throughIndex = buckets.findIndex((bucket) => bucket === 'through');
+	const spareIndex = throughIndex >= 0 ? throughIndex : Math.floor((buckets.length - 1) / 2);
+	counts[spareIndex] += laneCount - buckets.length;
+
+	let start = 0;
+	for (let bucketIndex = 0; bucketIndex < buckets.length; bucketIndex++) {
+		const end = start + counts[bucketIndex];
+		if (laneIndex >= start && laneIndex < end) return [buckets[bucketIndex]];
+		start = end;
+	}
+	return [];
+}
+
+// Whether a movement is in the default lane-discipline set. A U-turn, a
+// cross-median break, or a lane crossing over its sibling lanes has to be
+// enabled explicitly.
 export function isDefaultMovement(
 	endpoints: LaneEndpoint[],
 	barriers: Barrier[],
 	from: LaneRef,
 	to: LaneRef
 ): boolean {
-	if (from.segmentId === to.segmentId) return false;
-	const f = endpoints.find((e) => sameLaneRef(e.ref, from) && e.flow === 'in');
-	const t = endpoints.find((e) => sameLaneRef(e.ref, to) && e.flow === 'out');
-	if (!f || !t) return false;
-	return !crossesBarrier(f.point, t.point, barriers);
+	return defaultConnections(endpoints, barriers).some(
+		(c) => sameLaneRef(c.from, from) && sameLaneRef(c.to, to)
+	);
 }
 
-// The permissive default: every incoming lane connects to every outgoing lane
-// on a different arm, except across a centre median (no U-turns either). Turn
-// lanes are made by *restricting* this set; U-turns and median breaks by
-// *adding* to it.
+// The default lane discipline assigns contiguous incoming lanes to the
+// left/through/right destination buckets, so edge turns never cross over
+// sibling lanes. Turn lanes are made by restricting this set; U-turns and
+// median breaks by adding to it.
 export function defaultConnections(
 	endpoints: LaneEndpoint[],
 	barriers: Barrier[] = []
 ): LaneConnection[] {
 	const connections: LaneConnection[] = [];
-	for (const from of endpoints) {
-		if (from.flow !== 'in') continue;
-		for (const to of endpoints) {
-			if (to.flow !== 'out') continue;
-			if (to.ref.segmentId === from.ref.segmentId) continue;
-			if (crossesBarrier(from.point, to.point, barriers)) continue;
-			connections.push(makeConnection(from, to));
+	const endpointsBySegment = new Map<string, LaneEndpoint[]>();
+	for (const endpoint of endpoints) {
+		const armEndpoints = endpointsBySegment.get(endpoint.ref.segmentId) ?? [];
+		armEndpoints.push(endpoint);
+		endpointsBySegment.set(endpoint.ref.segmentId, armEndpoints);
+	}
+
+	for (const [segmentId, armEndpoints] of endpointsBySegment) {
+		const incoming = armEndpoints.filter((endpoint) => endpoint.flow === 'in');
+		if (incoming.length === 0) continue;
+
+		const t = normalized(incoming[0].dir);
+		if (!t) continue;
+		const left = { x: -t.y, y: t.x };
+		incoming.sort(
+			(a, b) =>
+				b.point.x * left.x +
+				b.point.y * left.y -
+				(a.point.x * left.x + a.point.y * left.y)
+		);
+
+		const bucketed = new Map<MovementBucket, LaneEndpoint[]>();
+		for (const [otherSegmentId, otherEndpoints] of endpointsBySegment) {
+			if (otherSegmentId === segmentId) continue;
+			const outgoing = otherEndpoints.filter((endpoint) => endpoint.flow === 'out');
+			if (outgoing.length === 0) continue;
+			const bucket = classifyDefaultDestination(incoming[0], outgoing[0]);
+			if (!bucket) continue;
+			const destinations = bucketed.get(bucket) ?? [];
+			destinations.push(...outgoing);
+			bucketed.set(bucket, destinations);
+		}
+
+		const buckets: BucketedDestinations[] = BUCKET_ORDER.flatMap((bucket) => {
+			const destinations = bucketed.get(bucket);
+			return destinations ? [{ bucket, endpoints: destinations }] : [];
+		});
+		if (buckets.length === 0) continue;
+		const orderedBuckets = buckets.map((bucket) => bucket.bucket);
+
+		for (let laneIndex = 0; laneIndex < incoming.length; laneIndex++) {
+			const from = incoming[laneIndex];
+			const assigned = assignedBuckets(laneIndex, incoming.length, orderedBuckets);
+			for (const bucket of buckets) {
+				if (!assigned.includes(bucket.bucket)) continue;
+				for (const to of bucket.endpoints) {
+					if (crossesBarrier(from.point, to.point, barriers)) continue;
+					connections.push(makeConnection(from, to));
+				}
+			}
 		}
 	}
 	return connections;

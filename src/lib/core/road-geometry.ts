@@ -300,6 +300,10 @@ function isPatchNode(graph: Graph, node: Node): boolean {
 	return counted.length >= 3;
 }
 
+export function isStopLineJunction(graph: Graph, node: Node) {
+	return isPatchNode(graph, node) && mergeInfo(graph, node) === null;
+}
+
 // Shallowest crossing angle the trim math uses: anything flatter is treated
 // as this, so near-tangent arms don't trim back across the whole map.
 const MIN_CROSSING_SIN = 0.15;

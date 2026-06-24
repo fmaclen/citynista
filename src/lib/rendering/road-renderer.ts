@@ -6,6 +6,7 @@ import {
 	computeIntersectionTrims,
 	getLaneIntervals,
 	isContinuationNode,
+	isStopLineJunction,
 	nodeThroughPair,
 	sampleTrimmedCenterline,
 	transitionMorph,
@@ -36,7 +37,11 @@ import {
 	laneSurface
 } from '../core/lane-types';
 import type { Lane } from '../core/types';
-import { activeConnectionsAt, centerCrossedAt } from '../core/lane-connections';
+import {
+	activeConnectionsAt,
+	centerCrossedAt,
+	type LaneConnection
+} from '../core/lane-connections';
 
 const LAYER_Y: Record<RoadLayerId, number> = Object.fromEntries(
 	ROAD_LAYER_LIST.map((layer) => [layer, laneLayerY(layer)])
@@ -98,11 +103,30 @@ const PAINT_END_INSET = 0.2;
 // How far short of a node the solid centre line stops when a movement crosses
 // it there — a gap wide enough to read as a break, not a dashed continuation.
 const CENTER_BREAK_INSET = 3.5;
+const THROUGH_DOT = Math.cos(Math.PI / 6);
+const ARROW_END_INSET = 4;
+const ARROW_FIT = 3;
 // Islands pinched below this width by a transition end square at the
 // threshold instead of riding to the seam as a sliver.
 const ISLAND_MIN_WIDTH = 0.8;
 const PAINT_COLORS = { lane: '#C9C9C0', center: '#C3B47C', walk: '#9A9A94' } as const;
 type PaintColor = keyof typeof PAINT_COLORS;
+type ArrowMovement = 'left' | 'through' | 'right';
+const ARROW_MOVEMENTS: ArrowMovement[] = ['left', 'through', 'right'];
+const ARROW_CODES: Record<ArrowMovement, string> = { left: 'L', through: 'S', right: 'R' };
+
+interface LaneArrowSet {
+	laneIndex: number;
+	movements: ArrowMovement[];
+	signature: string;
+}
+
+interface SegmentEndArrows {
+	signature: string;
+	lanes: LaneArrowSet[];
+}
+
+const EMPTY_END_ARROWS: SegmentEndArrows = { signature: '-', lanes: [] };
 // Tiny per-piece elevation so coplanar pieces never z-fight; stays well
 // below the 0.01 gap between layers.
 const PIECE_JITTER_STEP = 0.0002;
@@ -116,6 +140,85 @@ interface RoadRendererOptions {
 interface Piece {
 	hash: string;
 	group: THREE.Group;
+}
+
+function segmentEndKey(nodeId: string, segmentId: string) {
+	return `${nodeId}:${segmentId}`;
+}
+
+function movementSignature(movements: Set<ArrowMovement>) {
+	return ARROW_MOVEMENTS.filter((movement) => movements.has(movement))
+		.map((movement) => ARROW_CODES[movement])
+		.join('');
+}
+
+function classifyMovement(connection: LaneConnection) {
+	if (connection.from.segmentId === connection.to.segmentId) return null;
+	const fromLength = Math.hypot(connection.fromDir.x, connection.fromDir.y);
+	const toLength = Math.hypot(connection.toDir.x, connection.toDir.y);
+	if (fromLength < 0.0001 || toLength < 0.0001) return null;
+
+	const fromX = connection.fromDir.x / fromLength;
+	const fromY = connection.fromDir.y / fromLength;
+	const toX = connection.toDir.x / toLength;
+	const toY = connection.toDir.y / toLength;
+	const dot = fromX * toX + fromY * toY;
+	if (dot >= THROUGH_DOT) return 'through';
+
+	const cross = fromX * toY - fromY * toX;
+	if (cross > 0.0001) return 'left';
+	if (cross < -0.0001) return 'right';
+	return null;
+}
+
+function buildArrowsByEnd(
+	graph: Graph,
+	centerlines: Map<string, CenterlineSample[]>,
+	activeConnectionsByNode: Map<string, LaneConnection[]>
+) {
+	const grouped = new Map<string, Map<number, Set<ArrowMovement>>>();
+
+	for (const node of graph.nodes.values()) {
+		if (!isStopLineJunction(graph, node)) continue;
+		for (const connection of activeConnectionsByNode.get(node.id) ?? []) {
+			const movement = classifyMovement(connection);
+			if (!movement) continue;
+
+			const segment = graph.segments.get(connection.from.segmentId);
+			const samples = centerlines.get(connection.from.segmentId);
+			const lane = segment?.lanes[connection.from.laneIndex];
+			if (!segment || !samples || !lane || lane.markings === false) continue;
+
+			const endKey = segmentEndKey(node.id, connection.from.segmentId);
+			const lanes = grouped.get(endKey) ?? new Map<number, Set<ArrowMovement>>();
+			grouped.set(endKey, lanes);
+			const movements = lanes.get(connection.from.laneIndex) ?? new Set<ArrowMovement>();
+			lanes.set(connection.from.laneIndex, movements);
+			movements.add(movement);
+		}
+	}
+
+	const arrowsByEnd = new Map<string, SegmentEndArrows>();
+	for (const [endKey, lanes] of grouped) {
+		const laneSets: LaneArrowSet[] = [];
+		for (const [laneIndex, movements] of [...lanes].sort((a, b) => a[0] - b[0])) {
+			const signature = movementSignature(movements);
+			if (!signature) continue;
+			laneSets.push({
+				laneIndex,
+				movements: ARROW_MOVEMENTS.filter((movement) => movements.has(movement)),
+				signature
+			});
+		}
+		arrowsByEnd.set(endKey, {
+			signature:
+				laneSets.length === 0
+					? '-'
+					: laneSets.map((lane) => `${lane.laneIndex}:${lane.signature}`).join(','),
+			lanes: laneSets
+		});
+	}
+	return arrowsByEnd;
 }
 
 export class RoadRenderer {
@@ -187,6 +290,12 @@ export class RoadRenderer {
 			}
 		}
 
+		const activeConnectionsByNode = new Map<string, LaneConnection[]>();
+		for (const node of graph.nodes.values()) {
+			activeConnectionsByNode.set(node.id, activeConnectionsAt(graph, node, centerlines));
+		}
+		const arrowsByEnd = buildArrowsByEnd(graph, centerlines, activeConnectionsByNode);
+
 		// A node where an active movement carries traffic across the through
 		// road's centreline breaks the solid centre line there; everywhere else
 		// it runs through. Computed once so both the segments meeting the node
@@ -218,6 +327,8 @@ export class RoadRenderer {
 			const continuityJoinEnd = isContinuationNode(graph, endNode, segment.id);
 			const morphStart = transitionMorph(graph, startNode, segment.id);
 			const morphEnd = transitionMorph(graph, endNode, segment.id);
+			const arrowStart = arrowsByEnd.get(segmentEndKey(startNode.id, segment.id)) ?? EMPTY_END_ARROWS;
+			const arrowEnd = arrowsByEnd.get(segmentEndKey(endNode.id, segment.id)) ?? EMPTY_END_ARROWS;
 			const trim = trims.get(segment.id);
 
 			const key = `segment:${segment.id}`;
@@ -241,6 +352,8 @@ export class RoadRenderer {
 				continuityJoinEnd,
 				morphStart?.key ?? '-',
 				morphEnd?.key ?? '-',
+				arrowStart.signature,
+				arrowEnd.signature,
 				centerBreakStart,
 				centerBreakEnd
 			].join('|');
@@ -258,6 +371,8 @@ export class RoadRenderer {
 				continuityJoinEnd,
 				morphStart,
 				morphEnd,
+				arrowStart,
+				arrowEnd,
 				centerBreakStart,
 				centerBreakEnd,
 				this.jitterFor(key)
@@ -314,12 +429,10 @@ export class RoadRenderer {
 
 			this.removePiece(key);
 			const jitterValue = this.jitterFor(key);
-			const crossingConnectors = activeConnectionsAt(graph, node, centerlines).map(
-				(connection) => ({
-					a: connection.fromPoint,
-					b: connection.toPoint
-				})
-			);
+			const crossingConnectors = (activeConnectionsByNode.get(node.id) ?? []).map((connection) => ({
+				a: connection.fromPoint,
+				b: connection.toPoint
+			}));
 			const group = this.buildLayerGroup(
 				buildNodeLayers(graph, node, centerlines, crossingConnectors),
 				jitterValue
@@ -357,6 +470,8 @@ export class RoadRenderer {
 		continuityJoinEnd: boolean,
 		morphStart: TransitionMorph | null,
 		morphEnd: TransitionMorph | null,
+		arrowStart: SegmentEndArrows,
+		arrowEnd: SegmentEndArrows,
 		centerBreakStart: boolean,
 		centerBreakEnd: boolean,
 		jitter: number
@@ -521,6 +636,8 @@ export class RoadRenderer {
 			morphEnd,
 			lengthStart,
 			lengthEnd,
+			arrowStart,
+			arrowEnd,
 			continuityJoinStart,
 			continuityJoinEnd,
 			centerBreakStart,
@@ -547,6 +664,8 @@ export class RoadRenderer {
 		morphEnd: TransitionMorph | null,
 		lengthStart: number,
 		lengthEnd: number,
+		arrowStart: SegmentEndArrows,
+		arrowEnd: SegmentEndArrows,
 		continuityJoinStart: boolean,
 		continuityJoinEnd: boolean,
 		centerBreakStart: boolean,
@@ -665,6 +784,193 @@ export class RoadRenderer {
 				d = end + gap;
 			}
 		}
+
+		const laneCenters: number[] = [];
+		let laneStart = -halfWidth;
+		for (const lane of lanes) {
+			const laneEnd = laneStart + lane.width;
+			laneCenters.push((laneStart + laneEnd) / 2);
+			laneStart = laneEnd;
+		}
+
+		const sampleAt = (d: number) => {
+			let i = 1;
+			while (i < cumulative.length - 1 && cumulative[i] < d) i++;
+			const span = cumulative[i] - cumulative[i - 1];
+			const t = span > 0.0001 ? (d - cumulative[i - 1]) / span : 0;
+			const a = samples[i - 1];
+			const b = samples[i];
+			let nx = a.normalX + (b.normalX - a.normalX) * t;
+			let ny = a.normalY + (b.normalY - a.normalY) * t;
+			const nl = Math.hypot(nx, ny);
+			if (nl > 0.0001) {
+				nx /= nl;
+				ny /= nl;
+			}
+			const dx = b.x - a.x;
+			const dy = b.y - a.y;
+			const dl = Math.hypot(dx, dy);
+			return {
+				x: a.x + dx * t,
+				z: a.y + dy * t,
+				tx: dl > 0.0001 ? dx / dl : 1,
+				ty: dl > 0.0001 ? dy / dl : 0,
+				nx,
+				ny
+			};
+		};
+
+		const quad = (
+			ax: number,
+			az: number,
+			bx: number,
+			bz: number,
+			sideX: number,
+			sideY: number
+		) => {
+			const target = positions.lane;
+			const w = 0.18;
+			target.push(
+				ax - sideX * w,
+				0,
+				az - sideY * w,
+				ax + sideX * w,
+				0,
+				az + sideY * w,
+				bx - sideX * w,
+				0,
+				bz - sideY * w,
+				ax + sideX * w,
+				0,
+				az + sideY * w,
+				bx + sideX * w,
+				0,
+				bz + sideY * w,
+				bx - sideX * w,
+				0,
+				bz - sideY * w
+			);
+		};
+
+		const drawArrow = (
+			d: number,
+			offset: number,
+			travelSign: number,
+			movements: ArrowMovement[]
+		) => {
+			const p = sampleAt(d);
+			const tx = p.tx * travelSign;
+			const ty = p.ty * travelSign;
+			const leftX = -ty;
+			const leftY = tx;
+			const baseX = p.x + p.nx * offset;
+			const baseZ = p.z + p.ny * offset;
+			const target = positions.lane;
+			const hasLeft = movements.includes('left');
+			const hasThrough = movements.includes('through');
+			const hasRight = movements.includes('right');
+
+			const head = (tipX: number, tipZ: number, dirX: number, dirY: number) => {
+				const sideX = -dirY;
+				const sideY = dirX;
+				target.push(
+					tipX + dirX * 0.85,
+					0,
+					tipZ + dirY * 0.85,
+					tipX + sideX * 0.55,
+					0,
+					tipZ + sideY * 0.55,
+					tipX - sideX * 0.55,
+					0,
+					tipZ - sideY * 0.55
+				);
+			};
+
+			if (hasThrough && !hasLeft && !hasRight) {
+				const tailX = baseX - tx * 1.6;
+				const tailZ = baseZ - ty * 1.6;
+				const tipX = baseX + tx * 1.6;
+				const tipZ = baseZ + ty * 1.6;
+				quad(tailX, tailZ, tipX, tipZ, leftX, leftY);
+				head(tipX, tipZ, tx, ty);
+				return;
+			}
+
+			if (!hasThrough && hasLeft !== hasRight) {
+				const bendSign = hasLeft ? 1 : -1;
+				const bx = leftX * bendSign;
+				const by = leftY * bendSign;
+				const shiftedBaseX = baseX - bx * 0.9;
+				const shiftedBaseZ = baseZ - by * 0.9;
+				const stemTailX = shiftedBaseX - tx * 1.7;
+				const stemTailZ = shiftedBaseZ - ty * 1.7;
+				const elbowX = shiftedBaseX + tx * 0.7;
+				const elbowZ = shiftedBaseZ + ty * 0.7;
+				quad(stemTailX, stemTailZ, elbowX, elbowZ, leftX, leftY);
+				const tipX = elbowX + bx * 1.0;
+				const tipZ = elbowZ + by * 1.0;
+				quad(elbowX, elbowZ, tipX, tipZ, tx, ty);
+				quad(
+					elbowX - bx * 0.18,
+					elbowZ - by * 0.18,
+					elbowX + bx * 0.18,
+					elbowZ + by * 0.18,
+					tx,
+					ty
+				);
+				head(tipX, tipZ, bx, by);
+				return;
+			}
+
+			const tailX = baseX - tx * 1.8;
+			const tailZ = baseZ - ty * 1.8;
+			const forkX = baseX + tx * 0.45;
+			const forkZ = baseZ + ty * 0.45;
+			const straightTipX = baseX + tx * 1.55;
+			const straightTipZ = baseZ + ty * 1.55;
+			quad(
+				tailX,
+				tailZ,
+				hasThrough ? straightTipX : forkX,
+				hasThrough ? straightTipZ : forkZ,
+				leftX,
+				leftY
+			);
+			if (hasThrough) head(straightTipX, straightTipZ, tx, ty);
+
+			const branch = (bendSign: number) => {
+				const bx = tx * 0.45 + leftX * bendSign * 0.9;
+				const by = ty * 0.45 + leftY * bendSign * 0.9;
+				const bl = Math.hypot(bx, by);
+				if (bl < 0.0001) return;
+				const dirX = bx / bl;
+				const dirY = by / bl;
+				const sideX = -dirY;
+				const sideY = dirX;
+				const tipX = forkX + dirX * 1.35;
+				const tipZ = forkZ + dirY * 1.35;
+				quad(forkX - tx * 0.12, forkZ - ty * 0.12, tipX, tipZ, sideX, sideY);
+				head(tipX, tipZ, dirX, dirY);
+			};
+
+			if (hasLeft) branch(1);
+			if (hasRight) branch(-1);
+		};
+
+		const usableFrom = (morphStart ? lengthStart : 0) + ARROW_END_INSET + ARROW_FIT;
+		const usableTo = total - (morphEnd ? lengthEnd : 0) - ARROW_END_INSET - ARROW_FIT;
+		const drawEndArrows = (arrows: SegmentEndArrows, atStart: boolean) => {
+			if (arrows.lanes.length === 0 || usableTo < usableFrom) return;
+			const base = atStart ? usableFrom : usableTo;
+			const travelSign = atStart ? -1 : 1;
+			for (const lane of arrows.lanes) {
+				const offset = laneCenters[lane.laneIndex];
+				if (offset === undefined) continue;
+				drawArrow(base, offset, travelSign, lane.movements);
+			}
+		};
+		drawEndArrows(arrowStart, true);
+		drawEndArrows(arrowEnd, false);
 
 		return this.paintMeshes(positions, jitter);
 	}
