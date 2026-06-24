@@ -4,6 +4,7 @@
 	import FixtureBar from '$lib/components/FixtureBar.svelte';
 	import FpsCounter from '$lib/components/FpsCounter.svelte';
 	import LaneEditor from '$lib/components/LaneEditor.svelte';
+	import NodeLabels from '$lib/components/NodeLabels.svelte';
 	import { untrack } from 'svelte';
 
 	let containerElement: HTMLDivElement;
@@ -48,6 +49,7 @@
 	<LaneEditor />
 	{#if import.meta.env.DEV}
 		<FixtureBar />
+		<NodeLabels />
 	{/if}
 	<div bind:this={containerElement} class="h-full w-full"></div>
 </div>

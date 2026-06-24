@@ -495,6 +495,16 @@ export class SceneManager {
 		return { x: this.targetX, z: this.targetZ };
 	}
 
+	// Project a ground point (graph x, y stored as z) to viewport pixels.
+	worldToScreen(worldX: number, worldZ: number): { x: number; y: number } {
+		const rect = this.renderer.domElement.getBoundingClientRect();
+		const ndc = new THREE.Vector3(worldX, 0, worldZ).project(this.camera);
+		return {
+			x: rect.left + ((ndc.x + 1) / 2) * rect.width,
+			y: rect.top + ((1 - ndc.y) / 2) * rect.height
+		};
+	}
+
 	getCanvas() {
 		return this.renderer.domElement;
 	}

@@ -126,7 +126,7 @@ const CELL_W = 140;
 const CELL_H = 60;
 const SEG_LEN = 50;
 
-const nodes: { id: string; x: number; y: number }[] = [];
+const nodes: { id: string; x: number; y: number; label?: string }[] = [];
 const segments: {
 	id: string;
 	startNodeId: string;
@@ -145,7 +145,7 @@ pairs.forEach(([a, b], i) => {
 	const mid = `node-${i}-m`;
 	const end = `node-${i}-e`;
 	nodes.push({ id: start, x: x0, y });
-	nodes.push({ id: mid, x: x0 + SEG_LEN, y });
+	nodes.push({ id: mid, x: x0 + SEG_LEN, y, label: `#${i} ${a}→${b}` });
 	nodes.push({ id: end, x: x0 + 2 * SEG_LEN, y });
 
 	segments.push({ id: `segment-${i}-a`, startNodeId: start, endNodeId: mid, lanes: configs[a]() });

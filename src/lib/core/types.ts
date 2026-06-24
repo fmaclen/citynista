@@ -61,6 +61,8 @@ export interface NodeData {
 	id: string;
 	x: number;
 	y: number;
+	// Optional debug annotation, drawn by the dev-only node label overlay.
+	label?: string;
 	// Movements turned OFF at this junction. Empty/omitted = every default
 	// (permissive) movement is allowed.
 	disabledConnections?: LaneConnectionRef[];

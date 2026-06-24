@@ -10,6 +10,8 @@ export class Node {
 	// Movements turned ON that are not in the default set — a U-turn or a break
 	// across a median the default treats as a barrier.
 	enabledConnections = $state<LaneConnectionRef[] | undefined>(undefined);
+	// Optional debug annotation, drawn by the dev-only node label overlay.
+	label: string | undefined;
 
 	constructor(id: string, x: number, y: number) {
 		this.id = id;
@@ -48,6 +50,9 @@ export class Node {
 				to: { ...c.to }
 			}));
 		}
+		if (this.label) {
+			data.label = this.label;
+		}
 		return data;
 	}
 
@@ -58,6 +63,9 @@ export class Node {
 		}
 		if (data.enabledConnections && data.enabledConnections.length > 0) {
 			node.enabledConnections = data.enabledConnections;
+		}
+		if (data.label) {
+			node.label = data.label;
 		}
 		return node;
 	}
