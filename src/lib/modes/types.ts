@@ -7,9 +7,9 @@ export interface ModeHandlers {
 	cleanup?: () => void;
 }
 
-// 'connector' is a transient per-node editing mode entered by double-clicking
-// a junction; it is not a toolbar mode.
-export type Mode = 'draw' | 'select' | 'bulldoze' | 'split' | 'connector';
+// 'connector' and 'place' are transient editing modes; they are not toolbar
+// modes.
+export type Mode = 'draw' | 'select' | 'bulldoze' | 'split' | 'connector' | 'place';
 
 // Cities-style drawing styles: straight click-click, curved as
 // start/apex/end (the apex click is the quadratic control point), and

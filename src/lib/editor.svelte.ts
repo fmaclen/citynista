@@ -42,6 +42,7 @@ import { setupSelectMode } from './modes/select';
 import { setupBulldozeMode } from './modes/bulldoze';
 import { setupSplitMode } from './modes/split';
 import { setupConnectorMode } from './modes/connector';
+import { setupPlaceMode } from './modes/place';
 
 // Setback handles seat at least this far out from the node along their arm, so
 // the two stops of a straight through-road don't land on the node together.
@@ -65,9 +66,8 @@ function pointAtArcLength(points: Point[], target: number): Point {
 }
 
 const EDITOR_CONTEXT_KEY = Symbol('editor');
-const PASTE_OFFSET = 16;
 
-interface ClipboardNodeSnapshot {
+export interface ClipboardNodeSnapshot {
 	id: string;
 	x: number;
 	y: number;
@@ -75,7 +75,7 @@ interface ClipboardNodeSnapshot {
 	enabledConnections?: LaneConnectionRef[];
 }
 
-interface ClipboardSegmentSnapshot {
+export interface ClipboardSegmentSnapshot {
 	id: string;
 	startNodeId: string;
 	endNodeId: string;
@@ -84,7 +84,7 @@ interface ClipboardSegmentSnapshot {
 	lanes: Lane[];
 }
 
-interface SegmentClipboard {
+export interface SegmentClipboard {
 	kind: 'segments';
 	nodes: ClipboardNodeSnapshot[];
 	segments: ClipboardSegmentSnapshot[];
@@ -109,7 +109,7 @@ interface NodeClipboard {
 
 type EditorClipboard = SegmentClipboard | NodeClipboard;
 
-function cloneLanes(lanes: Lane[]) {
+export function cloneLanes(lanes: Lane[]) {
 	return lanes.map((lane) => ({ ...lane }));
 }
 
@@ -156,6 +156,7 @@ export class Editor {
 	canRedo = $state(false);
 	selectedNodes = new SvelteSet<string>();
 	selectedSegments = new SvelteSet<string>();
+	pendingPlacement: SegmentClipboard | null = null;
 	// A single selected node that just passes through two same-section segments
 	// can be dissolved back into one road; the toolbar offers it only then.
 	joinableNodeId = $derived.by(() => {
@@ -441,7 +442,16 @@ export class Editor {
 			this.selectedNodes.size === 0 &&
 			this.selectedSegments.size === 0
 		) {
-			this.pasteNewSegments(clipboard);
+			this.startPlacement(clipboard);
+		}
+	}
+
+	private startPlacement(clipboard: SegmentClipboard) {
+		this.pendingPlacement = clipboard;
+		if (this.mode === 'place') {
+			this.setupMode('place');
+		} else {
+			this.mode = 'place';
 		}
 	}
 
@@ -511,7 +521,7 @@ export class Editor {
 		return from && to ? { from, to } : null;
 	}
 
-	private remapConnectionRefs(
+	remapConnectionRefs(
 		connections: LaneConnectionRef[] | undefined,
 		segmentIds: SvelteMap<string, string>
 	) {
@@ -520,45 +530,6 @@ export class Editor {
 			.map((connection) => this.remapConnectionRef(connection, segmentIds))
 			.filter((connection) => connection !== null);
 		return remapped.length > 0 ? remapped : undefined;
-	}
-
-	private pasteNewSegments(clipboard: SegmentClipboard) {
-		const nodeIds = new SvelteMap<string, string>();
-		const segmentIds = new SvelteMap<string, string>();
-
-		for (const snapshot of clipboard.nodes) {
-			const node = this.graph.createNode(snapshot.x + PASTE_OFFSET, snapshot.y + PASTE_OFFSET);
-			nodeIds.set(snapshot.id, node.id);
-			this.nodeRenderer.createNode(node);
-		}
-
-		for (const snapshot of clipboard.segments) {
-			const startNodeId = nodeIds.get(snapshot.startNodeId);
-			const endNodeId = nodeIds.get(snapshot.endNodeId);
-			if (!startNodeId || !endNodeId) continue;
-
-			const segment = this.graph.createSegment(startNodeId, endNodeId, cloneLanes(snapshot.lanes));
-			segmentIds.set(snapshot.id, segment.id);
-			if (snapshot.controlX !== undefined && snapshot.controlY !== undefined) {
-				segment.setControlPoint(snapshot.controlX + PASTE_OFFSET, snapshot.controlY + PASTE_OFFSET);
-			}
-		}
-
-		for (const snapshot of clipboard.nodes) {
-			const nodeId = nodeIds.get(snapshot.id);
-			const node = nodeId ? this.graph.nodes.get(nodeId) : undefined;
-			if (!node) continue;
-			node.disabledConnections = this.remapConnectionRefs(snapshot.disabledConnections, segmentIds);
-			node.enabledConnections = this.remapConnectionRefs(snapshot.enabledConnections, segmentIds);
-		}
-
-		this.clearSelection();
-		for (const segmentId of segmentIds.values()) {
-			this.selectSegment(segmentId);
-		}
-		this.rebuildRoads();
-		this.refreshSelectionVisuals();
-		this.graph.save();
 	}
 
 	private loadSavedData() {
@@ -640,6 +611,7 @@ export class Editor {
 		this.clearSelection();
 		this.setHoveredNode(null);
 		this.setHoveredSegment(null);
+		if (mode !== 'place') this.pendingPlacement = null;
 		this.modeHandlers = null;
 
 		if (mode === 'draw') {
@@ -650,6 +622,8 @@ export class Editor {
 			this.modeHandlers = setupSplitMode(this);
 		} else if (mode === 'connector') {
 			this.modeHandlers = setupConnectorMode(this);
+		} else if (mode === 'place') {
+			this.modeHandlers = setupPlaceMode(this);
 		} else {
 			this.modeHandlers = setupSelectMode(this);
 		}

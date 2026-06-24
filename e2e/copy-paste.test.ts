@@ -306,7 +306,14 @@ test.describe('segment copy/paste', () => {
 		await page.keyboard.press('Escape');
 		await expect(page.locator('aside')).not.toBeVisible();
 
+		// Paste enters a placement mode that follows the cursor; move the ghost
+		// to clear ground (its node centroid lands on the cursor) and click to
+		// confirm. Centroid of segment-0's endpoints is (-150, -60), so dropping
+		// it at (150, 0) shifts the clone by (+300, +60).
 		await page.keyboard.press('Meta+v');
+		const drop = toScreen(150, 0);
+		await page.mouse.move(drop.x, drop.y);
+		await page.mouse.click(drop.x, drop.y);
 
 		await expect
 			.poll(async () => {
@@ -322,13 +329,15 @@ test.describe('segment copy/paste', () => {
 		);
 		expect(clone).toBeDefined();
 		expect(clone!.lanes).toEqual(GRAPH_DATA.segments[0].lanes);
-		expect(clone!.controlX).toBe(GRAPH_DATA.segments[0].controlX! + 16);
-		expect(clone!.controlY).toBe(GRAPH_DATA.segments[0].controlY! + 16);
+		expect(clone!.controlX!).toBeCloseTo(150, 0);
+		expect(clone!.controlY!).toBeCloseTo(-60, 0);
 
 		const clonedStart = graph!.nodes.find((node) => node.id === clone!.startNodeId);
 		const clonedEnd = graph!.nodes.find((node) => node.id === clone!.endNodeId);
-		expect(clonedStart).toMatchObject({ x: -204, y: -44 });
-		expect(clonedEnd).toMatchObject({ x: -64, y: -44 });
+		expect(clonedStart!.x).toBeCloseTo(80, 0);
+		expect(clonedStart!.y).toBeCloseTo(0, 0);
+		expect(clonedEnd!.x).toBeCloseTo(220, 0);
+		expect(clonedEnd!.y).toBeCloseTo(0, 0);
 		expect(clonedStart?.disabledConnections).toEqual([
 			{
 				from: { segmentId: clone!.id, laneIndex: 1 },

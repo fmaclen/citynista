@@ -7,7 +7,7 @@ const SAMPLES = 50;
 const ENDPOINT_EXCLUSION = 6;
 const MAX_SPLITS = 50;
 
-interface Crossing {
+export interface Crossing {
 	segmentA: Segment;
 	segmentB: Segment;
 	tA: number;
@@ -54,6 +54,39 @@ function findFirstCrossing(graph: Graph): Crossing | null {
 	return null;
 }
 
+export function findCrossingsBetweenSegments(
+	graphA: Graph,
+	segmentsA: Iterable<Segment>,
+	graphB: Graph,
+	segmentsB: Iterable<Segment>
+) {
+	const crossings: Crossing[] = [];
+	const b = Array.from(segmentsB);
+
+	for (const segmentA of segmentsA) {
+		const polylineA = samplePolyline(graphA, segmentA);
+		if (!polylineA) continue;
+
+		for (const segmentB of b) {
+			if (segmentA.id === segmentB.id && graphA === graphB) continue;
+			const polylineB = samplePolyline(graphB, segmentB);
+			if (!polylineB) continue;
+
+			const pairCrossings = findPolylineCrossingsBetween(
+				graphA,
+				segmentA,
+				polylineA,
+				graphB,
+				segmentB,
+				polylineB
+			);
+			crossings.push(...pairCrossings);
+		}
+	}
+
+	return crossings;
+}
+
 interface PolylinePoint {
 	x: number;
 	y: number;
@@ -95,6 +128,18 @@ function findPolylineCrossing(
 	segmentB: Segment,
 	polylineB: PolylinePoint[]
 ): Crossing | null {
+	return findPolylineCrossingsBetween(graph, segmentA, polylineA, graph, segmentB, polylineB)[0] ?? null;
+}
+
+function findPolylineCrossingsBetween(
+	graphA: Graph,
+	segmentA: Segment,
+	polylineA: PolylinePoint[],
+	graphB: Graph,
+	segmentB: Segment,
+	polylineB: PolylinePoint[]
+) {
+	const crossings: Crossing[] = [];
 	for (let i = 0; i < polylineA.length - 1; i++) {
 		for (let j = 0; j < polylineB.length - 1; j++) {
 			const hit = intersectLineSegments(
@@ -106,13 +151,13 @@ function findPolylineCrossing(
 			if (!hit) continue;
 
 			if (
-				isNearSegmentEndpoint(graph, segmentA, hit) ||
-				isNearSegmentEndpoint(graph, segmentB, hit)
+				isNearSegmentEndpoint(graphA, segmentA, hit) ||
+				isNearSegmentEndpoint(graphB, segmentB, hit)
 			) {
 				continue;
 			}
 
-			return {
+			const crossing = {
 				segmentA,
 				segmentB,
 				tA: (i + hit.u) / (polylineA.length - 1),
@@ -120,10 +165,13 @@ function findPolylineCrossing(
 				x: hit.x,
 				y: hit.y
 			};
+			if (!crossings.some((existing) => Math.hypot(existing.x - hit.x, existing.y - hit.y) < 0.5)) {
+				crossings.push(crossing);
+			}
 		}
 	}
 
-	return null;
+	return crossings;
 }
 
 function isNearSegmentEndpoint(graph: Graph, segment: Segment, point: PolylinePoint): boolean {
