@@ -73,7 +73,7 @@ test.describe('Lane Editor', () => {
 		expect(edited.lanes).toHaveLength(4);
 		expect(edited.lanes[0]).toEqual({
 			role: 'pedestrian',
-			surface: 'concrete',
+			material: 'pavement',
 			width: 5,
 			direction: 'bidirectional'
 		});
@@ -111,11 +111,11 @@ test.describe('Lane Editor', () => {
 
 		const segments = await readSavedSegments(page);
 		const edited = segments.find((s: { id: string }) => s.id === 'segment-0');
-		expect(edited.lanes.map((lane: { surface: string }) => lane.surface)).toEqual([
+		expect(edited.lanes.map((lane: { material: string }) => lane.material)).toEqual([
 			'asphalt',
-			'concrete',
+			'pavement',
 			'asphalt',
-			'concrete'
+			'pavement'
 		]);
 	});
 
@@ -151,7 +151,7 @@ test.describe('Lane Editor', () => {
 			expect(segment.lanes).toHaveLength(4);
 			expect(segment.lanes[0]).toEqual({
 				role: 'pedestrian',
-				surface: 'concrete',
+				material: 'pavement',
 				width: 6,
 				direction: 'bidirectional'
 			});

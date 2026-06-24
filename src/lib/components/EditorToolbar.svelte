@@ -2,7 +2,7 @@
 	import { getEditorContext } from '$lib/editor.svelte';
 	import type { DrawStyle } from '$lib/modes/types';
 	import { LANE_TEMPLATES, getTotalWidth, laneSwatchColor } from '$lib/core/lane-template';
-	import { laneColor } from '$lib/core/lane-types';
+	import { MATERIAL_COLOR } from '$lib/core/lane-types';
 	import { Button } from '$lib/components/ui/button';
 	import {
 		Combine,
@@ -85,7 +85,7 @@
 				class="relative h-10 w-10 shrink-0 overflow-hidden rounded-md border-2 transition-colors {active
 					? 'border-foreground'
 					: 'border-border hover:border-muted-foreground'}"
-				style="background-color: {laneColor('grass')};"
+				style="background-color: {MATERIAL_COLOR.grass};"
 				aria-label={template.name}
 				aria-pressed={active}
 				title="Draw {template.name} — {totalWidth}m (key {i + 1})"

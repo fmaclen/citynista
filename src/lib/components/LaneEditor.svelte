@@ -6,11 +6,20 @@
 		getTotalWidth,
 		laneSwatchColor
 	} from '$lib/core/lane-template';
-	import type { LaneRole, LaneSurface } from '$lib/core/types';
+	import type { LaneMaterial, LaneRole } from '$lib/core/types';
 	import * as Select from '$lib/components/ui/select';
 	import { Button } from '$lib/components/ui/button';
 	import { Input } from '$lib/components/ui/input';
-	import { ArrowLeft, ArrowRight, Equal, GripVertical, Plus, Trash2, X } from '@lucide/svelte';
+	import {
+		ArrowLeft,
+		ArrowRight,
+		Equal,
+		GripVertical,
+		Layers,
+		Plus,
+		Trash2,
+		X
+	} from '@lucide/svelte';
 
 	const editor = getEditorContext();
 
@@ -32,17 +41,13 @@
 		{ value: 'buffer', label: 'Buffer' }
 	];
 
-	const MATERIAL_OPTIONS: Record<LaneRole, { value: LaneSurface; label: string }[]> = {
-		vehicle: [
-			{ value: 'asphalt', label: 'Asphalt' },
-			{ value: 'concrete', label: 'Concrete' }
-		],
-		pedestrian: [{ value: 'concrete', label: 'Concrete' }],
-		buffer: [
-			{ value: 'grass', label: 'Grass' },
-			{ value: 'curb', label: 'Median' }
-		]
-	};
+	const MATERIAL_OPTIONS: { value: LaneMaterial; label: string }[] = [
+		{ value: 'asphalt', label: 'Asphalt' },
+		{ value: 'concrete', label: 'Concrete' },
+		{ value: 'pavement', label: 'Pavement' },
+		{ value: 'grass', label: 'Grass' },
+		{ value: 'dirt', label: 'Dirt' }
+	];
 
 	const MIN_LANE_WIDTH = 0.5;
 	const MAX_LANE_WIDTH = 30;
@@ -57,28 +62,25 @@
 		const option = ROLE_OPTIONS.find((o) => o.value === value);
 		if (!option) return;
 		if (lanes[index]?.role === option.value) return;
-		const materialOptions = MATERIAL_OPTIONS[option.value];
 
 		for (const segment of segments) {
 			const lane = segment.lanes[index];
 			lane.role = option.value;
-			if (!materialOptions.some((material) => material.value === lane.surface)) {
-				lane.surface = materialOptions[0].value;
-			}
 			lane.direction = option.value === 'vehicle' ? 'forward' : 'bidirectional';
+			if (option.value !== 'buffer') delete lane.raised;
 		}
 		commit();
 	}
 
-	function setSurface(index: number, value: string) {
+	function setMaterial(index: number, value: string) {
 		const lane = lanes[index];
 		if (!lane) return;
-		const option = MATERIAL_OPTIONS[lane.role].find((o) => o.value === value);
+		const option = MATERIAL_OPTIONS.find((o) => o.value === value);
 		if (!option) return;
-		if (lane.surface === option.value) return;
+		if (lane.material === option.value) return;
 
 		for (const segment of segments) {
-			segment.lanes[index].surface = option.value;
+			segment.lanes[index].material = option.value;
 		}
 		commit();
 	}
@@ -139,7 +141,7 @@
 
 	function addLane() {
 		for (const segment of segments) {
-			segment.lanes.push({ role: 'vehicle', surface: 'asphalt', width: 3, direction: 'forward' });
+			segment.lanes.push({ role: 'vehicle', material: 'asphalt', width: 3, direction: 'forward' });
 		}
 		commit();
 	}
@@ -159,6 +161,17 @@
 		for (const segment of segments) {
 			if (next === undefined) delete segment.lanes[index].markings;
 			else segment.lanes[index].markings = next;
+		}
+		commit();
+	}
+
+	function toggleRaised(index: number) {
+		const next = !lanes[index]?.raised;
+		for (const segment of segments) {
+			const lane = segment.lanes[index];
+			if (lane.role !== 'buffer') continue;
+			if (next) lane.raised = true;
+			else delete lane.raised;
 		}
 		commit();
 	}
@@ -243,12 +256,16 @@
 							</Select.Content>
 						</Select.Root>
 
-						<Select.Root type="single" value={lane.surface} onValueChange={(v) => setSurface(i, v)}>
+						<Select.Root
+							type="single"
+							value={lane.material}
+							onValueChange={(v) => setMaterial(i, v)}
+						>
 							<Select.Trigger class="w-full" size="sm">
-								{MATERIAL_OPTIONS[lane.role].find((o) => o.value === lane.surface)?.label}
+								{MATERIAL_OPTIONS.find((o) => o.value === lane.material)?.label}
 							</Select.Trigger>
 							<Select.Content>
-								{#each MATERIAL_OPTIONS[lane.role] as option (option.value)}
+								{#each MATERIAL_OPTIONS as option (option.value)}
 									<Select.Item value={option.value} label={option.label} />
 								{/each}
 							</Select.Content>
@@ -291,6 +308,16 @@
 								title="Lane markings"
 							>
 								<Equal class="h-4 w-4" />
+							</Button>
+						{:else if lane.role === 'buffer'}
+							<Button
+								variant="ghost"
+								size="icon"
+								class="h-7 w-7 shrink-0 {lane.raised ? '' : 'text-muted-foreground/40'}"
+								onclick={() => toggleRaised(i)}
+								title="Raised buffer"
+							>
+								<Layers class="h-4 w-4" />
 							</Button>
 						{:else}
 							<div class="h-7 w-7 shrink-0"></div>

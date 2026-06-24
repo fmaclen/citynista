@@ -14,7 +14,9 @@ const NODE_OPACITY = 0.9;
 
 export type NodeTone = 'hover' | 'selected' | 'danger';
 const NODE_SEGMENTS = 48;
-export const NODE_Y_OFFSET = 0.2;
+// Above the whole lane-layer stack (which now reaches ~0.31 with composite
+// material layers) so hover/selection rings are never hidden under the road.
+export const NODE_Y_OFFSET = 0.4;
 
 export class NodeRenderer {
 	private scene: THREE.Scene;

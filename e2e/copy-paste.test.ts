@@ -154,9 +154,10 @@ const toScreen = (x: number, y: number) => ({ x: 640 + x * SCALE, y: 360 + y * S
 
 interface SavedLane {
 	role: string;
-	surface: string;
+	material: string;
 	width: number;
 	direction: string;
+	raised?: boolean;
 	markings?: boolean;
 }
 
@@ -188,17 +189,17 @@ interface SavedGraph {
 }
 
 const EXPECTED_SEGMENT_0_LANES: SavedLane[] = [
-	{ role: 'pedestrian', surface: 'concrete', width: 2, direction: 'bidirectional' },
-	{ role: 'vehicle', surface: 'asphalt', width: 3, direction: 'backward' },
-	{ role: 'vehicle', surface: 'asphalt', width: 3, direction: 'forward', markings: false },
-	{ role: 'pedestrian', surface: 'concrete', width: 2, direction: 'bidirectional' }
+	{ role: 'pedestrian', material: 'pavement', width: 2, direction: 'bidirectional' },
+	{ role: 'vehicle', material: 'asphalt', width: 3, direction: 'backward' },
+	{ role: 'vehicle', material: 'asphalt', width: 3, direction: 'forward', markings: false },
+	{ role: 'pedestrian', material: 'pavement', width: 2, direction: 'bidirectional' }
 ];
 
 const laneKey = (lanes: SavedLane[]) =>
 	lanes
 		.map(
 			(lane) =>
-				`${lane.role}:${lane.surface}:${lane.width}:${lane.direction}${lane.markings === false ? ':nomark' : ''}`
+				`${lane.role}:${lane.material}:${lane.width}:${lane.direction}${lane.raised ? ':raised' : ''}${lane.markings === false ? ':nomark' : ''}`
 		)
 		.join(',');
 

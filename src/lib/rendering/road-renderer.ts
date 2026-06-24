@@ -34,7 +34,7 @@ import {
 	laneColor,
 	laneLayerY,
 	lanePaintBetween,
-	laneSurface
+	surfaceClassOf
 } from '../core/lane-types';
 import type { Lane } from '../core/types';
 import {
@@ -50,6 +50,8 @@ const LAYER_Y: Record<RoadLayerId, number> = Object.fromEntries(
 const LAYER_COLORS: Record<RoadLayerId, string> = Object.fromEntries(
 	ROAD_LAYER_LIST.map((layer) => [layer, laneColor(layer)])
 ) as Record<RoadLayerId, string>;
+
+const TOP_LAYER_Y = Math.max(...ROAD_LAYER_LIST.map((layer) => laneLayerY(layer)));
 
 // Segment ribbons reach slightly into their node pieces so no hairline
 // cracks can open between them.
@@ -92,9 +94,9 @@ function extendCenterline(
 // between opposing flows. Paint renders above every roadway color but
 // below medians, follows transition morphs, and stops short of junction
 // mouths — junction interiors stay unpainted until crosswalks exist.
-// Above every lane layer including medians, so crossings can carry
+// Above every lane layer including raised buffers, so crossings can carry
 // pedestrian pavement over them; still below the interaction layers.
-const PAINT_Y = 0.095;
+const PAINT_Y = TOP_LAYER_Y + 0.02;
 const PAINT_WIDTH = 0.16;
 const PAINT_DASH = 2.2;
 const PAINT_GAP = 2.6;
@@ -499,10 +501,10 @@ export class RoadRenderer {
 			lengthEnd *= scale;
 		}
 
-		// Full-width pavement plate rendered as the pavement layer; the lane
-		// strips above carve out the visible sidewalk edges.
+		// Full-width neutral plate; pavement walkways simply let it show
+		// through, while other material lanes draw above it.
 		group.add(
-			this.buildStrip(samples, -halfWidth, halfWidth, 'pavement', startExt, endExt, jitter, {
+			this.buildStrip(samples, -halfWidth, halfWidth, 'plate', startExt, endExt, jitter, {
 				start: morphStart
 					? { length: lengthStart, offsetA: -morphStart.halfWidth, offsetB: morphStart.halfWidth }
 					: undefined,
@@ -515,8 +517,8 @@ export class RoadRenderer {
 		const intervals = getLaneIntervals(lanes);
 		for (let k = 0; k < intervals.length; k++) {
 			const interval = intervals[k];
-			const surface = laneSurface(interval.laneType);
-			if (surface === 'walkway') continue;
+			const surface = surfaceClassOf(interval.laneType);
+			if (interval.laneType === 'walkway:pavement') continue;
 
 			const targetStart = morphStart ? morphStart.intervals[k] : undefined;
 			const targetEnd = morphEnd ? morphEnd.intervals[k] : undefined;
@@ -539,8 +541,8 @@ export class RoadRenderer {
 				// At transition seams both ribbons arrive at the anchor's
 				// offsets vertex-for-vertex, so a road stub hides inside the
 				// counterpart's roadway exactly like at continuations.
-				const stubSafeStart = continuityJoinStart || interval.laneType === 'asphalt';
-				const stubSafeEnd = continuityJoinEnd || interval.laneType === 'asphalt';
+				const stubSafeStart = continuityJoinStart || interval.laneType === 'roadway:asphalt';
+				const stubSafeEnd = continuityJoinEnd || interval.laneType === 'roadway:asphalt';
 				group.add(
 					this.buildStrip(
 						samples,

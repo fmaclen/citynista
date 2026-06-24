@@ -3,15 +3,16 @@ import type { Path, Paths, PolyNode, PolyTree } from 'clipper-lib';
 import type { Graph } from './graph.svelte';
 import type { Node } from './node.svelte';
 import type { Segment } from './segment.svelte';
-import type { Lane, LaneConnectionRef, LaneDirection } from './types';
+import type { Lane, LaneConnectionRef, LaneDirection, LaneMaterial } from './types';
 import { getTotalWidth } from './lane-template';
 import {
 	isIslandLike,
 	isRoadway,
 	laneLayer,
 	lanePaintBetween,
-	laneSurface,
 	lanesStructureKey,
+	surfaceClassOf,
+	type LaneLayerId,
 	type RoadLayerId,
 	ROAD_LAYER_LIST
 } from './lane-types';
@@ -43,12 +44,10 @@ const CORNER_CURVE_SAMPLES = 12;
 
 // Small dilate-erode pass that seals hairline cracks where generated pieces
 // share an edge. Corner geometry is explicit, so this stays tiny.
-const CURB_RADIUS: Record<RoadLayerId, number> = Object.fromEntries(
-	ROAD_LAYER_LIST.map((layer) => {
-		const surface = laneSurface(layer);
-		return [layer, surface === 'roadway' || surface === 'walkway' ? 1.5 : 1];
-	})
-) as Record<RoadLayerId, number>;
+function curbRadius(layer: RoadLayerId) {
+	const surfaceClass = surfaceClassOf(layer);
+	return surfaceClass === 'verge' || surfaceClass === 'island' ? 1 : 1.5;
+}
 
 const JUNCTION_DISC_SCALE = 1.5;
 
@@ -56,8 +55,12 @@ const JUNCTION_DISC_SCALE = 1.5;
 // junctions; median sits on the roadway.
 export const LAYER_ORDER: RoadLayerId[] = ROAD_LAYER_LIST;
 
+function roadwayLayer(material: LaneMaterial): RoadLayerId {
+	return `roadway:${material}`;
+}
+
 interface LaneInterval {
-	laneType: RoadLayerId;
+	laneType: LaneLayerId;
 	start: number;
 	end: number;
 }
@@ -128,37 +131,38 @@ export function buildRoadLayers(graph: Graph): RoadLayer[] {
 	}
 	if (allBands.length === 0) return [];
 
-	// The sidewalk layer is the full pavement plate: the solid union of every
-	// band plus junction curb fillets. Road, grass, and median draw on top of
-	// it, so it shows through only along edges and in junction pockets —
-	// and no hairline crevice between layers can exist by construction.
-	let plate = applyCurbRounding(unionPaths(allBands), CURB_RADIUS.pavement, junctionDiscs);
+	// The plate is the neutral structural under-fill: every lane band plus
+	// junction rings, aprons, gore rims, and spokes. Material layers draw above
+	// it; pavement walkways simply let the plate show through.
+	let plate = applyCurbRounding(unionPaths(allBands), curbRadius('plate'), junctionDiscs);
 	if (nodeGeometry.sidewalkCuts.length > 0) {
 		plate = subtractPaths(plate, unionPaths(nodeGeometry.sidewalkCuts));
 	}
 
 	const layerPaths = new Map<RoadLayerId, Paths>();
-	layerPaths.set('pavement', plate);
+	layerPaths.set('plate', plate);
 
-	const roadwayBands: Paths = [];
-	for (const layerId of LAYER_ORDER) {
-		if (laneSurface(layerId) === 'roadway') {
-			roadwayBands.push(...(bandsByType.get(layerId) ?? []));
+	const vergeCoverBands: Paths = [];
+	for (const [layerId, bands] of bandsByType) {
+		if (layerId === 'plate') continue;
+		const surfaceClass = surfaceClassOf(layerId);
+		if (surfaceClass === 'roadway' || surfaceClass === 'walkway') {
+			vergeCoverBands.push(...bands);
 		}
 	}
 
 	for (const layerId of LAYER_ORDER) {
-		if (laneSurface(layerId) === 'walkway') continue;
+		if (layerId === 'plate' || layerId === 'walkway:pavement') continue;
 
 		const bands = bandsByType.get(layerId);
 		if (!bands || bands.length === 0) continue;
 
-		let paths = applyCurbRounding(unionPaths(bands), CURB_RADIUS[layerId], junctionDiscs);
-		if (laneSurface(layerId) === 'verge') {
-			// Verges never cross a roadway or a crossing road's walkway.
-			const pavement = [...roadwayBands, ...(bandsByType.get('pavement') ?? [])];
-			if (pavement.length > 0) {
-				paths = subtractPaths(paths, pavement);
+		let paths = applyCurbRounding(unionPaths(bands), curbRadius(layerId), junctionDiscs);
+		if (surfaceClassOf(layerId) === 'verge') {
+			// Verges never cross actual roadway or walkway lane bands. The
+			// all-encompassing structural plate is deliberately not subtracted.
+			if (vergeCoverBands.length > 0) {
+				paths = subtractPaths(paths, vergeCoverBands);
 			}
 			const protectedBands = nodeGeometry.protectedBandsByType.get(layerId);
 			if (protectedBands && protectedBands.length > 0) {
@@ -570,10 +574,10 @@ function computeTransitionMorph(
 	});
 
 	const targets = selfIntervals.map((interval) => {
-		const surface = laneSurface(interval.laneType);
+		const surface = surfaceClassOf(interval.laneType);
 		if (surface === 'walkway') {
-			// Walkways render via the full-width plate; per-strip targets
-			// are unused but kept index-aligned.
+			// Pavement walkways render via the full-width plate; other walkway
+			// materials use the same offsets above it.
 			return at(interval);
 		}
 
@@ -751,7 +755,7 @@ function paintDirection(lane: Lane, flipDirections: boolean) {
 
 function laneAccessKey(lane: Lane) {
 	if (lane.role === 'vehicle') return 'general';
-	return laneSurface(laneLayer(lane));
+	return surfaceClassOf(laneLayer(lane));
 }
 
 function boundaryAccessKey(a: Lane, b: Lane) {
@@ -1190,10 +1194,10 @@ function addMergeNode(
 		// the mouths already meet).
 		for (const arm of collectIntersectionArms(graph, node, centerlines)) {
 			if (!merge.throughIds.has(arm.segmentId) || arm.setback === undefined) continue;
-			getOrCreateBands(bandsByType, 'pavement').push(
+			getOrCreateBands(bandsByType, 'plate').push(
 				armSpoke(node, arm, arm.halfWidth, arm.halfWidth)
 			);
-			getOrCreateBands(bandsByType, armCarriageway(arm.lanes)).push(
+			getOrCreateBands(bandsByType, roadwayLayer(armCarriageway(arm.lanes))).push(
 				armSpoke(node, arm, arm.away.roadEdge, arm.toward.roadEdge)
 			);
 		}
@@ -1382,8 +1386,8 @@ function addGore(
 		);
 	};
 
-	buildGore(false, 'pavement');
-	buildGore(true, 'asphalt');
+	buildGore(false, 'plate');
+	buildGore(true, roadwayLayer(patchMaterial([merger, ...merge.through])));
 }
 
 function centerlinePortion(
@@ -1438,7 +1442,27 @@ function addApron(
 			stop.y + into.y * reach - stop.normalY * halfWidth
 		)
 	];
-	getOrCreateBands(bandsByType, 'pavement').push(normalizeWinding(band));
+	getOrCreateBands(bandsByType, 'plate').push(normalizeWinding(band));
+	for (const interval of getLaneIntervals(segment.lanes)) {
+		if (surfaceClassOf(interval.laneType) !== 'walkway') continue;
+		if (interval.laneType === 'walkway:pavement') continue;
+		const materialBand: Path = [
+			toClipperPoint(
+				mouth.x + stop.normalX * interval.start,
+				mouth.y + stop.normalY * interval.start
+			),
+			toClipperPoint(mouth.x + stop.normalX * interval.end, mouth.y + stop.normalY * interval.end),
+			toClipperPoint(
+				stop.x + into.x * reach + stop.normalX * interval.end,
+				stop.y + into.y * reach + stop.normalY * interval.end
+			),
+			toClipperPoint(
+				stop.x + into.x * reach + stop.normalX * interval.start,
+				stop.y + into.y * reach + stop.normalY * interval.start
+			)
+		];
+		getOrCreateBands(bandsByType, interval.laneType).push(normalizeWinding(materialBand));
+	}
 }
 
 // A pair node (continuation or transition) renders its bend as a fillet:
@@ -1593,8 +1617,12 @@ function centerMedianInterval(lanes: Lane[]) {
 	const intervals = getLaneIntervals(lanes);
 	for (let i = 0; i < intervals.length; i++) {
 		if (!isIslandLike(intervals[i].laneType)) continue;
-		const roadBefore = intervals.slice(0, i).some((iv) => laneSurface(iv.laneType) === 'roadway');
-		const roadAfter = intervals.slice(i + 1).some((iv) => laneSurface(iv.laneType) === 'roadway');
+		const roadBefore = intervals
+			.slice(0, i)
+			.some((iv) => surfaceClassOf(iv.laneType) === 'roadway');
+		const roadAfter = intervals
+			.slice(i + 1)
+			.some((iv) => surfaceClassOf(iv.laneType) === 'roadway');
 		if (roadBefore && roadAfter) return intervals[i];
 	}
 	return null;
@@ -1665,15 +1693,22 @@ export function medianBarriers(
 
 // The dominant carriageway material of an arm: concrete only when it out-widths
 // the asphalt lanes, otherwise asphalt.
-function armCarriageway(lanes: Lane[]): RoadLayerId {
+function armCarriageway(lanes: Lane[]): LaneMaterial {
 	let asphalt = 0;
 	let concrete = 0;
 	for (const lane of lanes) {
 		if (lane.role !== 'vehicle') continue;
-		if (lane.surface === 'concrete') concrete += lane.width;
+		if (lane.material === 'concrete') concrete += lane.width;
 		else asphalt += lane.width;
 	}
 	return concrete > asphalt ? 'concrete' : 'asphalt';
+}
+
+function patchMaterial(segments: Segment[]): LaneMaterial {
+	if (segments.length === 0) return 'asphalt';
+	const materials = segments.map((segment) => armCarriageway(segment.lanes));
+	const first = materials[0];
+	return materials.every((material) => material === first) ? first : 'asphalt';
 }
 
 // How far junction surfaces reach back into each segment past its stop line,
@@ -1892,7 +1927,7 @@ function centerMedianContinuations(
 	if (pavement.length === 0) return continuations;
 
 	for (const pair of centerMedianPairs(node, arms, crossingConnectors)) {
-		if (pair.laneTypeA === pair.laneTypeB) {
+		if (surfaceClassOf(pair.laneTypeA) === surfaceClassOf(pair.laneTypeB)) {
 			addCenterMedianContinuation(continuations, pair.laneTypeA, centerMedianBand(pair), pavement);
 			continue;
 		}
@@ -1905,7 +1940,7 @@ function centerMedianContinuations(
 				half.laneType,
 				half.path,
 				pavement,
-				laneSurface(half.laneType) === 'verge'
+				surfaceClassOf(half.laneType) === 'verge'
 			);
 		}
 	}
@@ -1920,7 +1955,7 @@ function protectNodeBand(
 	cutPaths: Paths
 ) {
 	metadata.sidewalkCuts.push(...cutPaths);
-	if (laneSurface(laneType) !== 'verge') return;
+	if (surfaceClassOf(laneType) !== 'verge') return;
 
 	const protectedBands = metadata.protectedBandsByType.get(laneType);
 	if (protectedBands) {
@@ -1964,7 +1999,7 @@ function addIntersection(
 	// Mouths reach slightly into the segments, underlapping the strips: any
 	// antialiasing crack along a stop line shows junction surface, never the
 	// ground, and nothing pokes over the lanes.
-	const sidewalkBands = getOrCreateBands(bandsByType, 'pavement');
+	const sidewalkBands = getOrCreateBands(bandsByType, 'plate');
 	const plate: Point[] = [];
 	for (let i = 0; i < arms.length; i++) {
 		const armA = arms[i];
@@ -1999,9 +2034,11 @@ function addIntersection(
 
 	// The patch takes the carriageway material the road arms share: a junction
 	// of concrete roads paves in concrete; any asphalt arm makes it asphalt.
-	const patchType: RoadLayerId = roadArms.every((arm) => armCarriageway(arm.lanes) === 'concrete')
-		? 'concrete'
-		: 'asphalt';
+	const patchType = roadwayLayer(
+		roadArms.every((arm) => armCarriageway(arm.lanes) === armCarriageway(roadArms[0].lanes))
+			? armCarriageway(roadArms[0].lanes)
+			: 'asphalt'
+	);
 
 	// The drivable surface: the full-carriageway plate with any dead corner (no
 	// movement between adjacent arms) carved back to sidewalk. With every
@@ -2228,7 +2265,7 @@ function applyIntervalToSide(
 ) {
 	if (outer - inner < BAND_EPSILON) return;
 
-	const surface = laneSurface(laneType);
+	const surface = surfaceClassOf(laneType);
 	if (surface === 'roadway') {
 		side.roadEdge = Math.max(side.roadEdge, outer);
 	} else if (surface === 'walkway' && outer > side.sidewalk.outer) {
@@ -2788,7 +2825,7 @@ function crossingPaths(
 		const b = Math.min(to, interval.end);
 		if (b - a < 0.05) continue;
 		// Walkways are already pedestrian pavement.
-		if (laneSurface(interval.laneType) === 'walkway') continue;
+		if (surfaceClassOf(interval.laneType) === 'walkway') continue;
 		if (drivable(interval.laneType)) {
 			for (
 				let offset = a + CROSSWALK_PITCH / 2;
@@ -2841,7 +2878,7 @@ function buildJunctionCrosswalks(
 	const merge = mergeInfo(graph, node);
 	const through = merge?.throughIds ?? new Set<string>();
 	const hasSidewalk = (arm: IntersectionArm) =>
-		arm.lanes.some((lane) => laneSurface(laneLayer(lane)) === 'walkway');
+		arm.lanes.some((lane) => surfaceClassOf(laneLayer(lane)) === 'walkway');
 	const nodeHasSidewalk = roadArms.some(hasSidewalk);
 
 	// At a stop line every island has already ended — the crossing zone is
@@ -2896,7 +2933,7 @@ function buildPathCrossingZebras(
 	// crossing, so each gets pedestrian pavement while drivable strips get
 	// bars.
 	const intervals = getLaneIntervals(arms[0].lanes);
-	const crossed = intervals.filter((interval) => laneSurface(interval.laneType) !== 'walkway');
+	const crossed = intervals.filter((interval) => surfaceClassOf(interval.laneType) !== 'walkway');
 	if (!crossed.some((interval) => isRoadway(interval.laneType))) return [];
 	const from = Math.min(...crossed.map((interval) => interval.start));
 	const to = Math.max(...crossed.map((interval) => interval.end));
@@ -2961,21 +2998,40 @@ export function buildNodeLayers(
 
 	// The sidewalk layer doubles as the junction's full pavement plate — same
 	// layering trick as segment ribbons.
-	let plate = applyCurbRounding(unionPaths(allBands), CURB_RADIUS.pavement, discs);
+	let plate = applyCurbRounding(unionPaths(allBands), curbRadius('plate'), discs);
 	if (nodeGeometry.sidewalkCuts.length > 0) {
 		plate = subtractPaths(plate, unionPaths(nodeGeometry.sidewalkCuts));
 	}
 
 	const layers: RoadLayer[] = [];
+	const vergeCoverBands: Paths = [];
+	for (const [layerId, bands] of bandsByType) {
+		if (layerId === 'plate') continue;
+		const surfaceClass = surfaceClassOf(layerId);
+		if (surfaceClass === 'roadway' || surfaceClass === 'walkway') {
+			vergeCoverBands.push(...bands);
+		}
+	}
 
 	for (const layerId of LAYER_ORDER) {
 		let paths: Paths;
-		if (layerId === 'pavement') {
+		if (layerId === 'plate') {
 			paths = plate;
+		} else if (layerId === 'walkway:pavement') {
+			continue;
 		} else {
 			const bands = bandsByType.get(layerId);
 			if (!bands || bands.length === 0) continue;
-			paths = unionPaths(bands);
+			paths = applyCurbRounding(unionPaths(bands), curbRadius(layerId), discs);
+			if (surfaceClassOf(layerId) === 'verge') {
+				if (vergeCoverBands.length > 0) {
+					paths = subtractPaths(paths, vergeCoverBands);
+				}
+				const protectedBands = nodeGeometry.protectedBandsByType.get(layerId);
+				if (protectedBands && protectedBands.length > 0) {
+					paths = unionPaths([...paths, ...protectedBands]);
+				}
+			}
 		}
 
 		const polygons = pathsToPolygons(paths);

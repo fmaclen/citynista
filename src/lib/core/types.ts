@@ -1,10 +1,12 @@
 export type LaneRole = 'vehicle' | 'pedestrian' | 'buffer';
-export type LaneSurface = 'asphalt' | 'concrete' | 'grass' | 'curb' | 'paint';
+export type LaneMaterial = 'asphalt' | 'concrete' | 'pavement' | 'grass' | 'dirt';
+export type LegacyLaneSurface = 'asphalt' | 'concrete' | 'grass' | 'curb' | 'paint';
 export type LaneDirection = 'forward' | 'backward' | 'bidirectional';
 
 export interface Lane {
 	role: LaneRole;
-	surface: LaneSurface;
+	material: LaneMaterial;
+	raised?: boolean;
 	width: number;
 	// Direction of travel; only meaningful for vehicle lanes (others are bidirectional).
 	direction: LaneDirection;
@@ -13,7 +15,7 @@ export interface Lane {
 }
 
 // The legacy on-disk lane shape, accepted for migration on load. Old saves used
-// `type` (+ optional `turn`); new saves write `role` + `surface`.
+// `type` (+ optional `turn`); pre-material saves write `role` + `surface`.
 export type LegacyLaneType =
 	| 'road'
 	| 'concrete'
@@ -29,7 +31,9 @@ export interface StoredLane {
 	type?: LegacyLaneType;
 	turn?: 'left' | 'right';
 	role?: LaneRole;
-	surface?: LaneSurface;
+	surface?: LegacyLaneSurface;
+	material?: LaneMaterial;
+	raised?: boolean;
 	width: number;
 	direction: LaneDirection;
 	markings?: boolean;

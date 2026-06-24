@@ -1,76 +1,101 @@
-import type { Lane, LaneRole, LaneSurface } from './types';
+import type { Lane, LaneMaterial, LaneRole } from './types';
 
 // Every rule about how lanes render and connect is keyed to a render layer's
 // SURFACE CLASS, not to a lane's function or material name.
 //
 // - roadway: vehicle-level paving. Roadways always flow into each other
 //   across transitions (material changes are a color seam), stop at junction
-//   stop lines, and are covered by the asphalt patch inside junctions.
+//   stop lines, and are covered by the patch inside junctions.
 // - island: raised strips inside the roadway. Islands flow into other islands
 //   or verges across transitions and end in a rounded nose when nothing
 //   continues them.
-// - verge: planted strips. Verges flow into islands/verges and end in a square
-//   cut everywhere else — never a sliver.
-// - walkway: pedestrian paving. Rendered via the full-width pavement plate;
-//   wraps junction corners.
+// - verge: flush buffer strips. Verges flow into islands/verges and end in a
+//   square cut everywhere else — never a sliver.
+// - walkway: pedestrian paving. Pavement walkways render via the full-width
+//   plate; other materials draw bands over that plate.
 export type SurfaceClass = 'roadway' | 'island' | 'verge' | 'walkway';
+export type LaneLayerId = `${SurfaceClass}:${LaneMaterial}`;
+export type RoadLayerId = 'plate' | LaneLayerId;
 
-// A render layer: the bucket a lane's geometry draws into (color + stacking +
-// surface class). Pedestrians render via the full-width pavement plate; every
-// other lane renders by its material.
-export type RoadLayerId = 'pavement' | 'grass' | 'asphalt' | 'concrete' | 'paint' | 'curb';
-
-interface RoadLayerSpec {
-	surface: SurfaceClass;
-	color: string;
-	// Bottom-to-top draw order; upper layers visually carve lower ones.
-	order: number;
-}
-
-const ROAD_LAYER_SPECS: Record<RoadLayerId, RoadLayerSpec> = {
-	pavement: { surface: 'walkway', color: '#9A9A94', order: 0 },
-	grass: { surface: 'verge', color: '#52A06B', order: 1 },
-	asphalt: { surface: 'roadway', color: '#3D3D3D', order: 2 },
-	concrete: { surface: 'roadway', color: '#5B5B54', order: 3 },
-	// Dormant in this slice: a flush painted buffer (hatch). No fixture
-	// produces it yet; its real hatched render lands in a later slice.
-	paint: { surface: 'roadway', color: '#C9C7BD', order: 4 },
-	curb: { surface: 'island', color: '#6E6E68', order: 5 }
+export const MATERIAL_COLOR: Record<LaneMaterial, string> = {
+	asphalt: '#3D3D3D',
+	concrete: '#5B5B54',
+	pavement: '#9A9A94',
+	grass: '#52A06B',
+	dirt: '#9C7F5A'
 };
 
-export const ROAD_LAYER_LIST = (Object.keys(ROAD_LAYER_SPECS) as RoadLayerId[]).sort(
-	(a, b) => ROAD_LAYER_SPECS[a].order - ROAD_LAYER_SPECS[b].order
-);
+const CLASS_ORDER: Record<'plate' | SurfaceClass, number> = {
+	plate: 0,
+	walkway: 1,
+	verge: 2,
+	roadway: 3,
+	island: 4
+};
 
-export function laneLayer(lane: { role: LaneRole; surface: LaneSurface }): RoadLayerId {
-	if (lane.role === 'pedestrian') return 'pavement';
-	return lane.surface;
+const MATERIAL_ORDER: Record<LaneMaterial, number> = {
+	asphalt: 0,
+	concrete: 1,
+	pavement: 2,
+	grass: 3,
+	dirt: 4
+};
+
+const LANE_MATERIALS: LaneMaterial[] = ['asphalt', 'concrete', 'pavement', 'grass', 'dirt'];
+const SURFACE_CLASSES: SurfaceClass[] = ['walkway', 'verge', 'roadway', 'island'];
+
+const roadLayers: RoadLayerId[] = ['plate'];
+for (const surfaceClass of SURFACE_CLASSES) {
+	for (const material of LANE_MATERIALS) {
+		roadLayers.push(`${surfaceClass}:${material}`);
+	}
 }
 
-export function laneSurface(layer: RoadLayerId): SurfaceClass {
-	return ROAD_LAYER_SPECS[layer].surface;
+export const ROAD_LAYER_LIST = roadLayers.sort((a, b) => {
+	const classDiff = layerClassOrder(a) - layerClassOrder(b);
+	if (classDiff !== 0) return classDiff;
+	return materialOrder(a) - materialOrder(b);
+});
+
+export function surfaceClassForLane(lane: { role: LaneRole; raised?: boolean }): SurfaceClass {
+	if (lane.role === 'vehicle') return 'roadway';
+	if (lane.role === 'pedestrian') return 'walkway';
+	return lane.raised ? 'island' : 'verge';
+}
+
+export function laneLayer(lane: {
+	role: LaneRole;
+	material: LaneMaterial;
+	raised?: boolean;
+}): LaneLayerId {
+	return `${surfaceClassForLane(lane)}:${lane.material}`;
+}
+
+export function surfaceClassOf(layer: RoadLayerId): SurfaceClass {
+	if (layer === 'plate') return 'walkway';
+	return layer.split(':')[0] as SurfaceClass;
 }
 
 export function isRoadway(layer: RoadLayerId): boolean {
-	return ROAD_LAYER_SPECS[layer].surface === 'roadway';
+	return surfaceClassOf(layer) === 'roadway';
 }
 
 // Islands and verges pool together when matching strips across a node: a
-// median can flow into a grass strip and vice versa.
+// raised median can flow into a flush buffer and vice versa.
 export function isIslandLike(layer: RoadLayerId): boolean {
-	const surface = ROAD_LAYER_SPECS[layer].surface;
-	return surface === 'island' || surface === 'verge';
+	const surfaceClass = surfaceClassOf(layer);
+	return surfaceClass === 'island' || surfaceClass === 'verge';
 }
 
 export function laneColor(layer: RoadLayerId): string {
-	return ROAD_LAYER_SPECS[layer].color;
+	if (layer === 'plate') return MATERIAL_COLOR.pavement;
+	return MATERIAL_COLOR[materialOf(layer)];
 }
 
-// Material-agnostic structural identity: road and concrete share a token (a
-// material change is a color seam, not a transition), while grass (verge) and
-// median (island) stay structurally distinct.
+// Material-agnostic structural identity: asphalt and concrete share a token
+// inside a class, while raised buffers change class and therefore structure.
 export function laneStructureToken(lane: Lane) {
-	return `${laneSurface(laneLayer(lane))}:${lane.direction}:${lane.width}`;
+	return `${surfaceClassForLane(lane)}:${lane.direction}:${lane.width}`;
 }
 
 export function lanesStructureKey(lanes: Lane[]) {
@@ -93,8 +118,24 @@ export function lanePaintBetween(a: Lane, b: Lane): LanePaint | null {
 	return { color: 'lane', dashed: true };
 }
 
-// Lane layers render between the ground plane and the interaction layers;
-// jitter between pieces stays well below the 0.01 step.
+// Lane layers render between the ground plane and the interaction layers.
+// Material sub-order spacing is larger than the per-piece jitter budget, so
+// same-class materials can overlap without z-fighting.
 export function laneLayerY(layer: RoadLayerId): number {
-	return 0.02 + ROAD_LAYER_SPECS[layer].order * 0.01;
+	if (layer === 'plate') return 0.02;
+	return 0.02 + CLASS_ORDER[surfaceClassOf(layer)] * 0.06 + materialOrder(layer) * 0.012;
+}
+
+function materialOf(layer: LaneLayerId): LaneMaterial {
+	return layer.split(':')[1] as LaneMaterial;
+}
+
+function materialOrder(layer: RoadLayerId): number {
+	if (layer === 'plate') return 0;
+	return MATERIAL_ORDER[materialOf(layer)];
+}
+
+function layerClassOrder(layer: RoadLayerId): number {
+	if (layer === 'plate') return CLASS_ORDER.plate;
+	return CLASS_ORDER[surfaceClassOf(layer)];
 }
