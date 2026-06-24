@@ -498,8 +498,9 @@ function morphSignature(graph: Graph, node: Node) {
 		const seg = graph.segments.get(segId);
 		if (!seg) continue;
 		const isStart = seg.startNodeId === node.id;
+		const setback = isStart ? seg.setbackStart : seg.setbackEnd;
 		const far = graph.nodes.get(isStart ? seg.endNodeId : seg.startNodeId);
-		sig += `|${segId}:${seg.lanesKey}:${isStart ? 's' : 'e'}:${seg.controlX ?? '_'},${seg.controlY ?? '_'}:${far?.x ?? '_'},${far?.y ?? '_'}`;
+		sig += `|${segId}:${seg.lanesKey}:${isStart ? 's' : 'e'}:${setback ?? '_'}:${seg.controlX ?? '_'},${seg.controlY ?? '_'}:${far?.x ?? '_'},${far?.y ?? '_'}`;
 	}
 	return sig;
 }
@@ -800,11 +801,37 @@ function paintBoundaryCompatible(self: PaintBoundary, target: PaintBoundary) {
 	return self.flow === target.flow && self.accessKey === target.accessKey;
 }
 
+function bufferBoundaryTarget(self: PaintBoundary, anchorLanes: Lane[]) {
+	const bounds = laneBoundaryOffsets(anchorLanes);
+	let best: { offset: number; distance: number } | null = null;
+	for (let j = 0; j + 1 < anchorLanes.length; j++) {
+		const leftSurface = surfaceClassOf(laneLayer(anchorLanes[j]));
+		const rightSurface = surfaceClassOf(laneLayer(anchorLanes[j + 1]));
+		const leftRoadway = leftSurface === 'roadway';
+		const rightRoadway = rightSurface === 'roadway';
+		const leftBuffer = leftSurface === 'island' || leftSurface === 'verge';
+		const rightBuffer = rightSurface === 'island' || rightSurface === 'verge';
+		if (!((leftRoadway && rightBuffer) || (leftBuffer && rightRoadway))) continue;
+
+		const offset = bounds[j + 1];
+		const distance = Math.abs(self.offset - offset);
+		if (
+			!best ||
+			distance < best.distance - 0.001 ||
+			(Math.abs(distance - best.distance) <= 0.001 && offset < best.offset)
+		) {
+			best = { offset, distance };
+		}
+	}
+	return best?.offset ?? null;
+}
+
 // Per-lane boundary targets at a transition: painted boundaries continue
-// only when the opposite cross-section has the same paint identity and
-// compatible flow/access. Everything else cuts at the morph zone, including
-// centre lines. On the anchor side, a match keeps the boundary at its own
-// offset; on the morphing side, it targets the matched anchor offset.
+// when the opposite cross-section has the same paint identity and compatible
+// flow/access. A boundary that dies into a median/verge gets that buffer edge
+// as its terminal target; everything else cuts at the morph zone. On the
+// anchor side, a match keeps the boundary at its own offset; on the morphing
+// side, it targets the matched anchor offset.
 function laneBoundaryTargets(
 	selfLanes: Lane[],
 	anchorLanes: Lane[],
@@ -837,6 +864,10 @@ function laneBoundaryTargets(
 		usedSelf.add(pair.self.index);
 		usedTarget.add(pair.target.index);
 		result[pair.self.index] = keepOwnOffsets ? pair.self.offset : pair.target.offset;
+	}
+	for (const self of selfBoundaries) {
+		if (!self || usedSelf.has(self.index)) continue;
+		result[self.index] = bufferBoundaryTarget(self, anchorLanes);
 	}
 	return result;
 }
@@ -1860,8 +1891,8 @@ function centerMedianBand(pair: CenterMedianPair) {
 		mouthB,
 		pair.b.into,
 		dirB,
-		pair.start,
-		pair.end
+		pair.start - BAND_PAD,
+		pair.end + BAND_PAD
 	);
 }
 
@@ -1884,8 +1915,8 @@ function centerMedianHalfBands(node: Node, pair: CenterMedianPair) {
 				center,
 				pair.b.into,
 				centerDir,
-				pair.start,
-				pair.end
+				pair.start - BAND_PAD,
+				pair.end + BAND_PAD
 			)
 		},
 		{
@@ -1897,8 +1928,8 @@ function centerMedianHalfBands(node: Node, pair: CenterMedianPair) {
 				center,
 				pair.a.into,
 				centerDir,
-				pair.start,
-				pair.end
+				pair.start - BAND_PAD,
+				pair.end + BAND_PAD
 			)
 		}
 	];
