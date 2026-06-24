@@ -10,7 +10,6 @@ import {
 	offsetPoint,
 	sampleTrimmedCenterline
 } from './road-geometry';
-import { laneSurface } from './lane-types';
 import { getTotalWidth } from './lane-template';
 
 // Minimum distance a connector dot sits out from its node, so the mouths of
@@ -53,10 +52,7 @@ export interface LaneConnection {
 // Only directional roadway lanes carry through a junction; sidewalks, grass,
 // medians and (bidirectional) parking are not movements.
 function isTravelLane(lane: Lane): boolean {
-	return (
-		laneSurface(lane.type) === 'roadway' &&
-		(lane.direction === 'forward' || lane.direction === 'backward')
-	);
+	return lane.role === 'vehicle' && (lane.direction === 'forward' || lane.direction === 'backward');
 }
 
 // The travel-lane endpoints at a node, one per directional roadway lane on

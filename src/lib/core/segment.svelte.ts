@@ -1,5 +1,5 @@
 import type { Lane, SegmentData } from './types';
-import { createLanesFrom, getTotalWidth, serializeLanes } from './lane-template';
+import { createLanesFrom, getTotalWidth, migrateLanes, serializeLanes } from './lane-template';
 
 export class Segment {
 	id: string;
@@ -58,7 +58,7 @@ export class Segment {
 	static fromJSON(data: SegmentData) {
 		const lanes =
 			data.lanes && data.lanes.length > 0
-				? data.lanes.map((lane) => ({ ...lane }))
+				? migrateLanes(data.lanes)
 				: createLanesFrom(data.laneTemplateId ?? 'street');
 		const segment = new Segment(data.id, data.startNodeId, data.endNodeId, lanes);
 		if (data.controlX !== undefined && data.controlY !== undefined) {

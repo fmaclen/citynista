@@ -153,10 +153,10 @@ const SCALE = 720 / 500;
 const toScreen = (x: number, y: number) => ({ x: 640 + x * SCALE, y: 360 + y * SCALE });
 
 interface SavedLane {
-	type: string;
+	role: string;
+	surface: string;
 	width: number;
 	direction: string;
-	turn?: string;
 	markings?: boolean;
 }
 
@@ -187,11 +187,18 @@ interface SavedGraph {
 	segments: SavedSegment[];
 }
 
+const EXPECTED_SEGMENT_0_LANES: SavedLane[] = [
+	{ role: 'pedestrian', surface: 'concrete', width: 2, direction: 'bidirectional' },
+	{ role: 'vehicle', surface: 'asphalt', width: 3, direction: 'backward' },
+	{ role: 'vehicle', surface: 'asphalt', width: 3, direction: 'forward', markings: false },
+	{ role: 'pedestrian', surface: 'concrete', width: 2, direction: 'bidirectional' }
+];
+
 const laneKey = (lanes: SavedLane[]) =>
 	lanes
 		.map(
 			(lane) =>
-				`${lane.type}:${lane.width}:${lane.direction}${lane.turn ? ':' + lane.turn : ''}${lane.markings === false ? ':nomark' : ''}`
+				`${lane.role}:${lane.surface}:${lane.width}:${lane.direction}${lane.markings === false ? ':nomark' : ''}`
 		)
 		.join(',');
 
@@ -285,7 +292,7 @@ test.describe('segment copy/paste', () => {
 		await selectSegment(page, -150, 80);
 		await page.keyboard.press('Meta+v');
 
-		const firstKey = laneKey(GRAPH_DATA.segments[0].lanes);
+		const firstKey = laneKey(EXPECTED_SEGMENT_0_LANES);
 		await expect
 			.poll(async () => {
 				const graph = await savedGraph(page);
@@ -296,7 +303,7 @@ test.describe('segment copy/paste', () => {
 
 		const graph = await savedGraph(page);
 		expect(graph?.segments.find((segment) => segment.id === 'segment-0')?.lanes).toEqual(
-			GRAPH_DATA.segments[0].lanes
+			EXPECTED_SEGMENT_0_LANES
 		);
 	});
 
@@ -328,7 +335,7 @@ test.describe('segment copy/paste', () => {
 			(segment) => !GRAPH_DATA.segments.some((s) => s.id === segment.id)
 		);
 		expect(clone).toBeDefined();
-		expect(clone!.lanes).toEqual(GRAPH_DATA.segments[0].lanes);
+		expect(clone!.lanes).toEqual(EXPECTED_SEGMENT_0_LANES);
 		expect(clone!.controlX!).toBeCloseTo(150, 0);
 		expect(clone!.controlY!).toBeCloseTo(-60, 0);
 

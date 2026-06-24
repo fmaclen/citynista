@@ -29,21 +29,21 @@ interface StripMorph {
 }
 import { getTotalWidth } from '../core/lane-template';
 import {
-	LANE_TYPE_LIST,
+	ROAD_LAYER_LIST,
 	laneColor,
 	laneLayerY,
 	lanePaintBetween,
 	laneSurface
 } from '../core/lane-types';
-import type { Lane, TurnMovement } from '../core/types';
+import type { Lane } from '../core/types';
 import { activeConnectionsAt, centerCrossedAt } from '../core/lane-connections';
 
 const LAYER_Y: Record<RoadLayerId, number> = Object.fromEntries(
-	LANE_TYPE_LIST.map((type) => [type, laneLayerY(type)])
+	ROAD_LAYER_LIST.map((layer) => [layer, laneLayerY(layer)])
 ) as Record<RoadLayerId, number>;
 
 const LAYER_COLORS: Record<RoadLayerId, string> = Object.fromEntries(
-	LANE_TYPE_LIST.map((type) => [type, laneColor(type)])
+	ROAD_LAYER_LIST.map((layer) => [layer, laneColor(layer)])
 ) as Record<RoadLayerId, string>;
 
 // Segment ribbons reach slightly into their node pieces so no hairline
@@ -98,10 +98,6 @@ const PAINT_END_INSET = 0.2;
 // How far short of a node the solid centre line stops when a movement crosses
 // it there — a gap wide enough to read as a break, not a dashed continuation.
 const CENTER_BREAK_INSET = 3.5;
-// A turn pocket's same-direction flank line holds back from the pocket's
-// open end — cars enter across the first stretch, so the paint starts
-// after it. The opposing-side line stays unbroken.
-const TURN_POCKET_ENTRANCE = 10;
 // Islands pinched below this width by a transition end square at the
 // threshold instead of riding to the seam as a sliver.
 const ISLAND_MIN_WIDTH = 0.8;
@@ -222,8 +218,6 @@ export class RoadRenderer {
 			const continuityJoinEnd = isContinuationNode(graph, endNode, segment.id);
 			const morphStart = transitionMorph(graph, startNode, segment.id);
 			const morphEnd = transitionMorph(graph, endNode, segment.id);
-			const turnSignStart = turnBranchSign(graph, startNode, segment, samples, true);
-			const turnSignEnd = turnBranchSign(graph, endNode, segment, samples, false);
 			const trim = trims.get(segment.id);
 
 			const key = `segment:${segment.id}`;
@@ -247,8 +241,6 @@ export class RoadRenderer {
 				continuityJoinEnd,
 				morphStart?.key ?? '-',
 				morphEnd?.key ?? '-',
-				turnSignStart,
-				turnSignEnd,
 				centerBreakStart,
 				centerBreakEnd
 			].join('|');
@@ -266,8 +258,6 @@ export class RoadRenderer {
 				continuityJoinEnd,
 				morphStart,
 				morphEnd,
-				turnSignStart,
-				turnSignEnd,
 				centerBreakStart,
 				centerBreakEnd,
 				this.jitterFor(key)
@@ -315,9 +305,7 @@ export class RoadRenderer {
 				const isStart = segment.startNodeId === node.id;
 				const stop = isStart ? samples[0] : samples[samples.length - 1];
 				const inner = isStart ? samples[1] : samples[samples.length - 2];
-				parts.push(
-					`${segmentId}:${segment.lanesKey}:${stop.x},${stop.y},${inner.x},${inner.y}`
-				);
+				parts.push(`${segmentId}:${segment.lanesKey}:${stop.x},${stop.y},${inner.x},${inner.y}`);
 			}
 			const hash = parts.join('|');
 
@@ -326,10 +314,12 @@ export class RoadRenderer {
 
 			this.removePiece(key);
 			const jitterValue = this.jitterFor(key);
-			const crossingConnectors = activeConnectionsAt(graph, node, centerlines).map((connection) => ({
-				a: connection.fromPoint,
-				b: connection.toPoint
-			}));
+			const crossingConnectors = activeConnectionsAt(graph, node, centerlines).map(
+				(connection) => ({
+					a: connection.fromPoint,
+					b: connection.toPoint
+				})
+			);
 			const group = this.buildLayerGroup(
 				buildNodeLayers(graph, node, centerlines, crossingConnectors),
 				jitterValue
@@ -367,8 +357,6 @@ export class RoadRenderer {
 		continuityJoinEnd: boolean,
 		morphStart: TransitionMorph | null,
 		morphEnd: TransitionMorph | null,
-		turnSignStart: number,
-		turnSignEnd: number,
 		centerBreakStart: boolean,
 		centerBreakEnd: boolean,
 		jitter: number
@@ -394,10 +382,10 @@ export class RoadRenderer {
 			lengthEnd *= scale;
 		}
 
-		// Full-width pavement plate rendered as the sidewalk layer; the lane
+		// Full-width pavement plate rendered as the pavement layer; the lane
 		// strips above carve out the visible sidewalk edges.
 		group.add(
-			this.buildStrip(samples, -halfWidth, halfWidth, 'sidewalk', startExt, endExt, jitter, {
+			this.buildStrip(samples, -halfWidth, halfWidth, 'pavement', startExt, endExt, jitter, {
 				start: morphStart
 					? { length: lengthStart, offsetA: -morphStart.halfWidth, offsetB: morphStart.halfWidth }
 					: undefined,
@@ -434,8 +422,8 @@ export class RoadRenderer {
 				// At transition seams both ribbons arrive at the anchor's
 				// offsets vertex-for-vertex, so a road stub hides inside the
 				// counterpart's roadway exactly like at continuations.
-				const stubSafeStart = continuityJoinStart || interval.laneType === 'road';
-				const stubSafeEnd = continuityJoinEnd || interval.laneType === 'road';
+				const stubSafeStart = continuityJoinStart || interval.laneType === 'asphalt';
+				const stubSafeEnd = continuityJoinEnd || interval.laneType === 'asphalt';
 				group.add(
 					this.buildStrip(
 						samples,
@@ -535,8 +523,6 @@ export class RoadRenderer {
 			lengthEnd,
 			continuityJoinStart,
 			continuityJoinEnd,
-			turnSignStart,
-			turnSignEnd,
 			centerBreakStart,
 			centerBreakEnd,
 			jitter
@@ -563,8 +549,6 @@ export class RoadRenderer {
 		lengthEnd: number,
 		continuityJoinStart: boolean,
 		continuityJoinEnd: boolean,
-		turnSignStart: number,
-		turnSignEnd: number,
 		centerBreakStart: boolean,
 		centerBreakEnd: boolean,
 		jitter: number
@@ -601,22 +585,6 @@ export class RoadRenderer {
 			let to = total - (continuityJoinEnd || morphEnd ? 0 : PAINT_END_INSET);
 			if (morphStart && startTarget == null) from = Math.max(from, lengthStart);
 			if (morphEnd && endTarget == null) to = Math.min(to, total - lengthEnd);
-
-			// The pocket's entrance is the transition end where it emerges
-			// from the median; the flank line starts after the entire taper
-			// plus the entrance stretch, so it is dead straight — never
-			// curved. Same-key continuations are untouched so chained
-			// pockets stay sealed.
-			const turnFlank =
-				paint.color === 'lane' && (lanes[k].type === 'turn' || lanes[k + 1].type === 'turn');
-			if (turnFlank) {
-				if (morphStart && startTarget != null) {
-					from = Math.max(from, lengthStart + TURN_POCKET_ENTRANCE);
-				}
-				if (morphEnd && endTarget != null) {
-					to = Math.min(to, total - lengthEnd - TURN_POCKET_ENTRANCE);
-				}
-			}
 
 			// The solid centre line stops short of a node where a movement crosses
 			// it (a slip/turn/U-turn opening the carriageway) so it breaks there
@@ -696,156 +664,6 @@ export class RoadRenderer {
 				previous = p2;
 				d = end + gap;
 			}
-		}
-
-		// Turn arrows: repeated glyphs along each turn pocket, bending toward
-		// the carriageway center, placed from the junction end inward.
-		const sampleAt = (d: number) => {
-			let i = 1;
-			while (i < cumulative.length - 1 && cumulative[i] < d) i++;
-			const span = cumulative[i] - cumulative[i - 1];
-			const t = span > 0.0001 ? (d - cumulative[i - 1]) / span : 0;
-			const a = samples[i - 1];
-			const b = samples[i];
-			let nx = a.normalX + (b.normalX - a.normalX) * t;
-			let ny = a.normalY + (b.normalY - a.normalY) * t;
-			const nl = Math.hypot(nx, ny);
-			if (nl > 0.0001) {
-				nx /= nl;
-				ny /= nl;
-			}
-			const dx = b.x - a.x;
-			const dy = b.y - a.y;
-			const dl = Math.hypot(dx, dy);
-			return {
-				x: a.x + dx * t,
-				z: a.y + dy * t,
-				tx: dl > 0.0001 ? dx / dl : 1,
-				ty: dl > 0.0001 ? dy / dl : 0,
-				nx,
-				ny
-			};
-		};
-
-		const drawArrow = (
-			d: number,
-			offset: number,
-			travelSign: number,
-			bendSign: number,
-			forcedTurn?: TurnMovement
-		) => {
-			const p = sampleAt(d);
-			const tx = p.tx * travelSign;
-			const ty = p.ty * travelSign;
-			// An explicit turn movement points the glyph relative to travel
-			// (left or right of the driver); otherwise the glyph bends toward
-			// the branch at the pocket's junction (the sign comes from the
-			// actual topology), and without one falls back to the driver's left.
-			let bx: number;
-			let by: number;
-			if (forcedTurn === 'left') {
-				bx = ty;
-				by = -tx;
-			} else if (forcedTurn === 'right') {
-				bx = -ty;
-				by = tx;
-			} else {
-				bx = bendSign !== 0 ? p.nx * bendSign : ty;
-				by = bendSign !== 0 ? p.ny * bendSign : -tx;
-			}
-			// The bend carries the glyph's mass sideways; shifting the stem
-			// the other way centers the whole glyph in the lane.
-			const baseX = p.x + p.nx * offset - bx * 0.9;
-			const baseZ = p.z + p.ny * offset - by * 0.9;
-			const target = positions.lane;
-			const w = 0.18;
-
-			const quad = (
-				ax: number,
-				az: number,
-				bx2: number,
-				bz2: number,
-				sideX: number,
-				sideY: number
-			) => {
-				target.push(
-					ax - sideX * w,
-					0,
-					az - sideY * w,
-					ax + sideX * w,
-					0,
-					az + sideY * w,
-					bx2 - sideX * w,
-					0,
-					bz2 - sideY * w,
-					ax + sideX * w,
-					0,
-					az + sideY * w,
-					bx2 + sideX * w,
-					0,
-					bz2 + sideY * w,
-					bx2 - sideX * w,
-					0,
-					bz2 - sideY * w
-				);
-			};
-
-			// Stem along travel, elbow toward the turn, arrowhead at the tip.
-			const stemTailX = baseX - tx * 1.7;
-			const stemTailZ = baseZ - ty * 1.7;
-			const elbowX = baseX + tx * 0.7;
-			const elbowZ = baseZ + ty * 0.7;
-			quad(stemTailX, stemTailZ, elbowX, elbowZ, p.nx, p.ny);
-			const tipX = elbowX + bx * 1.0;
-			const tipZ = elbowZ + by * 1.0;
-			quad(elbowX, elbowZ, tipX, tipZ, tx, ty);
-			// Fill the outer corner of the elbow, where the two stroke
-			// rectangles would otherwise leave a notch.
-			quad(elbowX - bx * w, elbowZ - by * w, elbowX + bx * w, elbowZ + by * w, tx, ty);
-			target.push(
-				tipX + bx * 0.85,
-				0,
-				tipZ + by * 0.85,
-				tipX + tx * 0.55,
-				0,
-				tipZ + ty * 0.55,
-				tipX - tx * 0.55,
-				0,
-				tipZ - ty * 0.55
-			);
-		};
-
-		let laneStart = -halfWidth;
-		for (const lane of lanes) {
-			const laneEnd = laneStart + lane.width;
-			if (lane.type === 'turn' && lane.markings !== false) {
-				const center = (laneStart + laneEnd) / 2;
-				const travelSign = lane.direction === 'backward' ? -1 : 1;
-				const usableFrom = (morphStart ? lengthStart : 0) + 4;
-				const usableTo = total - (morphEnd ? lengthEnd : 0) - 4;
-				if (usableTo - usableFrom > 3) {
-					const spots: { d: number; bend: number }[] = [];
-					if (morphStart && !morphEnd) {
-						spots.push(
-							{ d: usableTo - 1, bend: turnSignEnd },
-							{ d: usableTo - 9, bend: turnSignEnd }
-						);
-					} else if (morphEnd && !morphStart) {
-						spots.push(
-							{ d: usableFrom + 1, bend: turnSignStart },
-							{ d: usableFrom + 9, bend: turnSignStart }
-						);
-					} else {
-						spots.push({ d: (usableFrom + usableTo) / 2, bend: turnSignEnd || turnSignStart });
-					}
-					for (const { d, bend } of spots) {
-						if (d >= usableFrom && d <= usableTo) {
-							drawArrow(d, center, travelSign, bend, lane.turn);
-						}
-					}
-				}
-			}
-			laneStart = laneEnd;
 		}
 
 		return this.paintMeshes(positions, jitter);
@@ -1144,44 +962,6 @@ export class RoadRenderer {
 		this.paintMaterials.clear();
 		this.scene.remove(this.rootGroup);
 	}
-}
-
-// Which side of the segment the branching roads sit on at this node, as a
-// sign on the centerline normal: turn arrows bend toward the branch. The
-// continuation arm is nearly collinear and contributes ~nothing; zero
-// means no branch (or perfectly balanced ones).
-function turnBranchSign(
-	graph: Graph,
-	node: { id: string; x: number; y: number; connectedSegments: string[] },
-	segment: { id: string },
-	samples: CenterlineSample[],
-	atStart: boolean
-): number {
-	const stop = atStart ? samples[0] : samples[samples.length - 1];
-	const inner = atStart ? samples[1] : samples[samples.length - 2];
-	let tx = atStart ? inner.x - stop.x : stop.x - inner.x;
-	let ty = atStart ? inner.y - stop.y : stop.y - inner.y;
-	const tl = Math.hypot(tx, ty);
-	if (tl < 0.0001) return 0;
-	tx /= tl;
-	ty /= tl;
-
-	let sum = 0;
-	for (const otherId of node.connectedSegments) {
-		if (otherId === segment.id) continue;
-		const other = graph.segments.get(otherId);
-		if (!other || !other.lanes.some((lane) => laneSurface(lane.type) === 'roadway')) continue;
-		const farId = other.startNodeId === node.id ? other.endNodeId : other.startNodeId;
-		const far = graph.nodes.get(farId);
-		if (!far) continue;
-		const vx = far.x - node.x;
-		const vy = far.y - node.y;
-		const vl = Math.hypot(vx, vy);
-		if (vl < 0.0001) continue;
-		sum += (tx * vy - ty * vx) / vl;
-	}
-	if (Math.abs(sum) < 0.2) return 0;
-	return Math.sign(sum);
 }
 
 // Materials are shared per layer, so only geometries are disposed here.

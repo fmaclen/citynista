@@ -1,4 +1,20 @@
-export type LaneType =
+export type LaneRole = 'vehicle' | 'pedestrian' | 'buffer';
+export type LaneSurface = 'asphalt' | 'concrete' | 'grass' | 'curb' | 'paint';
+export type LaneDirection = 'forward' | 'backward' | 'bidirectional';
+
+export interface Lane {
+	role: LaneRole;
+	surface: LaneSurface;
+	width: number;
+	// Direction of travel; only meaningful for vehicle lanes (others are bidirectional).
+	direction: LaneDirection;
+	// Omitted (and defaulted true) unless this lane's markings are disabled.
+	markings?: boolean;
+}
+
+// The legacy on-disk lane shape, accepted for migration on load. Old saves used
+// `type` (+ optional `turn`); new saves write `role` + `surface`.
+export type LegacyLaneType =
 	| 'road'
 	| 'concrete'
 	| 'bike'
@@ -8,19 +24,14 @@ export type LaneType =
 	| 'sidewalk'
 	| 'grass'
 	| 'median';
-export type LaneDirection = 'forward' | 'backward' | 'bidirectional';
 
-export type TurnMovement = 'left' | 'right';
-
-export interface Lane {
-	type: LaneType;
+export interface StoredLane {
+	type?: LegacyLaneType;
+	turn?: 'left' | 'right';
+	role?: LaneRole;
+	surface?: LaneSurface;
 	width: number;
 	direction: LaneDirection;
-	// Which way a turn lane's arrow points, independent of the flow direction.
-	// Absent falls back to the junction-derived bend.
-	turn?: TurnMovement;
-	// Omitted (and defaulted true) unless this lane's markings are disabled.
-	// A boundary line is painted only where both adjacent lanes are marked.
 	markings?: boolean;
 }
 
@@ -59,7 +70,7 @@ export interface SegmentData {
 	endNodeId: string;
 	controlX?: number;
 	controlY?: number;
-	lanes?: Lane[];
+	lanes?: StoredLane[];
 	// Manual per-end setback overrides (distance pulled back from each node).
 	setbackStart?: number;
 	setbackEnd?: number;

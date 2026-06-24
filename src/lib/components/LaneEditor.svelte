@@ -1,27 +1,16 @@
 <script lang="ts">
 	import { getEditorContext } from '$lib/editor.svelte';
 	import {
-		LANE_COLORS,
 		LANE_TEMPLATES,
 		createLanesFrom,
-		getTotalWidth
+		getTotalWidth,
+		laneSwatchColor
 	} from '$lib/core/lane-template';
-	import { LANE_TYPE_LIST, LANE_TYPE_SPECS, isRoadway } from '$lib/core/lane-types';
-	import type { LaneType } from '$lib/core/types';
+	import type { LaneRole, LaneSurface } from '$lib/core/types';
 	import * as Select from '$lib/components/ui/select';
 	import { Button } from '$lib/components/ui/button';
 	import { Input } from '$lib/components/ui/input';
-	import {
-		ArrowLeft,
-		ArrowRight,
-		CornerUpLeft,
-		CornerUpRight,
-		Equal,
-		GripVertical,
-		Plus,
-		Trash2,
-		X
-	} from '@lucide/svelte';
+	import { ArrowLeft, ArrowRight, Equal, GripVertical, Plus, Trash2, X } from '@lucide/svelte';
 
 	const editor = getEditorContext();
 
@@ -37,10 +26,23 @@
 	);
 	const lanes = $derived(uniform ? segments[0].lanes : []);
 
-	const LANE_TYPES: { value: LaneType; label: string }[] = LANE_TYPE_LIST.map((value) => ({
-		value,
-		label: LANE_TYPE_SPECS[value].label
-	}));
+	const ROLE_OPTIONS: { value: LaneRole; label: string }[] = [
+		{ value: 'vehicle', label: 'Vehicle' },
+		{ value: 'pedestrian', label: 'Pedestrian' },
+		{ value: 'buffer', label: 'Buffer' }
+	];
+
+	const MATERIAL_OPTIONS: Record<LaneRole, { value: LaneSurface; label: string }[]> = {
+		vehicle: [
+			{ value: 'asphalt', label: 'Asphalt' },
+			{ value: 'concrete', label: 'Concrete' }
+		],
+		pedestrian: [{ value: 'concrete', label: 'Concrete' }],
+		buffer: [
+			{ value: 'grass', label: 'Grass' },
+			{ value: 'curb', label: 'Median' }
+		]
+	};
 
 	const MIN_LANE_WIDTH = 0.5;
 	const MAX_LANE_WIDTH = 30;
@@ -51,28 +53,32 @@
 		editor.graph.save();
 	}
 
-	function setType(index: number, value: string) {
-		const option = LANE_TYPES.find((o) => o.value === value);
+	function setRole(index: number, value: string) {
+		const option = ROLE_OPTIONS.find((o) => o.value === value);
 		if (!option) return;
-		if (lanes[index]?.type === option.value) return;
+		if (lanes[index]?.role === option.value) return;
+		const materialOptions = MATERIAL_OPTIONS[option.value];
 
 		for (const segment of segments) {
 			const lane = segment.lanes[index];
-			lane.type = option.value;
-			lane.direction = LANE_TYPE_SPECS[option.value].directional ? 'forward' : 'bidirectional';
-			if (option.value === 'turn') {
-				lane.turn ??= 'left';
-			} else {
-				delete lane.turn;
+			lane.role = option.value;
+			if (!materialOptions.some((material) => material.value === lane.surface)) {
+				lane.surface = materialOptions[0].value;
 			}
+			lane.direction = option.value === 'vehicle' ? 'forward' : 'bidirectional';
 		}
 		commit();
 	}
 
-	function flipTurn(index: number) {
-		const turn = lanes[index]?.turn === 'right' ? 'left' : 'right';
+	function setSurface(index: number, value: string) {
+		const lane = lanes[index];
+		if (!lane) return;
+		const option = MATERIAL_OPTIONS[lane.role].find((o) => o.value === value);
+		if (!option) return;
+		if (lane.surface === option.value) return;
+
 		for (const segment of segments) {
-			segment.lanes[index].turn = turn;
+			segment.lanes[index].surface = option.value;
 		}
 		commit();
 	}
@@ -133,7 +139,7 @@
 
 	function addLane() {
 		for (const segment of segments) {
-			segment.lanes.push({ type: 'road', width: 3, direction: 'forward' });
+			segment.lanes.push({ role: 'vehicle', surface: 'asphalt', width: 3, direction: 'forward' });
 		}
 		commit();
 	}
@@ -160,7 +166,7 @@
 
 {#if segments.length > 0}
 	<aside
-		class="fixed top-4 right-4 z-40 flex max-h-[calc(100vh-2rem)] w-96 flex-col gap-3 overflow-y-auto rounded-lg border bg-background p-4 shadow-lg"
+		class="fixed top-4 right-4 z-40 flex max-h-[calc(100vh-2rem)] w-fit max-w-[calc(100vw-2rem)] flex-col gap-3 overflow-y-auto rounded-lg border bg-background p-4 shadow-lg"
 	>
 		<div class="flex items-center justify-between">
 			<div>
@@ -192,19 +198,21 @@
 				{#each lanes as lane, i (i)}
 					<div
 						class="flex h-full items-center justify-center overflow-hidden text-[10px] text-white/60"
-						style="width: {(lane.width / totalWidth) * 100}%; background-color: {LANE_COLORS[
-							lane.type
-						]};"
+						style="width: {(lane.width / totalWidth) * 100}%; background-color: {laneSwatchColor(
+							lane
+						)};"
 					>
 						{lane.width}
 					</div>
 				{/each}
 			</div>
 
-			<div class="flex flex-col gap-1.5">
+			<div class="grid grid-cols-[auto_auto_auto_auto_auto_auto_auto_auto] gap-x-1 gap-y-1.5">
 				{#each lanes as lane, i (i)}
 					<div
-						class="flex items-center gap-1 rounded {dragIndex === i ? 'bg-muted opacity-60' : ''}"
+						class="col-span-full grid grid-cols-subgrid items-center rounded {dragIndex === i
+							? 'bg-muted opacity-60'
+							: ''}"
 						role="listitem"
 						ondragover={(e) => dragOverRow(e, i)}
 					>
@@ -221,15 +229,26 @@
 
 						<div
 							class="h-6 w-3 shrink-0 rounded-sm"
-							style="background-color: {LANE_COLORS[lane.type]};"
+							style="background-color: {laneSwatchColor(lane)};"
 						></div>
 
-						<Select.Root type="single" value={lane.type} onValueChange={(v) => setType(i, v)}>
-							<Select.Trigger class="w-26" size="sm">
-								{LANE_TYPES.find((o) => o.value === lane.type)?.label}
+						<Select.Root type="single" value={lane.role} onValueChange={(v) => setRole(i, v)}>
+							<Select.Trigger class="w-full" size="sm">
+								{ROLE_OPTIONS.find((o) => o.value === lane.role)?.label}
 							</Select.Trigger>
 							<Select.Content>
-								{#each LANE_TYPES as option (option.value)}
+								{#each ROLE_OPTIONS as option (option.value)}
+									<Select.Item value={option.value} label={option.label} />
+								{/each}
+							</Select.Content>
+						</Select.Root>
+
+						<Select.Root type="single" value={lane.surface} onValueChange={(v) => setSurface(i, v)}>
+							<Select.Trigger class="w-full" size="sm">
+								{MATERIAL_OPTIONS[lane.role].find((o) => o.value === lane.surface)?.label}
+							</Select.Trigger>
+							<Select.Content>
+								{#each MATERIAL_OPTIONS[lane.role] as option (option.value)}
 									<Select.Item value={option.value} label={option.label} />
 								{/each}
 							</Select.Content>
@@ -245,7 +264,7 @@
 							onchange={(e) => setWidth(i, e.currentTarget.value)}
 						/>
 
-						{#if LANE_TYPE_SPECS[lane.type].directional}
+						{#if lane.role === 'vehicle'}
 							<Button
 								variant="ghost"
 								size="icon"
@@ -263,7 +282,7 @@
 							<div class="h-7 w-7 shrink-0"></div>
 						{/if}
 
-						{#if isRoadway(lane.type)}
+						{#if lane.role === 'vehicle'}
 							<Button
 								variant="ghost"
 								size="icon"
@@ -272,24 +291,6 @@
 								title="Lane markings"
 							>
 								<Equal class="h-4 w-4" />
-							</Button>
-						{:else}
-							<div class="h-7 w-7 shrink-0"></div>
-						{/if}
-
-						{#if lane.type === 'turn'}
-							<Button
-								variant="ghost"
-								size="icon"
-								class="h-7 w-7 shrink-0"
-								onclick={() => flipTurn(i)}
-								title="Turn direction"
-							>
-								{#if lane.turn === 'right'}
-									<CornerUpRight class="h-4 w-4" />
-								{:else}
-									<CornerUpLeft class="h-4 w-4" />
-								{/if}
 							</Button>
 						{:else}
 							<div class="h-7 w-7 shrink-0"></div>

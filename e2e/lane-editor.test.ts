@@ -71,7 +71,12 @@ test.describe('Lane Editor', () => {
 		expect(segments).toHaveLength(2);
 		const edited = segments.find((s: { id: string }) => s.id === 'segment-0');
 		expect(edited.lanes).toHaveLength(4);
-		expect(edited.lanes[0]).toEqual({ type: 'sidewalk', width: 5, direction: 'bidirectional' });
+		expect(edited.lanes[0]).toEqual({
+			role: 'pedestrian',
+			surface: 'concrete',
+			width: 5,
+			direction: 'bidirectional'
+		});
 		expect(edited.laneTemplateId).toBeUndefined();
 	});
 
@@ -106,11 +111,11 @@ test.describe('Lane Editor', () => {
 
 		const segments = await readSavedSegments(page);
 		const edited = segments.find((s: { id: string }) => s.id === 'segment-0');
-		expect(edited.lanes.map((lane: { type: string }) => lane.type)).toEqual([
-			'road',
-			'sidewalk',
-			'road',
-			'sidewalk'
+		expect(edited.lanes.map((lane: { surface: string }) => lane.surface)).toEqual([
+			'asphalt',
+			'concrete',
+			'asphalt',
+			'concrete'
 		]);
 	});
 
@@ -144,12 +149,18 @@ test.describe('Lane Editor', () => {
 		expect(segments).toHaveLength(2);
 		for (const segment of segments) {
 			expect(segment.lanes).toHaveLength(4);
-			expect(segment.lanes[0]).toEqual({ type: 'sidewalk', width: 6, direction: 'bidirectional' });
+			expect(segment.lanes[0]).toEqual({
+				role: 'pedestrian',
+				surface: 'concrete',
+				width: 6,
+				direction: 'bidirectional'
+			});
 		}
 
 		// Shift+click on a selected segment removes it from the selection —
-		// away from the midpoint, which is the control-point handle.
-		await canvas.click({ position: toScreen(150, 0), modifiers: ['Shift'] });
+		// away from the midpoint (the control-point handle) and clear of the
+		// lane panel, which overlays the right edge of the canvas.
+		await canvas.click({ position: toScreen(50, 0), modifiers: ['Shift'] });
 		await expect(panel.getByText('Left to right along the drawing direction')).toBeVisible();
 	});
 

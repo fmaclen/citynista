@@ -36,16 +36,16 @@ test.describe('Preset Hotbar', () => {
 		}, STORAGE_KEY);
 
 		expect(segments).toHaveLength(1);
-		// Highway: 3 road lanes, median, 3 road lanes.
+		// Highway: 3 asphalt lanes, curb median, 3 asphalt lanes.
 		expect(segments[0].lanes).toHaveLength(7);
-		expect(segments[0].lanes.map((lane: { type: string }) => lane.type)).toEqual([
-			'road',
-			'road',
-			'road',
-			'median',
-			'road',
-			'road',
-			'road'
+		expect(segments[0].lanes.map((lane: { surface: string }) => lane.surface)).toEqual([
+			'asphalt',
+			'asphalt',
+			'asphalt',
+			'curb',
+			'asphalt',
+			'asphalt',
+			'asphalt'
 		]);
 
 		// Escape once cancels the pending segment, twice leaves draw mode.

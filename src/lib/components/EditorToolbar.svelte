@@ -1,7 +1,8 @@
 <script lang="ts">
 	import { getEditorContext } from '$lib/editor.svelte';
 	import type { DrawStyle } from '$lib/modes/types';
-	import { LANE_COLORS, LANE_TEMPLATES, getTotalWidth } from '$lib/core/lane-template';
+	import { LANE_TEMPLATES, getTotalWidth, laneSwatchColor } from '$lib/core/lane-template';
+	import { laneColor } from '$lib/core/lane-types';
 	import { Button } from '$lib/components/ui/button';
 	import {
 		Combine,
@@ -84,7 +85,7 @@
 				class="relative h-10 w-10 shrink-0 overflow-hidden rounded-md border-2 transition-colors {active
 					? 'border-foreground'
 					: 'border-border hover:border-muted-foreground'}"
-				style="background-color: {LANE_COLORS.grass};"
+				style="background-color: {laneColor('grass')};"
 				aria-label={template.name}
 				aria-pressed={active}
 				title="Draw {template.name} — {totalWidth}m (key {i + 1})"
@@ -97,9 +98,9 @@
 					{#each template.lanes as lane, j (j)}
 						<div
 							class="h-full"
-							style="width: {(lane.width / totalWidth) * 100}%; background-color: {LANE_COLORS[
-								lane.type
-							]};"
+							style="width: {(lane.width / totalWidth) * 100}%; background-color: {laneSwatchColor(
+								lane
+							)};"
 						></div>
 					{/each}
 				</div>

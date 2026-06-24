@@ -1,9 +1,16 @@
-import type { Lane, LaneTemplate, LaneType } from './types';
-import { LANE_TYPE_SPECS } from './lane-types';
+import type {
+	Lane,
+	LaneRole,
+	LaneSurface,
+	LaneTemplate,
+	LegacyLaneType,
+	StoredLane
+} from './types';
+import { laneColor, laneLayer } from './lane-types';
 
-export const LANE_COLORS = Object.fromEntries(
-	Object.entries(LANE_TYPE_SPECS).map(([type, spec]) => [type, spec.color])
-) as Record<LaneType, string>;
+export function laneSwatchColor(lane: { role: LaneRole; surface: LaneSurface }) {
+	return laneColor(laneLayer(lane));
+}
 
 // Templates are presets: drawing (or applying one in the lane editor) copies
 // its lanes onto the segment, which owns them from then on.
@@ -12,44 +19,44 @@ export const LANE_TEMPLATES: LaneTemplate[] = [
 		id: 'street',
 		name: 'Street',
 		lanes: [
-			{ type: 'sidewalk', width: 2, direction: 'bidirectional' },
-			{ type: 'road', width: 3, direction: 'backward' },
-			{ type: 'road', width: 3, direction: 'forward' },
-			{ type: 'sidewalk', width: 2, direction: 'bidirectional' }
+			{ role: 'pedestrian', surface: 'concrete', width: 2, direction: 'bidirectional' },
+			{ role: 'vehicle', surface: 'asphalt', width: 3, direction: 'backward' },
+			{ role: 'vehicle', surface: 'asphalt', width: 3, direction: 'forward' },
+			{ role: 'pedestrian', surface: 'concrete', width: 2, direction: 'bidirectional' }
 		]
 	},
 	{
 		id: 'avenue',
 		name: 'Avenue',
 		lanes: [
-			{ type: 'sidewalk', width: 3, direction: 'bidirectional' },
-			{ type: 'grass', width: 1, direction: 'bidirectional' },
-			{ type: 'road', width: 3.5, direction: 'backward' },
-			{ type: 'road', width: 3.5, direction: 'backward' },
-			{ type: 'median', width: 2, direction: 'bidirectional' },
-			{ type: 'road', width: 3.5, direction: 'forward' },
-			{ type: 'road', width: 3.5, direction: 'forward' },
-			{ type: 'grass', width: 1, direction: 'bidirectional' },
-			{ type: 'sidewalk', width: 3, direction: 'bidirectional' }
+			{ role: 'pedestrian', surface: 'concrete', width: 3, direction: 'bidirectional' },
+			{ role: 'buffer', surface: 'grass', width: 1, direction: 'bidirectional' },
+			{ role: 'vehicle', surface: 'asphalt', width: 3.5, direction: 'backward' },
+			{ role: 'vehicle', surface: 'asphalt', width: 3.5, direction: 'backward' },
+			{ role: 'buffer', surface: 'curb', width: 2, direction: 'bidirectional' },
+			{ role: 'vehicle', surface: 'asphalt', width: 3.5, direction: 'forward' },
+			{ role: 'vehicle', surface: 'asphalt', width: 3.5, direction: 'forward' },
+			{ role: 'buffer', surface: 'grass', width: 1, direction: 'bidirectional' },
+			{ role: 'pedestrian', surface: 'concrete', width: 3, direction: 'bidirectional' }
 		]
 	},
 	{
 		id: 'highway',
 		name: 'Highway',
 		lanes: [
-			{ type: 'road', width: 3.5, direction: 'backward' },
-			{ type: 'road', width: 3.5, direction: 'backward' },
-			{ type: 'road', width: 3.5, direction: 'backward' },
-			{ type: 'median', width: 3, direction: 'bidirectional' },
-			{ type: 'road', width: 3.5, direction: 'forward' },
-			{ type: 'road', width: 3.5, direction: 'forward' },
-			{ type: 'road', width: 3.5, direction: 'forward' }
+			{ role: 'vehicle', surface: 'asphalt', width: 3.5, direction: 'backward' },
+			{ role: 'vehicle', surface: 'asphalt', width: 3.5, direction: 'backward' },
+			{ role: 'vehicle', surface: 'asphalt', width: 3.5, direction: 'backward' },
+			{ role: 'buffer', surface: 'curb', width: 3, direction: 'bidirectional' },
+			{ role: 'vehicle', surface: 'asphalt', width: 3.5, direction: 'forward' },
+			{ role: 'vehicle', surface: 'asphalt', width: 3.5, direction: 'forward' },
+			{ role: 'vehicle', surface: 'asphalt', width: 3.5, direction: 'forward' }
 		]
 	},
 	{
 		id: 'path',
 		name: 'Path',
-		lanes: [{ type: 'sidewalk', width: 2, direction: 'bidirectional' }]
+		lanes: [{ role: 'pedestrian', surface: 'concrete', width: 2, direction: 'bidirectional' }]
 	}
 ];
 
@@ -74,9 +81,42 @@ export function serializeLanes(lanes: Lane[]): string {
 	return lanes
 		.map(
 			(lane) =>
-				`${lane.type}:${lane.width}:${lane.direction}${lane.turn ? ':' + lane.turn : ''}${lane.markings === false ? ':nomark' : ''}`
+				`${lane.role}:${lane.surface}:${lane.width}:${lane.direction}${lane.markings === false ? ':nomark' : ''}`
 		)
 		.join(',');
+}
+
+const LEGACY_TYPE_MAP: Record<LegacyLaneType, { role: LaneRole; surface: LaneSurface }> = {
+	road: { role: 'vehicle', surface: 'asphalt' },
+	concrete: { role: 'vehicle', surface: 'concrete' },
+	bike: { role: 'vehicle', surface: 'asphalt' },
+	parking: { role: 'vehicle', surface: 'asphalt' },
+	transit: { role: 'vehicle', surface: 'asphalt' },
+	turn: { role: 'vehicle', surface: 'asphalt' },
+	sidewalk: { role: 'pedestrian', surface: 'concrete' },
+	grass: { role: 'buffer', surface: 'grass' },
+	median: { role: 'buffer', surface: 'curb' }
+};
+
+export function migrateLane(stored: StoredLane): Lane {
+	const base =
+		stored.role && stored.surface
+			? { role: stored.role, surface: stored.surface }
+			: stored.type
+				? LEGACY_TYPE_MAP[stored.type]
+				: { role: 'vehicle' as const, surface: 'asphalt' as const };
+	const lane: Lane = {
+		role: base.role,
+		surface: base.surface,
+		width: stored.width,
+		direction: base.role === 'vehicle' ? stored.direction : 'bidirectional'
+	};
+	if (stored.markings === false) lane.markings = false;
+	return lane;
+}
+
+export function migrateLanes(stored: StoredLane[]): Lane[] {
+	return stored.map(migrateLane);
 }
 
 // The same cross-section read end-to-end the other way: lane order reverses and
