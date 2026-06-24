@@ -158,19 +158,7 @@
 			<Scissors class="h-4 w-4" />
 		</Button>
 
-		<Button
-			variant={editor.mode === 'bulldoze' ? 'default' : 'ghost'}
-			size="icon"
-			onclick={press(() => (editor.mode = 'bulldoze'))}
-			title="Bulldoze (click or drag to demolish)"
-			aria-pressed={editor.mode === 'bulldoze'}
-		>
-			<Tractor class="h-4 w-4" />
-		</Button>
-
 		{#if editor.joinableNodeId}
-			<div class="mx-1 h-6 w-px bg-border"></div>
-
 			<Button
 				variant="ghost"
 				size="icon"
@@ -180,5 +168,15 @@
 				<Combine class="h-4 w-4" />
 			</Button>
 		{/if}
+
+		<Button
+			variant={editor.mode === 'bulldoze' ? 'default' : 'ghost'}
+			size="icon"
+			onclick={press(() => (editor.mode = 'bulldoze'))}
+			title="Bulldoze (click or drag to demolish)"
+			aria-pressed={editor.mode === 'bulldoze'}
+		>
+			<Tractor class="h-4 w-4" />
+		</Button>
 	</nav>
 </div>

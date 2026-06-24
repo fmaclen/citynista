@@ -14,7 +14,7 @@ const NODE_OPACITY = 0.9;
 
 export type NodeTone = 'hover' | 'selected' | 'danger';
 const NODE_SEGMENTS = 48;
-const NODE_Y_OFFSET = 0.2;
+export const NODE_Y_OFFSET = 0.2;
 
 export class NodeRenderer {
 	private scene: THREE.Scene;

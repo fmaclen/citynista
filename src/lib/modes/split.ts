@@ -5,10 +5,13 @@ import type { ModeHandlers } from './types';
 import { segmentHitAt } from './picking';
 import { splitSegment } from '../core/crossings';
 import { closestPointOnQuadraticBezier } from '../geometry/bezier';
+import { NODE_Y_OFFSET } from '../rendering/node-renderer';
 
 const MARKER_COLOR = 0xfacc15;
 const MARKER_THICKNESS = 1.2;
-const MARKER_Y = 1.5;
+// Sit the marker at the node ring's exact height so it doesn't drift on screen
+// against the node that replaces it once a tilted camera projects them.
+const MARKER_Y = NODE_Y_OFFSET;
 
 export function setupSplitMode(editor: Editor): ModeHandlers {
 	const markerMaterial = new THREE.MeshBasicMaterial({
