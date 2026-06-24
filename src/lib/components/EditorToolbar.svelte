@@ -3,7 +3,7 @@
 	import type { DrawStyle } from '$lib/modes/types';
 	import { LANE_COLORS, LANE_TEMPLATES, getTotalWidth } from '$lib/core/lane-template';
 	import { Button } from '$lib/components/ui/button';
-	import { MousePointer2, Redo2, Slash, Spline, Undo2, Tractor, Waves } from '@lucide/svelte';
+	import { MousePointer2, Redo2, Scissors, Slash, Spline, Undo2, Tractor, Waves } from '@lucide/svelte';
 
 	const editor = getEditorContext();
 
@@ -137,6 +137,16 @@
 		</Button>
 
 		<div class="mx-1 h-6 w-px bg-border"></div>
+
+		<Button
+			variant={editor.mode === 'split' ? 'default' : 'ghost'}
+			size="icon"
+			onclick={press(() => (editor.mode = 'split'))}
+			title="Split (click a road to cut it at that point)"
+			aria-pressed={editor.mode === 'split'}
+		>
+			<Scissors class="h-4 w-4" />
+		</Button>
 
 		<Button
 			variant={editor.mode === 'bulldoze' ? 'default' : 'ghost'}

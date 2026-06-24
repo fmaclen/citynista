@@ -40,6 +40,7 @@ import type { ModeHandlers, Mode, DrawStyle } from './modes/types';
 import { setupDrawMode } from './modes/draw';
 import { setupSelectMode } from './modes/select';
 import { setupBulldozeMode } from './modes/bulldoze';
+import { setupSplitMode } from './modes/split';
 import { setupConnectorMode } from './modes/connector';
 
 // Setback handles seat at least this far out from the node along their arm, so
@@ -638,6 +639,8 @@ export class Editor {
 			this.modeHandlers = setupDrawMode(this);
 		} else if (mode === 'bulldoze') {
 			this.modeHandlers = setupBulldozeMode(this);
+		} else if (mode === 'split') {
+			this.modeHandlers = setupSplitMode(this);
 		} else if (mode === 'connector') {
 			this.modeHandlers = setupConnectorMode(this);
 		} else {
