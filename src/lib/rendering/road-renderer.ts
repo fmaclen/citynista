@@ -302,7 +302,8 @@ export class RoadRenderer {
 		// and the node piece agree.
 		const centerBreak = new Map<string, Set<string>>();
 		for (const node of graph.nodes.values()) {
-			if (!centerCrossedAt(graph, node, centerlines, activeConnectionsByNode.get(node.id))) continue;
+			if (!centerCrossedAt(graph, node, centerlines, activeConnectionsByNode.get(node.id)))
+				continue;
 			const pair = nodeThroughPair(graph, node);
 			if (pair) centerBreak.set(node.id, new Set(pair.map((segment) => segment.id)));
 		}
@@ -327,7 +328,8 @@ export class RoadRenderer {
 			const continuityJoinEnd = isContinuationNode(graph, endNode, segment.id);
 			const morphStart = transitionMorph(graph, startNode, segment.id);
 			const morphEnd = transitionMorph(graph, endNode, segment.id);
-			const arrowStart = arrowsByEnd.get(segmentEndKey(startNode.id, segment.id)) ?? EMPTY_END_ARROWS;
+			const arrowStart =
+				arrowsByEnd.get(segmentEndKey(startNode.id, segment.id)) ?? EMPTY_END_ARROWS;
 			const arrowEnd = arrowsByEnd.get(segmentEndKey(endNode.id, segment.id)) ?? EMPTY_END_ARROWS;
 			const trim = trims.get(segment.id);
 
@@ -820,14 +822,7 @@ export class RoadRenderer {
 			};
 		};
 
-		const quad = (
-			ax: number,
-			az: number,
-			bx: number,
-			bz: number,
-			sideX: number,
-			sideY: number
-		) => {
+		const quad = (ax: number, az: number, bx: number, bz: number, sideX: number, sideY: number) => {
 			const target = positions.lane;
 			const w = 0.18;
 			target.push(

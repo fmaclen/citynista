@@ -139,7 +139,9 @@ function bucketReachable(
 	barriers: Barrier[]
 ) {
 	return bucket.arms.some((arm) =>
-		arm.endpoints.some((to) => incoming.some((from) => !crossesBarrier(from.point, to.point, barriers)))
+		arm.endpoints.some((to) =>
+			incoming.some((from) => !crossesBarrier(from.point, to.point, barriers))
+		)
 	);
 }
 
@@ -148,10 +150,7 @@ function orderedOutgoing(endpoints: LaneEndpoint[]) {
 	const outDir = { x: -endpoints[0].dir.x, y: -endpoints[0].dir.y };
 	const left = { x: -outDir.y, y: outDir.x };
 	return [...endpoints].sort(
-		(a, b) =>
-			b.point.x * left.x +
-			b.point.y * left.y -
-			(a.point.x * left.x + a.point.y * left.y)
+		(a, b) => b.point.x * left.x + b.point.y * left.y - (a.point.x * left.x + a.point.y * left.y)
 	);
 }
 
@@ -265,10 +264,7 @@ export function defaultConnections(
 		if (!t) continue;
 		const left = { x: -t.y, y: t.x };
 		incoming.sort(
-			(a, b) =>
-				b.point.x * left.x +
-				b.point.y * left.y -
-				(a.point.x * left.x + a.point.y * left.y)
+			(a, b) => b.point.x * left.x + b.point.y * left.y - (a.point.x * left.x + a.point.y * left.y)
 		);
 
 		const bucketed = new Map<MovementBucket, DestinationArm[]>();
