@@ -70,30 +70,46 @@ export function pickAt(
 	return { node: null, segment: segmentHitAt(editor, worldX, worldZ).segment };
 }
 
-// Everything inside the rectangle: nodes by position, segments when both
-// endpoints fall inside.
-export function rectContents(
-	editor: Editor,
-	ax: number,
-	az: number,
-	bx: number,
-	bz: number
-): { nodeIds: string[]; segmentIds: string[] } {
-	const minX = Math.min(ax, bx);
-	const maxX = Math.max(ax, bx);
-	const minZ = Math.min(az, bz);
-	const maxZ = Math.max(az, bz);
-	const inside = (x: number, y: number) => x >= minX && x <= maxX && y >= minZ && y <= maxZ;
-
-	const nodeIds: string[] = [];
-	for (const node of editor.graph.nodes.values()) {
-		if (inside(node.x, node.y)) nodeIds.push(node.id);
+// Convex-quad containment: a point is inside when it sits on the same side of
+// every edge. A degenerate (zero-area) quad has no consistent side and selects
+// nothing, which is the right answer for a click that never dragged.
+function pointInQuad(px: number, py: number, quad: { x: number; y: number }[]) {
+	let sign = 0;
+	for (let i = 0; i < 4; i++) {
+		const a = quad[i];
+		const b = quad[(i + 1) % 4];
+		const cross = (b.x - a.x) * (py - a.y) - (b.y - a.y) * (px - a.x);
+		if (cross === 0) continue;
+		const s = cross > 0 ? 1 : -1;
+		if (sign === 0) sign = s;
+		else if (s !== sign) return false;
 	}
+	return sign !== 0;
+}
+
+// Everything inside the marquee quad: nodes by position, segments when both
+// endpoints fall inside. The quad is the marquee's on-screen rectangle
+// projected onto the ground, so it tracks the camera instead of the world axes.
+export function quadContents(
+	editor: Editor,
+	quad: { x: number; y: number }[]
+): { nodeIds: string[]; segmentIds: string[] } {
+	const nodeIds: string[] = [];
 	const segmentIds: string[] = [];
+	if (quad.length < 4) return { nodeIds, segmentIds };
+
+	for (const node of editor.graph.nodes.values()) {
+		if (pointInQuad(node.x, node.y, quad)) nodeIds.push(node.id);
+	}
 	for (const segment of editor.graph.segments.values()) {
 		const startNode = editor.graph.nodes.get(segment.startNodeId);
 		const endNode = editor.graph.nodes.get(segment.endNodeId);
-		if (startNode && endNode && inside(startNode.x, startNode.y) && inside(endNode.x, endNode.y)) {
+		if (
+			startNode &&
+			endNode &&
+			pointInQuad(startNode.x, startNode.y, quad) &&
+			pointInQuad(endNode.x, endNode.y, quad)
+		) {
 			segmentIds.push(segment.id);
 		}
 	}

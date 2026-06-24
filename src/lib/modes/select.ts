@@ -1,18 +1,17 @@
-import * as THREE from 'three';
 import type { ModeHandlers } from './types';
 import type { Editor, SetbackHandleInfo } from '../editor.svelte';
 import type { Segment } from '../core/segment.svelte';
 import type { Node } from '../core/node.svelte';
 import { getQuadraticBezierTangent } from '../geometry/bezier';
 import { CONTROL_SIZE } from '../rendering/selection-renderer';
-import { nodeHitAt, segmentHitAt, rectContents } from './picking';
+import { nodeHitAt, segmentHitAt } from './picking';
+import { createMarquee } from './marquee';
 
 // Snap radii are sized in screen pixels and converted to world units at
 // the current zoom; hit areas live in modes/picking.
 const CONTROL_POINT_HIT_PX = 17;
 const STRAIGHT_SNAP_PX = 14;
 const MARQUEE_COLOR = 0x4a9eff;
-const MARQUEE_Y = 0.5;
 
 type DragTarget =
 	| { type: 'nodes' }
@@ -25,7 +24,6 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 	let dragTarget: DragTarget = null;
 	let dragStartX = 0;
 	let dragStartZ = 0;
-	let marqueeStart: { x: number; z: number } | null = null;
 	// Shift+click on a selected node means "deselect" only if no drag
 	// follows — a shift+drag instead smooths the node's tangent live.
 	let pendingShiftToggle: string | null = null;
@@ -33,73 +31,7 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 	let setbackDrag: SetbackHandleInfo | null = null;
 	let dragDistance = 0;
 
-	const marqueeFillMaterial = new THREE.MeshBasicMaterial({
-		color: MARQUEE_COLOR,
-		transparent: true,
-		opacity: 0.12,
-		// Blend over selection highlights instead of occluding them.
-		depthWrite: false
-	});
-	const marqueeFill = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), marqueeFillMaterial);
-	marqueeFill.rotation.x = -Math.PI / 2;
-	marqueeFill.position.y = MARQUEE_Y;
-	marqueeFill.visible = false;
-	editor.sceneManager.scene.add(marqueeFill);
-
-	const marqueeOutlineGeometry = new THREE.BufferGeometry();
-	marqueeOutlineGeometry.setAttribute(
-		'position',
-		new THREE.Float32BufferAttribute(new Float32Array(12), 3)
-	);
-	const marqueeOutlineMaterial = new THREE.LineBasicMaterial({
-		color: MARQUEE_COLOR,
-		transparent: true,
-		opacity: 0.9
-	});
-	const marqueeOutline = new THREE.LineLoop(marqueeOutlineGeometry, marqueeOutlineMaterial);
-	marqueeOutline.frustumCulled = false;
-	marqueeOutline.visible = false;
-	editor.sceneManager.scene.add(marqueeOutline);
-
-	const updateMarqueeVisual = (endX: number, endZ: number) => {
-		if (!marqueeStart) return;
-
-		const minX = Math.min(marqueeStart.x, endX);
-		const maxX = Math.max(marqueeStart.x, endX);
-		const minZ = Math.min(marqueeStart.z, endZ);
-		const maxZ = Math.max(marqueeStart.z, endZ);
-
-		marqueeFill.position.set((minX + maxX) / 2, MARQUEE_Y, (minZ + maxZ) / 2);
-		marqueeFill.scale.set(Math.max(maxX - minX, 0.001), Math.max(maxZ - minZ, 0.001), 1);
-
-		const positions = marqueeOutlineGeometry.getAttribute('position');
-		positions.setXYZ(0, minX, MARQUEE_Y, minZ);
-		positions.setXYZ(1, maxX, MARQUEE_Y, minZ);
-		positions.setXYZ(2, maxX, MARQUEE_Y, maxZ);
-		positions.setXYZ(3, minX, MARQUEE_Y, maxZ);
-		positions.needsUpdate = true;
-
-		marqueeFill.visible = true;
-		marqueeOutline.visible = true;
-	};
-
-	const hideMarquee = () => {
-		marqueeFill.visible = false;
-		marqueeOutline.visible = false;
-	};
-
-	// Select everything inside the rectangle: nodes by position, segments
-	// when both endpoints fall inside.
-	const applyMarquee = (endX: number, endZ: number) => {
-		if (!marqueeStart) return;
-		const contents = rectContents(editor, marqueeStart.x, marqueeStart.z, endX, endZ);
-		for (const nodeId of contents.nodeIds) {
-			editor.selectNode(nodeId);
-		}
-		for (const segmentId of contents.segmentIds) {
-			editor.selectSegment(segmentId);
-		}
-	};
+	const marquee = createMarquee(editor, MARQUEE_COLOR, 0.12);
 	// Control points expressed in their segment's local frame at drag start,
 	// so curves scale and rotate proportionally with their moving endpoints.
 	const controlFrames = new Map<string, { u: number; v: number }>();
@@ -540,7 +472,7 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 		if (!event.shiftKey) {
 			editor.clearSelection();
 		}
-		marqueeStart = { x: worldPos.x, z: worldPos.z };
+		marquee.begin(event.clientX, event.clientY);
 	};
 
 	const onMouseMove = (event: MouseEvent) => {
@@ -551,8 +483,8 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 			return;
 		}
 
-		if (marqueeStart) {
-			updateMarqueeVisual(worldPos.x, worldPos.z);
+		if (marquee.active) {
+			marquee.update(event.clientX, event.clientY);
 			return;
 		}
 
@@ -639,11 +571,16 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 			return;
 		}
 
-		if (marqueeStart) {
-			const worldPos = editor.sceneManager.screenToWorld(event.clientX, event.clientY);
-			applyMarquee(worldPos.x, worldPos.z);
-			hideMarquee();
-			marqueeStart = null;
+		if (marquee.active) {
+			marquee.update(event.clientX, event.clientY);
+			const contents = marquee.contents();
+			marquee.end();
+			for (const nodeId of contents.nodeIds) {
+				editor.selectNode(nodeId);
+			}
+			for (const segmentId of contents.segmentIds) {
+				editor.selectSegment(segmentId);
+			}
 			return;
 		}
 
@@ -694,17 +631,11 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 		}
 		isDragging = false;
 		dragTarget = null;
-		marqueeStart = null;
 		setbackDrag = null;
 		controlFrames.clear();
 		editor.setHoveredNode(null);
 		editor.setHoveredSegment(null);
-		editor.sceneManager.scene.remove(marqueeFill);
-		editor.sceneManager.scene.remove(marqueeOutline);
-		marqueeFill.geometry.dispose();
-		marqueeFillMaterial.dispose();
-		marqueeOutlineGeometry.dispose();
-		marqueeOutlineMaterial.dispose();
+		marquee.dispose();
 	};
 
 	return {
