@@ -247,7 +247,9 @@ export function setupDrawMode(editor: Editor): ModeHandlers {
 			? continuationTangentAt(startNodeId, target.x, target.y)
 			: null;
 		const endTangent =
-			target.kind === 'node' ? continuationTangentAt(target.nodeId, startNode.x, startNode.y) : null;
+			target.kind === 'node'
+				? continuationTangentAt(target.nodeId, startNode.x, startNode.y)
+				: null;
 		if (startTangent && endTangent) {
 			const both = tangentIntersection(
 				startNode.x,
@@ -261,7 +263,8 @@ export function setupDrawMode(editor: Editor): ModeHandlers {
 			);
 			if (both) return both;
 		}
-		if (startTangent) return smoothControl(startNode.x, startNode.y, startTangent, target.x, target.y);
+		if (startTangent)
+			return smoothControl(startNode.x, startNode.y, startTangent, target.x, target.y);
 		if (endTangent) return smoothControl(target.x, target.y, endTangent, startNode.x, startNode.y);
 		return null;
 	};
@@ -292,6 +295,13 @@ export function setupDrawMode(editor: Editor): ModeHandlers {
 		const snap = findSegmentSnap(worldX, worldZ);
 		if (snap) {
 			return { kind: 'segment', snap, x: snap.x, y: snap.y };
+		}
+
+		// Grid snap is the lowest-priority positional snap: nodes and segments win,
+		// but on open ground the cursor lands on the nearest grid intersection.
+		if (editor.gridEnabled) {
+			const g = editor.gridSize;
+			return { kind: 'free', x: Math.round(worldX / g) * g, y: Math.round(worldZ / g) * g };
 		}
 
 		return { kind: 'free', x: worldX, y: worldZ };

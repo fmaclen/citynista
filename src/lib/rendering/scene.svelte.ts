@@ -14,6 +14,13 @@ const GROUND_DEPTH = 200;
 const GROUND_COLOR = 0x52a06b;
 // Earthy tone for the slab's sides and underside.
 const SOIL_COLOR = 0x5c4a37;
+// Map-wide snapping grid: fine sub lines every GRID_SUB metres, bolder main lines
+// every GRID_MAIN. Fixed for now — a settings UI can expose these later.
+export const GRID_SUB = 10;
+export const GRID_MAIN = 50;
+const GRID_COLOR = 0xffffff;
+const GRID_SUB_OPACITY = 0.09;
+const GRID_MAIN_OPACITY = 0.26;
 // Vertical world units the viewport spans at zoom 1.
 const BASE_FRUSTUM = 500;
 // How far past the world edge you can zoom out — 1.1 leaves a slim margin of
@@ -142,6 +149,7 @@ export class SceneManager {
 
 		// Create ground plane
 		this.createGround();
+		this.createGrid();
 
 		// Set up event listeners
 		this.setupEventListeners();
@@ -166,6 +174,40 @@ export class SceneManager {
 		ground.position.y = -GROUND_DEPTH / 2;
 		ground.name = 'ground';
 		this.scene.add(ground);
+	}
+
+	private grid: THREE.Group | null = null;
+
+	private createGrid() {
+		const make = (spacing: number, opacity: number) => {
+			const helper = new THREE.GridHelper(
+				this.worldSize,
+				Math.round(this.worldSize / spacing),
+				GRID_COLOR,
+				GRID_COLOR
+			);
+			const material = helper.material as THREE.LineBasicMaterial;
+			material.transparent = true;
+			material.opacity = opacity;
+			material.depthWrite = false;
+			return helper;
+		};
+
+		const group = new THREE.Group();
+		// Sit just above the grass, below the road layers, so it reads as a ground
+		// grid the roads paint over rather than an overlay across everything.
+		group.position.y = 0.04;
+		group.visible = false;
+		const sub = make(GRID_SUB, GRID_SUB_OPACITY);
+		const main = make(GRID_MAIN, GRID_MAIN_OPACITY);
+		main.position.y = 0.01; // draw the bolder lines over the fine ones
+		group.add(sub, main);
+		this.grid = group;
+		this.scene.add(group);
+	}
+
+	setGridVisible(visible: boolean) {
+		if (this.grid) this.grid.visible = visible;
 	}
 
 	private setupEventListeners() {

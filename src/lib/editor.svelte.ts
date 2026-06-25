@@ -24,7 +24,7 @@ import type { CenterlineSample, Point } from './core/road-geometry';
 import { isDefaultMovement, nodeConnectivity, sameConnectionRef } from './core/lane-connections';
 import type { Barrier, LaneEndpoint, LaneConnection } from './core/lane-connections';
 import { getQuadraticBezierTangent } from './geometry/bezier';
-import { SceneManager } from './rendering/scene.svelte';
+import { SceneManager, GRID_SUB } from './rendering/scene.svelte';
 import { NodeRenderer, type NodeTone } from './rendering/node-renderer';
 import { RoadRenderer } from './rendering/road-renderer';
 import { BlockRenderer } from './rendering/block-renderer';
@@ -139,6 +139,9 @@ export class Editor {
 	currentCityId = $state('');
 	currentCityName = $state('');
 	private pendingCamera: CameraState | null = null;
+	// Map-wide snapping grid (toggled from the toolbar). Drawing snaps to gridSize.
+	gridEnabled = $state(false);
+	readonly gridSize = GRID_SUB;
 	sceneManager!: SceneManager;
 	nodeRenderer!: NodeRenderer;
 	roadRenderer!: RoadRenderer;
@@ -240,6 +243,8 @@ export class Editor {
 			this.saveCurrentCity();
 		};
 		this.sceneManager.onCameraPersist = () => this.saveCameraToCache();
+		this.gridEnabled = localStorage.getItem('citynista:grid') === '1';
+		this.sceneManager.setGridVisible(this.gridEnabled);
 		this.setupCanvasEvents();
 		this.setupHistoryKeys();
 		this.setupClipboardKeys();
@@ -269,6 +274,16 @@ export class Editor {
 		if (next === undefined) return;
 		this.undoStack.push(this.presentState);
 		this.restoreState(next);
+	}
+
+	toggleGrid() {
+		this.gridEnabled = !this.gridEnabled;
+		this.sceneManager.setGridVisible(this.gridEnabled);
+		try {
+			localStorage.setItem('citynista:grid', this.gridEnabled ? '1' : '0');
+		} catch {
+			// best-effort
+		}
 	}
 
 	activateSlot(index: number) {

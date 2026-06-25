@@ -3,14 +3,7 @@
 	import { getTotalWidth, laneSwatchColor } from '$lib/core/lane-template';
 	import { MATERIAL_COLOR } from '$lib/core/lane-types';
 	import { Button } from '$lib/components/ui/button';
-	import {
-		Combine,
-		Plus,
-		Redo2,
-		Scissors,
-		Undo2,
-		Tractor,
-	} from '@lucide/svelte';
+	import { Combine, Grid3x3, Plus, Redo2, Scissors, Undo2, Tractor } from '@lucide/svelte';
 
 	const editor = getEditorContext();
 
@@ -159,6 +152,18 @@
 			aria-pressed={editor.mode === 'bulldoze'}
 		>
 			<Tractor class="h-4 w-4" />
+		</Button>
+
+		<div class="mx-1 h-6 w-px bg-border"></div>
+
+		<Button
+			variant={editor.gridEnabled ? 'default' : 'ghost'}
+			size="icon"
+			onclick={press(() => editor.toggleGrid())}
+			title="Toggle snapping grid"
+			aria-pressed={editor.gridEnabled}
+		>
+			<Grid3x3 class="h-4 w-4" />
 		</Button>
 	</nav>
 </div>
