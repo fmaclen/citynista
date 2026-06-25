@@ -429,7 +429,9 @@ export class RoadRenderer {
 				const isStart = segment.startNodeId === node.id;
 				const stop = isStart ? samples[0] : samples[samples.length - 1];
 				const inner = isStart ? samples[1] : samples[samples.length - 2];
-				parts.push(`${segmentId}:${segment.lanesKey}:${stop.x},${stop.y},${inner.x},${inner.y}`);
+				parts.push(
+					`${segmentId}:${segment.lanesKey}:${stop.x},${stop.y},${inner.x},${inner.y},${stop.normalX},${stop.normalY}`
+				);
 			}
 			const hash = parts.join('|');
 

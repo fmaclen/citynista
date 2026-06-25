@@ -782,6 +782,7 @@ export function transitionStraddle(
 	const pair = nodeThroughPair(graph, node);
 	if (!pair) return null;
 	if (pairBendDeviation(graph, node, pair[0], pair[1]) >= MIN_BEND_DEVIATION) return null;
+	if (pair[0].hasControlPoint || pair[1].hasControlPoint) return null;
 	const taper = transitionTaper(graph, node);
 	if (!taper || taper.length <= 0) return null;
 	const wideSeg = pair[0].id === taper.segmentId ? pair[0] : pair[1];
@@ -1629,10 +1630,16 @@ export function collectIntersectionArms(
 		const stopSample = isStart ? centerline[0] : centerline[centerline.length - 1];
 		const innerSample = isStart ? centerline[1] : centerline[centerline.length - 2];
 
-		const into = normalizeVector({
-			x: stopSample.x - innerSample.x,
-			y: stopSample.y - innerSample.y
-		});
+		// Mouth frame from the true tangent at the trimmed mouth (perp to the
+		// sample normal), not the stop-to-inner chord, which skews a curved arm's
+		// mouth and slivers the patch corner. Straight arms are unaffected.
+		let tangentX = stopSample.normalY;
+		let tangentY = -stopSample.normalX;
+		if (tangentX * (stopSample.x - innerSample.x) + tangentY * (stopSample.y - innerSample.y) < 0) {
+			tangentX = -tangentX;
+			tangentY = -tangentY;
+		}
+		const into = normalizeVector({ x: tangentX, y: tangentY });
 		if (!into) continue;
 
 		// perp(into) lands on the segment's positive-offset side when the
