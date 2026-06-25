@@ -2104,7 +2104,7 @@ function addIntersection(
 	// movement between adjacent arms) carved back to sidewalk. With every
 	// movement allowed this is the clean convex patch.
 	const roadBands = getOrCreateBands(bandsByType, patchType);
-	const pavement = junctionPavement(node, roadArms);
+	const pavement = junctionPavement(graph, node, roadArms);
 	const continuations = centerMedianContinuations(node, roadArms, pavement, crossingConnectors);
 	const continuationCuts = continuations.flatMap((continuation) => continuation.cutPaths);
 
@@ -2571,12 +2571,13 @@ function armsConnected(
 // ring stays a constant width), with each corner rounded where its two arms
 // connect and cut back to sidewalk where the movement between them is dead.
 // With every movement allowed this is exactly the clean convex patch.
-function junctionPavement(node: Node, arms: IntersectionArm[]): Paths {
+function junctionPavement(graph: Graph, node: Node, arms: IntersectionArm[]): Paths {
 	if (arms.length < 2) return [];
 	const endpoints = junctionLaneEndpoints(arms);
 	const disabled = node.disabledConnections ?? [];
 
 	const ring: Point[] = [];
+	const lensCandidates: Paths = [];
 	for (let i = 0; i < arms.length; i++) {
 		const armA = arms[i];
 		const armB = arms[(i + 1) % arms.length];
@@ -2590,7 +2591,13 @@ function junctionPavement(node: Node, arms: IntersectionArm[]): Paths {
 
 		if (arms.length === 2 || armsConnected(endpoints, disabled, armA.segmentId, armB.segmentId)) {
 			// Live corner: the rounded asphalt corner curve paves it.
-			ring.push(...sampleCornerCurve(cornerA, armA.into, cornerB, armB.into));
+			const curve = sampleCornerCurve(cornerA, armA.into, cornerB, armB.into);
+			ring.push(...curve);
+			const armACurved = graph.segments.get(armA.segmentId)?.hasControlPoint ?? false;
+			const armBCurved = graph.segments.get(armB.segmentId)?.hasControlPoint ?? false;
+			if ((armACurved || armBCurved) && curve.length >= 3) {
+				lensCandidates.push(normalizeWinding(curve.map((point) => toClipperPoint(point.x, point.y))));
+			}
 		} else {
 			// Dead corner: follow both carriageway edges in to where they meet,
 			// carving the corner out to sidewalk.
@@ -2611,7 +2618,27 @@ function junctionPavement(node: Node, arms: IntersectionArm[]): Paths {
 		offsetPoint(arm.stop, arm.side, arm.toward.roadEdge),
 		offsetPoint(arm.stop, arm.side, -arm.away.roadEdge)
 	]);
-	return unionPaths([ringPath, ...clipSpokesToMouths(spokes, corners)]);
+	const clippedSpokes = clipSpokesToMouths(spokes, corners);
+	const pathArea = (path: Path) => {
+		let area = 0;
+		for (let i = 0; i < path.length; i++) {
+			const a = path[i];
+			const b = path[(i + 1) % path.length];
+			area += a.X * b.Y - b.X * a.Y;
+		}
+		return Math.abs(area) / 2 / (CLIPPER_SCALE * CLIPPER_SCALE);
+	};
+	const pathsArea = (paths: Paths) => paths.reduce((area, path) => area + pathArea(path), 0);
+	const lenses = lensCandidates.filter((lens) => {
+		const area = pathArea(lens);
+		if (area < 0.001) return false;
+		const overlap = executeBoolean(ClipperLib.ClipType.ctIntersection, [lens], [ringPath]);
+		return pathsArea(overlap) < area * 0.05;
+	});
+	const lensCuts = lenses.length > 0 ? offsetPaths(unionPaths(lenses), 0.5) : [];
+	const patchedSpokes =
+		lensCuts.length > 0 ? subtractPaths(clippedSpokes, lensCuts) : clippedSpokes;
+	return unionPaths([ringPath, ...patchedSpokes]);
 }
 
 // A full-width quad from an arm's mouth in to just past the node centre. Unioned
