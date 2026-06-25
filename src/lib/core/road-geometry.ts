@@ -652,33 +652,34 @@ function computeTransitionMorph(
 
 		const ownCenter = (interval.start + interval.end) / 2;
 		const anchorRoadways = anchorIntervals.filter((i) => isRoadway(i.laneType));
+		const noseTarget = () => {
+			const center =
+				anchorRoadways.length === 0
+					? ownCenter
+					: Math.min(
+							Math.max(...anchorRoadways.map((i) => i.end)),
+							Math.max(Math.min(...anchorRoadways.map((i) => i.start)), ownCenter)
+						);
+			roadwayUnderfills[index] = {
+				laneType: roadwayUnderfillLayer(index),
+				...(anchorRoadways.length === 0
+					? { start: center, end: center }
+					: roadwayTarget(interval, anchorRoadways))
+			};
+			return { start: center, end: center };
+		};
+
 		if (surface === 'island') {
 			// An island with no counterpart pinches toward its centerline:
 			// the target is a zero-width point inside the anchor's roadway,
-			// and the strip ends square once the taper squeezes it below a
-			// usable width — a wind-down nose, never a full-width slab
-			// against the seam.
-			if (anchorRoadways.length === 0) return null;
-			const zoneStart = Math.min(...anchorRoadways.map((i) => i.start));
-			const zoneEnd = Math.max(...anchorRoadways.map((i) => i.end));
-			const center = Math.min(zoneEnd, Math.max(zoneStart, ownCenter));
-			roadwayUnderfills[index] = {
-				laneType: roadwayUnderfillLayer(index),
-				...roadwayTarget(interval, anchorRoadways)
-			};
-			return { start: center, end: center };
+			// making a wind-down nose, never a full-width slab against the
+			// seam.
+			return noseTarget();
 		}
 
-		// Unmatched verges end square where the narrowing begins: their
-		// cross-section stops existing mid-taper, and sweeping them across
-		// the plate reads as the sidewalk breaking apart.
-		if (anchorRoadways.length > 0) {
-			roadwayUnderfills[index] = {
-				laneType: roadwayUnderfillLayer(index),
-				...roadwayTarget(interval, anchorRoadways)
-			};
-		}
-		return null;
+		// Unmatched verges wind down like islands, with roadway underfill so
+		// the nose does not expose grass or plate below it.
+		return noseTarget();
 	});
 
 	// The taper length scales with the largest edge displacement any strip

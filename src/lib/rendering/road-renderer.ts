@@ -110,11 +110,8 @@ const CENTER_BREAK_INSET = 3.5;
 const THROUGH_DOT = Math.cos(Math.PI / 6);
 const ARROW_END_INSET = 4;
 const ARROW_FIT = 3;
-// An unmatched island winding down to a nose ends square once it narrows
-// below this width, instead of riding to the seam as a sliver. A matched
-// island continuing into a real (non-zero) counterpart is exempt.
-const ISLAND_MIN_WIDTH = 0.8;
 const NOSE_TARGET_EPS = 1e-3;
+const NOSE_TIP_WIDTH = 1e-3;
 const PAINT_COLORS = { lane: '#C9C9C0', center: '#C3B47C', walk: '#9A9A94' } as const;
 type PaintColor = keyof typeof PAINT_COLORS;
 type ArrowMovement = 'left' | 'through' | 'right';
@@ -598,34 +595,22 @@ export class RoadRenderer {
 				continue;
 			}
 
-			// A strip with no counterpart across the transition ends in a
-			// square cut exactly where the morph zone begins — never a
-			// sliver, and never poking straight into the active taper
-			// (trimCenterline caps trims at 45% of the length, so it cannot
-			// be used here).
-			// An unmatched island whose target winds it down to a nose ends in a
-			// square cut where it crosses the usable-width threshold — never a
-			// sliver wall. A matched island continuing into a real counterpart
-			// (non-zero target) rides to the seam however narrow, meeting it
-			// instead of exposing the plate. The morph restarts from the eased
-			// cross-section at the cut, so the visible taper stays smooth.
+			// A strip with no counterpart across the transition and no nose
+			// target ends in a square cut exactly where the morph zone begins.
+			// Nose targets ride to the seam as a tiny non-degenerate tip; matched
+			// strips with real non-zero targets are exempt and meet their
+			// counterpart normally.
 			const ownWidth = interval.end - interval.start;
 			const pinch = (target: { start: number; end: number } | null | undefined, length: number) => {
 				if (!target) return null;
 				const targetWidth = target.end - target.start;
 				if (targetWidth > NOSE_TARGET_EPS || ownWidth <= targetWidth) return null;
-				let d = 0;
-				while (d < length) {
-					const width = targetWidth + (ownWidth - targetWidth) * morphEase(d, length);
-					if (width >= ISLAND_MIN_WIDTH) break;
-					d += 0.5;
-				}
-				const f = morphEase(d, length);
+				const center = (target.start + target.end) / 2;
 				return {
-					at: d,
-					length: length - d,
-					offsetA: target.start + (interval.start - target.start) * f,
-					offsetB: target.end + (interval.end - target.end) * f
+					at: 0,
+					length,
+					offsetA: center - NOSE_TIP_WIDTH / 2,
+					offsetB: center + NOSE_TIP_WIDTH / 2
 				};
 			};
 			const pinchStart = morphStart ? pinch(targetStart, lengthStart) : null;
