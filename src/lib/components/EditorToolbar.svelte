@@ -5,7 +5,6 @@
 	import { Button } from '$lib/components/ui/button';
 	import {
 		Combine,
-		MousePointer2,
 		Plus,
 		Redo2,
 		Scissors,
@@ -66,18 +65,6 @@
 		class="flex flex-row items-center gap-2 rounded-lg border bg-background p-2 shadow-lg"
 		onwheel={onWheel}
 	>
-		<Button
-			variant={editor.mode === 'select' ? 'default' : 'ghost'}
-			size="icon"
-			onclick={press(() => (editor.mode = 'select'))}
-			title="Select"
-			aria-pressed={editor.mode === 'select'}
-		>
-			<MousePointer2 class="h-4 w-4" />
-		</Button>
-
-		<div class="mx-1 h-6 w-px bg-border"></div>
-
 		{#each editor.hotbar as brush, i (i)}
 			{@const active = editor.mode === 'draw' && editor.activeSlot === i}
 			{@const holding = editor.pickableLanes !== null}
