@@ -117,6 +117,7 @@ const NOSE_TARGET_EPS = 1e-3;
 const PAINT_COLORS = { lane: '#C9C9C0', center: '#C3B47C', walk: '#9A9A94' } as const;
 type PaintColor = keyof typeof PAINT_COLORS;
 type ArrowMovement = 'left' | 'through' | 'right';
+type CenterNoseFill = { ownCenter: number; nodeOffset: number; cut: number; end: 'start' | 'end' };
 const ARROW_MOVEMENTS: ArrowMovement[] = ['left', 'through', 'right'];
 const ARROW_CODES: Record<ArrowMovement, string> = { left: 'L', through: 'S', right: 'R' };
 
@@ -518,6 +519,7 @@ export class RoadRenderer {
 		);
 
 		const intervals = getLaneIntervals(lanes);
+		const centerFills: CenterNoseFill[] = [];
 		for (let k = 0; k < intervals.length; k++) {
 			const interval = intervals[k];
 			const surface = surfaceClassOf(interval.laneType);
@@ -628,6 +630,22 @@ export class RoadRenderer {
 
 			const cutStart = morphStart && !targetStart ? lengthStart : (pinchStart?.at ?? 0);
 			const cutEnd = morphEnd && !targetEnd ? lengthEnd : (pinchEnd?.at ?? 0);
+			if (morphStart?.centerNose?.index === k && cutStart > 0.3) {
+				centerFills.push({
+					ownCenter: (interval.start + interval.end) / 2,
+					nodeOffset: morphStart.centerNose.offset,
+					cut: cutStart,
+					end: 'start'
+				});
+			}
+			if (morphEnd?.centerNose?.index === k && cutEnd > 0.3) {
+				centerFills.push({
+					ownCenter: (interval.start + interval.end) / 2,
+					nodeOffset: morphEnd.centerNose.offset,
+					cut: cutEnd,
+					end: 'end'
+				});
+			}
 			let stripSamples = samples;
 			if (cutStart > 0 || cutEnd > 0) {
 				const remaining = total - cutStart - cutEnd;
@@ -682,6 +700,7 @@ export class RoadRenderer {
 			continuityJoinEnd,
 			centerBreakStart,
 			centerBreakEnd,
+			centerFills,
 			jitter
 		)) {
 			group.add(mesh);
@@ -710,6 +729,7 @@ export class RoadRenderer {
 		continuityJoinEnd: boolean,
 		centerBreakStart: boolean,
 		centerBreakEnd: boolean,
+		centerFills: CenterNoseFill[],
 		jitter: number
 	): THREE.Mesh[] {
 		const cumulative: number[] = [0];
@@ -722,6 +742,61 @@ export class RoadRenderer {
 
 		const positions: Record<PaintColor, number[]> = { lane: [], center: [], walk: [] };
 		const halfWidth = getTotalWidth(lanes) / 2;
+		const pointAt = (d: number, offset: number) => {
+			let i = 1;
+			while (i < cumulative.length - 1 && cumulative[i] < d) i++;
+			const span = cumulative[i] - cumulative[i - 1];
+			const t = span > 0.0001 ? (d - cumulative[i - 1]) / span : 0;
+			const a = samples[i - 1];
+			const b = samples[i];
+			let nx = a.normalX + (b.normalX - a.normalX) * t;
+			let ny = a.normalY + (b.normalY - a.normalY) * t;
+			const length = Math.hypot(nx, ny);
+			if (length > 0.0001) {
+				nx /= length;
+				ny /= length;
+			}
+			return {
+				x: a.x + (b.x - a.x) * t + nx * offset,
+				z: a.y + (b.y - a.y) * t + ny * offset,
+				nx,
+				ny
+			};
+		};
+		const strokeSolid = (from: number, to: number, offsetAt: (d: number) => number) => {
+			if (to - from < 0.5) return;
+			const target = positions.center;
+			const half = PAINT_WIDTH / 2;
+			let d = from;
+			let previous = pointAt(d, offsetAt(d));
+			while (d < to - 0.05) {
+				const end = Math.min(d + PAINT_SOLID_STEP, to);
+				if (end - d < 0.3) break;
+				const p2 = pointAt(end, offsetAt(end));
+				target.push(
+					previous.x - previous.nx * half,
+					0,
+					previous.z - previous.ny * half,
+					previous.x + previous.nx * half,
+					0,
+					previous.z + previous.ny * half,
+					p2.x - p2.nx * half,
+					0,
+					p2.z - p2.ny * half,
+					previous.x + previous.nx * half,
+					0,
+					previous.z + previous.ny * half,
+					p2.x + p2.nx * half,
+					0,
+					p2.z + p2.ny * half,
+					p2.x - p2.nx * half,
+					0,
+					p2.z - p2.ny * half
+				);
+				previous = p2;
+				d = end;
+			}
+		};
 
 		// Boundary targets at each end come from the morph itself: lane
 		// lines stay straight wherever a lane exists on both sides and
@@ -766,40 +841,17 @@ export class RoadRenderer {
 				}
 				return value;
 			};
-			const pointAt = (d: number) => {
-				let i = 1;
-				while (i < cumulative.length - 1 && cumulative[i] < d) i++;
-				const span = cumulative[i] - cumulative[i - 1];
-				const t = span > 0.0001 ? (d - cumulative[i - 1]) / span : 0;
-				const a = samples[i - 1];
-				const b = samples[i];
-				let nx = a.normalX + (b.normalX - a.normalX) * t;
-				let ny = a.normalY + (b.normalY - a.normalY) * t;
-				const length = Math.hypot(nx, ny);
-				if (length > 0.0001) {
-					nx /= length;
-					ny /= length;
-				}
-				const value = offsetAt(d);
-				return {
-					x: a.x + (b.x - a.x) * t + nx * value,
-					z: a.y + (b.y - a.y) * t + ny * value,
-					nx,
-					ny
-				};
-			};
-
 			const target = positions[paint.color];
 			const stepLength = paint.dashed ? PAINT_DASH : PAINT_SOLID_STEP;
 			const gap = paint.dashed ? PAINT_GAP : 0;
 			const half = PAINT_WIDTH / 2;
 			let d = from;
-			let previous = pointAt(d);
+			let previous = pointAt(d, offsetAt(d));
 			while (d < to - 0.05) {
 				const end = Math.min(d + stepLength, to);
 				if (end - d < 0.3) break;
-				const p1 = gap === 0 ? previous : pointAt(d);
-				const p2 = pointAt(end);
+				const p1 = gap === 0 ? previous : pointAt(d, offsetAt(d));
+				const p2 = pointAt(end, offsetAt(end));
 				target.push(
 					p1.x - p1.nx * half,
 					0,
@@ -823,6 +875,17 @@ export class RoadRenderer {
 				previous = p2;
 				d = end + gap;
 			}
+		}
+
+		for (const fill of centerFills) {
+			const from = fill.end === 'start' ? 0 : total - fill.cut;
+			const to = fill.end === 'start' ? fill.cut : total;
+			const morphLength = fill.end === 'start' ? lengthStart : lengthEnd;
+			strokeSolid(from, to, (d) => {
+				const along = fill.end === 'start' ? d : total - d;
+				const f = morphLength > 0.0001 ? morphEase(along, morphLength) : 1;
+				return fill.nodeOffset + (fill.ownCenter - fill.nodeOffset) * f;
+			});
 		}
 
 		const laneCenters: number[] = [];

@@ -472,6 +472,11 @@ export interface TransitionMorph {
 	// straight where a lane exists on both sides and converge into their
 	// neighbor where one branches. Null cuts the paint at the morph zone.
 	laneBoundaries: (number | null)[];
+	// When the centre median noses out on the morphing side AND the other side
+	// renders its divider as a painted centre line, the interval index of that
+	// nosing divider island and the node-side centre offset to fill toward. The
+	// renderer draws a centre line over the nosed gap. Null otherwise.
+	centerNose: { index: number; offset: number } | null;
 	halfWidth: number;
 	length: number;
 	// True for the narrow side's identity morph — it never necks, so its lane
@@ -562,12 +567,14 @@ function computeTransitionMorph(
 			intervals: selfIntervals.map((interval) => ({ start: interval.start, end: interval.end })),
 			roadwayUnderfills: selfIntervals.map(() => null),
 			laneBoundaries,
+			centerNose: null,
 			halfWidth: halfSelf,
 			length,
 			anchor: true,
 			key:
 				`${length}:${halfSelf}:anchor|` +
-				laneBoundaries.map((b) => (b === null ? 'x' : Math.round(b * 100))).join(',')
+				laneBoundaries.map((b) => (b === null ? 'x' : Math.round(b * 100))).join(',') +
+				':cn0'
 		};
 	}
 
@@ -698,11 +705,28 @@ function computeTransitionMorph(
 				);
 
 	const laneBoundaries = laneBoundaryTargets(self.lanes, otherLanesInSelfFrame, flipped, false);
+	const selfDivider = markingStructure(self.lanes, false).divider;
+	const anchorCenter = markingStructure(otherLanesInSelfFrame, flipped).centerLine;
+	let centerNose: TransitionMorph['centerNose'] = null;
+	if (selfDivider && anchorCenter) {
+		for (let i = 0; i < selfIntervals.length; i++) {
+			const iv = selfIntervals[i];
+			if (surfaceClassOf(iv.laneType) !== 'island') continue;
+			if (iv.start - 0.01 <= selfDivider.offset && selfDivider.offset <= iv.end + 0.01) {
+				const t = targets[i];
+				if (t && Math.abs(t.end - t.start) < 1e-3) {
+					centerNose = { index: i, offset: anchorCenter.offset };
+				}
+				break;
+			}
+		}
+	}
 
 	return {
 		intervals: targets,
 		roadwayUnderfills,
 		laneBoundaries,
+		centerNose,
 		halfWidth: halfOther,
 		length,
 		anchor: false,
@@ -712,7 +736,8 @@ function computeTransitionMorph(
 			`${roadwayUnderfills
 				.map((u) => (u ? `${u.laneType},${u.start},${u.end}` : 'x'))
 				.join(';')}|` +
-			laneBoundaries.map((b) => (b === null ? 'x' : Math.round(b * 100))).join(',')
+			laneBoundaries.map((b) => (b === null ? 'x' : Math.round(b * 100))).join(',') +
+			`|cn:${centerNose ? `${centerNose.index},${Math.round(centerNose.offset * 100)}` : 'x'}`
 	};
 }
 
