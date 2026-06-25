@@ -166,7 +166,11 @@ export class Editor {
 	mode = $state<Mode>('select');
 	hotbar = $state<(Brush | null)[]>(defaultHotbar());
 	activeSlot = $state(0);
-	activeBrush = $derived(this.hotbar[this.activeSlot]);
+	// A one-off brush from continuing an existing road's endpoint — overrides the
+	// active hotbar slot until you leave draw mode or pick another brush.
+	continuationBrush = $state<Brush | null>(null);
+	activeBrush = $derived(this.continuationBrush ?? this.hotbar[this.activeSlot]);
+	private pendingDrawAnchor: string | null = null;
 	fps = $state(0);
 	canUndo = $state(false);
 	canRedo = $state(false);
@@ -289,6 +293,7 @@ export class Editor {
 	activateSlot(index: number) {
 		const brush = this.hotbar[index];
 		if (!brush) return;
+		this.continuationBrush = null;
 		this.activeSlot = index;
 		this.mode = 'draw';
 	}
@@ -298,9 +303,35 @@ export class Editor {
 		if (filled.length === 0) return;
 		const at = filled.indexOf(this.activeSlot);
 		const next =
-			filled[(((at < 0 ? 0 : at) + direction) % filled.length + filled.length) % filled.length];
+			filled[((((at < 0 ? 0 : at) + direction) % filled.length) + filled.length) % filled.length];
+		this.continuationBrush = null;
 		this.activeSlot = next;
 		this.mode = 'draw';
+	}
+
+	// Continue an existing road from a dangling endpoint, building onward with the
+	// same lane cross-section (reversed if the node is the segment's start, so the
+	// road reads continuously whichever end you extend).
+	continueFromNode(nodeId: string) {
+		const node = this.graph.nodes.get(nodeId);
+		if (!node || node.connectedSegments.length !== 1) return;
+		const segment = this.graph.segments.get(node.connectedSegments[0]);
+		if (!segment) return;
+		const atEnd = segment.endNodeId === nodeId;
+		this.continuationBrush = {
+			name: 'Continue road',
+			lanes: atEnd ? cloneLanes(segment.lanes) : reverseLanes(segment.lanes)
+		};
+		this.pendingDrawAnchor = nodeId;
+		this.clearSelection();
+		this.mode = 'draw';
+	}
+
+	// Consumed once by draw mode to anchor the first segment at a continued endpoint.
+	takeDrawAnchor(): string | null {
+		const anchor = this.pendingDrawAnchor;
+		this.pendingDrawAnchor = null;
+		return anchor;
 	}
 
 	// Drop the selected road's cross-section into a slot and arm it.
@@ -308,6 +339,7 @@ export class Editor {
 		const lanes = this.pickableLanes;
 		if (!lanes) return;
 		this.hotbar[index] = { name: 'Custom road', lanes: cloneLanes(lanes) };
+		this.continuationBrush = null;
 		this.clearSelection();
 		this.activeSlot = index;
 		this.mode = 'draw';
@@ -821,6 +853,7 @@ export class Editor {
 		this.setHoveredNode(null);
 		this.setHoveredSegment(null);
 		if (mode !== 'place') this.pendingPlacement = null;
+		if (mode !== 'draw') this.continuationBrush = null;
 		this.modeHandlers = null;
 
 		if (mode === 'draw') {
@@ -1231,7 +1264,10 @@ export class Editor {
 		const cross = ax * (node.y - farA.y) - ay * (node.x - farA.x);
 		const lengthSq = ax * ax + ay * ay;
 		if (lengthSq > 1e-6 && (cross * cross) / lengthSq > 0.25) {
-			merged.setControlPoint(2 * node.x - (farA.x + farB.x) / 2, 2 * node.y - (farA.y + farB.y) / 2);
+			merged.setControlPoint(
+				2 * node.x - (farA.x + farB.x) / 2,
+				2 * node.y - (farA.y + farB.y) / 2
+			);
 		}
 
 		this.graph.deleteSegment(segA.id);

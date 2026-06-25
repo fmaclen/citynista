@@ -610,6 +610,9 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 		const { node } = nodeHitAt(editor, worldPos.x, worldPos.z);
 		if (node && node.connectedSegments.length >= 2) {
 			editor.enterConnectorMode(node.id);
+		} else if (node && node.connectedSegments.length === 1) {
+			// A dangling endpoint: continue its road onward with the same lanes.
+			editor.continueFromNode(node.id);
 		}
 	};
 

@@ -68,7 +68,8 @@ const tangentIntersection = (
 };
 
 export function setupDrawMode(editor: Editor): ModeHandlers {
-	let startNodeId: string | null = null;
+	// Continuing from an existing endpoint anchors the first segment there.
+	let startNodeId: string | null = editor.takeDrawAnchor();
 	let shiftHeld = false;
 	let lastWorld: { x: number; z: number } | null = null;
 
