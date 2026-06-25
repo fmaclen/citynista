@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { SvelteSet } from 'svelte/reactivity';
+import type { CameraState } from '$lib/core/types';
 
 // Default extent of the buildable world, in metres (world units). The map is a
 // finite diorama slab rather than an endless plane; overridable per SceneManager
@@ -96,6 +97,14 @@ export class SceneManager {
 	// Test/deep-link mode (?topdown) snaps instantly instead of easing.
 	private instantCamera = false;
 
+	// Camera persistence. The editor owns it: it restores a city's camera via
+	// setCameraState and `onCameraPersist` saves moves back into the current city.
+	// ?topdown and the screenshot camera set instantCamera, which disables persist
+	// so deterministic test/deep-link renders never write a camera back.
+	private lastPersisted = '';
+	private lastPersistTime = 0;
+	onCameraPersist: ((camera: CameraState) => void) | null = null;
+
 	// Interaction state
 	private isPanning = false;
 	private isOrbiting = false;
@@ -137,7 +146,8 @@ export class SceneManager {
 		// Set up event listeners
 		this.setupEventListeners();
 
-		// Position the camera from the initial orbit state
+		// Position the camera from the initial orbit state (the editor applies the
+		// current city's saved camera once it has loaded).
 		this.updateCamera();
 
 		// Start render loop
@@ -323,6 +333,66 @@ export class SceneManager {
 		this.updateCamera();
 	}
 
+	// True once ?topdown / the screenshot camera has fixed a deterministic view;
+	// the editor then leaves the camera alone instead of applying a city's saved one.
+	isDeterministicCamera() {
+		return this.instantCamera;
+	}
+
+	getCameraState(): CameraState {
+		return {
+			zoom: this.goalZoom,
+			targetX: this.goalTargetX,
+			targetZ: this.goalTargetZ,
+			azimuth: this.goalAzimuth,
+			polar: this.goalPolar
+		};
+	}
+
+	setCameraState(camera: CameraState) {
+		this.applyCameraState(camera);
+		this.lastPersisted = JSON.stringify(this.getCameraState());
+		this.updateCamera();
+	}
+
+	// Snap back to the default framed view (a fresh city).
+	resetCamera() {
+		this.setCameraState({
+			zoom: 1,
+			targetX: 0,
+			targetZ: 0,
+			azimuth: DEFAULT_AZIMUTH,
+			polar: DEFAULT_POLAR
+		});
+	}
+
+	// Deterministic top-down view at a fixed target/zoom for headless screenshots
+	// (?cam=x,z,zoom). instantCamera disables easing and persistence, so the shot
+	// never writes a camera back over the city.
+	setScreenshotCamera(targetX: number, targetZ: number, zoom: number) {
+		this.instantCamera = true;
+		this.applyCameraState({ zoom, targetX, targetZ, azimuth: 0, polar: MIN_POLAR });
+		this.updateCamera();
+	}
+
+	private applyCameraState(c: CameraState) {
+		this.zoom = this.goalZoom = Math.max(this.minZoom(), Math.min(10, c.zoom));
+		this.targetX = this.goalTargetX = c.targetX;
+		this.targetZ = this.goalTargetZ = c.targetZ;
+		this.azimuth = this.goalAzimuth = c.azimuth;
+		this.polar = this.goalPolar = Math.max(MIN_POLAR, Math.min(MAX_POLAR, c.polar));
+		this.clampTarget();
+	}
+
+	private maybePersistCamera() {
+		// instantCamera = ?topdown / screenshot — deterministic views never persist.
+		if (this.instantCamera) return;
+		const snapshot = JSON.stringify(this.getCameraState());
+		if (snapshot === this.lastPersisted) return;
+		this.lastPersisted = snapshot;
+		this.onCameraPersist?.(this.getCameraState());
+	}
+
 	private handleResize() {
 		const width = this.container.clientWidth;
 		const height = this.container.clientHeight;
@@ -453,6 +523,11 @@ export class SceneManager {
 		const dt = this.lastFrameTime === 0 ? 0 : Math.min(0.1, (now - this.lastFrameTime) / 1000);
 		this.lastFrameTime = now;
 		this.stepCamera(dt);
+
+		if (now - this.lastPersistTime > 250) {
+			this.maybePersistCamera();
+			this.lastPersistTime = now;
+		}
 
 		this.renderer.render(this.scene, this.camera);
 

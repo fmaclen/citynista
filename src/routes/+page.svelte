@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { setEditorContext } from '$lib/editor.svelte';
 	import EditorToolbar from '$lib/components/EditorToolbar.svelte';
-	import FixtureBar from '$lib/components/FixtureBar.svelte';
+	import CityBar from '$lib/components/CityBar.svelte';
 	import FpsCounter from '$lib/components/FpsCounter.svelte';
 	import LaneEditor from '$lib/components/LaneEditor.svelte';
 	import NodeLabels from '$lib/components/NodeLabels.svelte';
@@ -14,23 +14,32 @@
 		if (!containerElement) return;
 
 		untrack(() => {
-			editor.init(containerElement);
-
-			// Boot straight into a shared fixture: works in dev and preview
-			// (fixtures are static assets), so the e2e harness and a browser
-			// session render the exact same graph.
 			const params = new URLSearchParams(window.location.search);
-			if (params.has('topdown')) {
-				editor.sceneManager.setTopDown();
-			}
+			const topdown = params.has('topdown');
 			const fixture = params.get('fixture');
-			if (fixture) {
-				fetch(`/fixtures/${fixture}.json`)
-					.then((response) => (response.ok ? response.json() : null))
-					.then((data) => {
-						if (data) editor.replaceGraph(data);
-					});
-			}
+			const cam = params.get('cam');
+
+			void (async () => {
+				// Skip loading the default city when a fixture is deep-linked.
+				await editor.init(containerElement, !fixture);
+				if (topdown) editor.sceneManager.setTopDown();
+
+				if (fixture) {
+					// ?fixture=<name> opens that city from disk (works in the prod
+					// preview too, so the e2e harness renders the same graph).
+					await editor.loadCityById(fixture);
+				} else if (!topdown) {
+					editor.restoreCityCamera();
+				}
+
+				// ?cam=x,z,zoom is a headless-screenshot override (top-down, no persist).
+				if (cam) {
+					const [x, z, zoom] = cam.split(',').map(Number);
+					if ([x, z, zoom].every((n) => Number.isFinite(n))) {
+						editor.sceneManager.setScreenshotCamera(x, z, zoom);
+					}
+				}
+			})();
 		});
 
 		return () => {
@@ -47,8 +56,8 @@
 	<EditorToolbar />
 	<FpsCounter />
 	<LaneEditor />
+	<CityBar />
 	{#if import.meta.env.DEV}
-		<FixtureBar />
 		<NodeLabels />
 	{/if}
 	<div bind:this={containerElement} class="h-full w-full"></div>

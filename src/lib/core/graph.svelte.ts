@@ -3,8 +3,6 @@ import { Node } from './node.svelte';
 import { Segment } from './segment.svelte';
 import type { GraphData, Lane } from './types';
 
-const STORAGE_KEY = 'citynista-graph-v2';
-
 export class Graph {
 	nodes = new SvelteMap<string, Node>();
 	segments = new SvelteMap<string, Segment>();
@@ -112,30 +110,12 @@ export class Graph {
 		}
 	}
 
-	// Called after every successful save — the editor hooks its undo history
-	// here, since a save marks the end of a user operation.
+	// Called after every operation that ends a user action. The editor hooks both
+	// its undo history and the persistence of the current map here, since a save
+	// marks the end of an operation.
 	onSaved?: (serialized: string) => void;
 
 	save() {
-		try {
-			const serialized = JSON.stringify(this.toJSON());
-			localStorage.setItem(STORAGE_KEY, serialized);
-			this.onSaved?.(serialized);
-		} catch (e) {
-			console.error('Failed to save graph:', e);
-		}
-	}
-
-	load() {
-		try {
-			const data = localStorage.getItem(STORAGE_KEY);
-			if (data) {
-				this.fromJSON(JSON.parse(data));
-				return true;
-			}
-		} catch (e) {
-			console.error('Failed to load graph:', e);
-		}
-		return false;
+		this.onSaved?.(JSON.stringify(this.toJSON()));
 	}
 }

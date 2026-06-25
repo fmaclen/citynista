@@ -12,7 +12,10 @@ export async function PUT({ params, request }) {
 	if (!NAME_PATTERN.test(params.name)) error(400, 'Fixture names are kebab-case slugs');
 
 	const data = await request.json();
-	if (!Array.isArray(data?.nodes) || !Array.isArray(data?.segments)) {
+	// A city file is either a bare graph (legacy fixtures) or a { graph, camera }
+	// wrapper; accept both and store whatever was posted verbatim.
+	const graph = data?.graph ?? data;
+	if (!Array.isArray(graph?.nodes) || !Array.isArray(graph?.segments)) {
 		error(400, 'Expected a graph with nodes and segments');
 	}
 

@@ -91,3 +91,26 @@ export interface GraphData {
 	nodes: NodeData[];
 	segments: SegmentData[];
 }
+
+export interface CameraState {
+	zoom: number;
+	targetX: number;
+	targetZ: number;
+	azimuth: number;
+	polar: number;
+}
+
+// A saved city: its road graph plus the camera you were looking through. Stored
+// in localStorage in production and as a JSON file on disk in dev, so a session
+// reopens exactly where it was left. The id doubles as the kebab-case filename.
+export interface CityRecord {
+	id: string;
+	name: string;
+	graph: GraphData;
+	camera: CameraState | null;
+}
+
+export interface CitySummary {
+	id: string;
+	name: string;
+}

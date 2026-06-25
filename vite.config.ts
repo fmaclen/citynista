@@ -7,7 +7,10 @@ export default defineConfig({
 	server: {
 		watch: {
 			usePolling: true,
-			interval: 300
+			interval: 300,
+			// City auto-saves write JSON here constantly; don't full-reload on them.
+			// External edits to a city file are picked up on a manual reload.
+			ignored: ['**/static/fixtures/**']
 		}
 	}
 });

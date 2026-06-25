@@ -1,7 +1,17 @@
 import { getContext, setContext, untrack } from 'svelte';
 import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 import { Graph } from './core/graph.svelte';
-import type { Brush, GraphData, Lane, LaneConnectionRef, LaneRef } from './core/types';
+import { createCityStore, loadStaticCity, type CityStore } from './core/city-store';
+import type {
+	Brush,
+	CameraState,
+	CityRecord,
+	CitySummary,
+	GraphData,
+	Lane,
+	LaneConnectionRef,
+	LaneRef
+} from './core/types';
 import { cloneLanes, defaultHotbar, serializeLanes, reverseLanes } from './core/lane-template';
 import { resolveCrossings } from './core/crossings';
 import {
@@ -123,6 +133,12 @@ function cloneConnectionRefs(connections: LaneConnectionRef[] | undefined) {
 
 export class Editor {
 	graph = new Graph();
+	private cityStore: CityStore = createCityStore();
+	// Reactive city-library state for the toolbar.
+	cities = $state<CitySummary[]>([]);
+	currentCityId = $state('');
+	currentCityName = $state('');
+	private pendingCamera: CameraState | null = null;
 	sceneManager!: SceneManager;
 	nodeRenderer!: NodeRenderer;
 	roadRenderer!: RoadRenderer;
@@ -201,7 +217,9 @@ export class Editor {
 
 	private initialized = false;
 
-	init(container: HTMLElement) {
+	// loadCurrent is false when the page is about to deep-link a ?fixture=, so we
+	// don't create/touch an "untitled" city just to throw it away.
+	async init(container: HTMLElement, loadCurrent = true) {
 		if (this.initialized) return;
 		this.initialized = true;
 
@@ -215,9 +233,13 @@ export class Editor {
 		this.setbackRenderer = new SetbackRenderer(this.sceneManager.scene);
 		this.connectionRenderer = new ConnectionRenderer(this.sceneManager.scene);
 
-		this.loadSavedData();
+		if (loadCurrent) await this.loadSavedData();
 		this.presentState = JSON.stringify(this.graph.toJSON());
-		this.graph.onSaved = (serialized) => this.recordHistory(serialized);
+		this.graph.onSaved = (serialized) => {
+			this.recordHistory(serialized);
+			this.saveCurrentCity();
+		};
+		this.sceneManager.onCameraPersist = () => this.saveCameraToCache();
 		this.setupCanvasEvents();
 		this.setupHistoryKeys();
 		this.setupClipboardKeys();
@@ -573,13 +595,144 @@ export class Editor {
 		return remapped.length > 0 ? remapped : undefined;
 	}
 
-	private loadSavedData() {
-		if (this.graph.load()) {
-			for (const node of this.graph.nodes.values()) {
-				this.nodeRenderer.createNode(node);
-			}
-			this.rebuildRoads();
+	private async loadSavedData() {
+		const city = await this.cityStore.ensureCurrent();
+		this.currentCityId = city.id;
+		this.currentCityName = city.name;
+		this.pendingCamera = this.readCameraCache(city.id) ?? city.camera;
+		this.cities = await this.cityStore.list();
+		this.graph.fromJSON(this.workingGraph(city));
+		for (const node of this.graph.nodes.values()) {
+			this.nodeRenderer.createNode(node);
 		}
+		this.rebuildRoads();
+	}
+
+	// The live working graph is the legacy single-graph slot (kept in sync on every
+	// save); the current city's snapshot is the fallback. Reading the legacy slot
+	// first lets external writers (and the e2e harness) seed a graph before boot.
+	private workingGraph(city: CityRecord): GraphData {
+		try {
+			const raw = localStorage.getItem('citynista-graph-v2');
+			if (raw) return JSON.parse(raw) as GraphData;
+		} catch {
+			// fall through to the city snapshot
+		}
+		return city.graph;
+	}
+
+	// Apply the saved camera for the current city. The page calls this only on the
+	// normal path; ?fixture= and ?topdown manage the camera themselves, so a
+	// city's view never leaks into a deterministic test render.
+	restoreCityCamera() {
+		if (this.pendingCamera) this.sceneManager.setCameraState(this.pendingCamera);
+	}
+
+	private saveCurrentCity() {
+		if (!this.currentCityId) return;
+		const graph = this.graph.toJSON();
+		void this.cityStore.save({
+			id: this.currentCityId,
+			name: this.currentCityName,
+			graph,
+			camera: this.sceneManager?.getCameraState() ?? null
+		});
+		this.writeMirror(graph);
+		this.saveCameraToCache();
+	}
+
+	// Camera-only changes (panning, zooming) persist to a localStorage cache, NOT
+	// the city's file/store. That keeps the view across reloads without rewriting
+	// a committed fixture's JSON every time you pan over it; the file's camera is
+	// only refreshed when the graph itself is saved.
+	private saveCameraToCache() {
+		if (!this.currentCityId || !this.sceneManager) return;
+		try {
+			localStorage.setItem(
+				`citynista:cam:${this.currentCityId}`,
+				JSON.stringify(this.sceneManager.getCameraState())
+			);
+		} catch {
+			// best-effort
+		}
+	}
+
+	private readCameraCache(id: string): CameraState | null {
+		try {
+			const raw = localStorage.getItem(`citynista:cam:${id}`);
+			return raw ? (JSON.parse(raw) as CameraState) : null;
+		} catch {
+			return null;
+		}
+	}
+
+	// Back-compat mirror of the current working graph — the single-graph slot the
+	// e2e suite, any legacy reader, and boot's workingGraph() still read.
+	private writeMirror(graph: GraphData) {
+		try {
+			localStorage.setItem('citynista-graph-v2', JSON.stringify(graph));
+		} catch {
+			// best-effort
+		}
+	}
+
+	private clearHistory() {
+		this.undoStack.length = 0;
+		this.redoStack.length = 0;
+		this.presentState = JSON.stringify(this.graph.toJSON());
+		this.canUndo = false;
+		this.canRedo = false;
+	}
+
+	// Load a city into view. `persistToStore` writes it back — true only when
+	// materializing a static fixture that isn't in the store yet (prod ?fixture=);
+	// switching to a city that already exists must not rewrite its own file.
+	private async openCity(city: CityRecord, persistToStore: boolean) {
+		this.cityStore.setCurrentId(city.id);
+		this.currentCityId = city.id;
+		this.currentCityName = city.name;
+		// In ?topdown / screenshot mode the camera is fixed deterministically — don't
+		// clobber it with the city's saved view (or the e2e screen coords drift).
+		if (!this.sceneManager.isDeterministicCamera()) {
+			const camera = this.readCameraCache(city.id) ?? city.camera;
+			if (camera) this.sceneManager.setCameraState(camera);
+			else this.sceneManager.resetCamera();
+		}
+		this.replaceGraph(city.graph, false);
+		this.writeMirror(city.graph);
+		if (persistToStore) void this.cityStore.save(city);
+		this.clearHistory();
+		this.cities = await this.cityStore.list();
+	}
+
+	async newCity(name: string) {
+		// create() already persisted the empty city to the store.
+		await this.openCity(await this.cityStore.create(name), false);
+	}
+
+	async loadCityById(id: string) {
+		if (id === this.currentCityId) return;
+		const stored = await this.cityStore.load(id);
+		if (stored) {
+			await this.openCity(stored, false);
+			return;
+		}
+		const fixture = await loadStaticCity(id);
+		if (fixture) await this.openCity(fixture, true);
+	}
+
+	async deleteCurrentCity() {
+		if (!this.currentCityId) return;
+		await this.cityStore.remove(this.currentCityId);
+		const remaining = await this.cityStore.list();
+		if (remaining.length > 0) {
+			const city = await this.cityStore.load(remaining[0].id);
+			if (city) {
+				await this.openCity(city, false);
+				return;
+			}
+		}
+		await this.newCity('untitled');
 	}
 
 	rebuildRoads() {
@@ -1150,7 +1303,7 @@ export class Editor {
 	}
 
 	// Swap the whole working graph (fixture loads). Persists like any edit.
-	replaceGraph(data: GraphData) {
+	replaceGraph(data: GraphData, persist = true) {
 		this.clearSelection();
 		this.setHoveredNode(null);
 		this.setHoveredSegment(null);
@@ -1163,7 +1316,9 @@ export class Editor {
 			this.nodeRenderer.createNode(node);
 		}
 		this.rebuildRoads();
-		this.graph.save();
+		// persist=false just loads a city into view (switching, opening a fixture)
+		// without writing it back over its own file.
+		if (persist) this.graph.save();
 	}
 
 	dispose() {
