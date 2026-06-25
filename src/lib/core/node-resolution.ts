@@ -166,7 +166,7 @@ function intervalLaneRanges(lanes: Lane[]) {
 	let currentType: LaneLayerId | null = null;
 	let start = 0;
 	for (let i = 0; i < lanes.length; i++) {
-		const laneType = laneLayer(lanes[i]);
+		const laneType = laneLayer(lanes, i);
 		if (currentType !== null && laneType !== currentType) {
 			ranges.push([start, i - 1]);
 			start = i;
@@ -353,14 +353,7 @@ function transitionDisposition(
 function centerMedianInterval(lanes: Lane[]) {
 	const intervals = getLaneIntervals(lanes);
 	for (let i = 0; i < intervals.length; i++) {
-		if (!isIslandLike(intervals[i].laneType)) continue;
-		const roadBefore = intervals
-			.slice(0, i)
-			.some((iv) => surfaceClassOf(iv.laneType) === 'roadway');
-		const roadAfter = intervals
-			.slice(i + 1)
-			.some((iv) => surfaceClassOf(iv.laneType) === 'roadway');
-		if (roadBefore && roadAfter) return intervals[i] as LaneInterval;
+		if (surfaceClassOf(intervals[i].laneType) === 'island') return intervals[i] as LaneInterval;
 	}
 	return null;
 }

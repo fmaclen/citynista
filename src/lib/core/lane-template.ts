@@ -8,14 +8,13 @@ import type {
 	LegacyLaneType,
 	StoredLane
 } from './types';
-import { laneColor, laneLayer } from './lane-types';
+import { MATERIAL_COLOR } from './lane-types';
 
 export function laneSwatchColor(lane: {
 	role: LaneRole;
 	material: LaneMaterial;
-	raised?: boolean;
 }) {
-	return laneColor(laneLayer(lane));
+	return MATERIAL_COLOR[lane.material];
 }
 
 // Templates are presets: drawing (or applying one in the lane editor) copies
@@ -42,7 +41,6 @@ export const LANE_TEMPLATES: LaneTemplate[] = [
 			{
 				role: 'buffer',
 				material: 'concrete',
-				raised: true,
 				width: 2,
 				direction: 'bidirectional'
 			},
@@ -62,7 +60,6 @@ export const LANE_TEMPLATES: LaneTemplate[] = [
 			{
 				role: 'buffer',
 				material: 'concrete',
-				raised: true,
 				width: 3,
 				direction: 'bidirectional'
 			},
@@ -112,17 +109,13 @@ export function getTotalWidth(lanes: Lane[]): number {
 export function serializeLanes(lanes: Lane[]): string {
 	return lanes
 		.map((lane) => {
-			const raised = lane.role === 'buffer' && lane.raised ? ':raised' : '';
 			const markings = lane.markings === false ? ':nomark' : '';
-			return `${lane.role}:${lane.material}:${lane.width}:${lane.direction}${raised}${markings}`;
+			return `${lane.role}:${lane.material}:${lane.width}:${lane.direction}${markings}`;
 		})
 		.join(',');
 }
 
-const LEGACY_TYPE_MAP: Record<
-	LegacyLaneType,
-	{ role: LaneRole; material: LaneMaterial; raised?: boolean }
-> = {
+const LEGACY_TYPE_MAP: Record<LegacyLaneType, { role: LaneRole; material: LaneMaterial }> = {
 	road: { role: 'vehicle', material: 'asphalt' },
 	concrete: { role: 'vehicle', material: 'concrete' },
 	bike: { role: 'vehicle', material: 'asphalt' },
@@ -131,16 +124,15 @@ const LEGACY_TYPE_MAP: Record<
 	turn: { role: 'vehicle', material: 'asphalt' },
 	sidewalk: { role: 'pedestrian', material: 'pavement' },
 	grass: { role: 'buffer', material: 'grass' },
-	median: { role: 'buffer', material: 'concrete', raised: true }
+	median: { role: 'buffer', material: 'concrete' }
 };
 
 function legacySurfaceMaterial(surface: LegacyLaneSurface): {
 	material: LaneMaterial;
-	raised?: boolean;
 } {
 	switch (surface) {
 		case 'curb':
-			return { material: 'concrete', raised: true };
+			return { material: 'concrete' };
 		case 'paint':
 			return { material: 'asphalt' };
 		case 'grass':
@@ -157,22 +149,18 @@ export function migrateLane(stored: StoredLane): Lane {
 		? LEGACY_TYPE_MAP[stored.type]
 		: {
 				role: stored.role ?? ('vehicle' as const),
-				material: stored.material ?? ('asphalt' as const),
-				raised: stored.raised
+				material: stored.material ?? ('asphalt' as const)
 			};
 
 	let material = base.material;
-	let raised = base.raised;
 
 	if (!stored.material && stored.surface) {
 		const legacy = legacySurfaceMaterial(stored.surface);
 		material = base.role === 'pedestrian' ? 'pavement' : legacy.material;
-		raised = base.role === 'buffer' ? (legacy.raised ?? stored.raised) : undefined;
 	}
 
 	if (stored.material) {
 		material = stored.material;
-		raised = base.role === 'buffer' ? stored.raised : undefined;
 	}
 
 	const lane: Lane = {
@@ -181,7 +169,6 @@ export function migrateLane(stored: StoredLane): Lane {
 		width: stored.width,
 		direction: base.role === 'vehicle' ? stored.direction : 'bidirectional'
 	};
-	if (base.role === 'buffer' && raised) lane.raised = true;
 	if (stored.markings === false) lane.markings = false;
 	return lane;
 }

@@ -6,7 +6,6 @@ export type LaneDirection = 'forward' | 'backward' | 'bidirectional';
 export interface Lane {
 	role: LaneRole;
 	material: LaneMaterial;
-	raised?: boolean;
 	width: number;
 	// Direction of travel; only meaningful for vehicle lanes (others are bidirectional).
 	direction: LaneDirection;
@@ -38,7 +37,6 @@ export interface StoredLane {
 	role?: LaneRole;
 	surface?: LegacyLaneSurface;
 	material?: LaneMaterial;
-	raised?: boolean;
 	width: number;
 	direction: LaneDirection;
 	markings?: boolean;

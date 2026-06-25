@@ -95,7 +95,7 @@ function extendCenterline(
 // between opposing flows. Paint renders above every roadway color but
 // below medians, follows transition morphs, and stops short of junction
 // mouths — junction interiors stay unpainted until crosswalks exist.
-// Above every lane layer including raised buffers, so crossings can carry
+// Above every lane layer including buffer strips, so crossings can carry
 // pedestrian pavement over them; still below the interaction layers.
 const PAINT_Y = TOP_LAYER_Y + 0.02;
 const PAINT_WIDTH = 0.16;

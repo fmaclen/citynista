@@ -57,7 +57,6 @@ function fixtureNames() {
 	for (const file of files) {
 		const text = readFileSync(join(FIXTURE_DIR, file), 'utf8');
 		if (
-			/"raised"\s*:\s*true/.test(text) ||
 			/"role"\s*:\s*"buffer"/.test(text) ||
 			/"type"\s*:\s*"median"/.test(text) ||
 			/"setback(Start|End)"/.test(text) ||
@@ -145,14 +144,7 @@ function rendererCenterlines(graph: GraphType) {
 function centerMedianInterval(lanes: Segment['lanes']) {
 	const intervals = getLaneIntervals(lanes);
 	for (let i = 0; i < intervals.length; i++) {
-		if (!isIslandLike(intervals[i].laneType)) continue;
-		const roadBefore = intervals
-			.slice(0, i)
-			.some((iv) => surfaceClassOf(iv.laneType) === 'roadway');
-		const roadAfter = intervals
-			.slice(i + 1)
-			.some((iv) => surfaceClassOf(iv.laneType) === 'roadway');
-		if (roadBefore && roadAfter) return intervals[i];
+		if (surfaceClassOf(intervals[i].laneType) === 'island') return intervals[i];
 	}
 	return null;
 }

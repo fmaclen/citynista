@@ -10,7 +10,6 @@
 		ArrowRight,
 		Equal,
 		GripVertical,
-		Layers,
 		Plus,
 		Trash2,
 		X
@@ -62,7 +61,6 @@
 			const lane = segment.lanes[index];
 			lane.role = option.value;
 			lane.direction = option.value === 'vehicle' ? 'forward' : 'bidirectional';
-			if (option.value !== 'buffer') delete lane.raised;
 		}
 		commit();
 	}
@@ -148,17 +146,6 @@
 		for (const segment of segments) {
 			if (next === undefined) delete segment.lanes[index].markings;
 			else segment.lanes[index].markings = next;
-		}
-		commit();
-	}
-
-	function toggleRaised(index: number) {
-		const next = !lanes[index]?.raised;
-		for (const segment of segments) {
-			const lane = segment.lanes[index];
-			if (lane.role !== 'buffer') continue;
-			if (next) lane.raised = true;
-			else delete lane.raised;
 		}
 		commit();
 	}
@@ -295,16 +282,6 @@
 								title="Lane markings"
 							>
 								<Equal class="h-4 w-4" />
-							</Button>
-						{:else if lane.role === 'buffer'}
-							<Button
-								variant="ghost"
-								size="icon"
-								class="h-7 w-7 shrink-0 {lane.raised ? '' : 'text-muted-foreground/40'}"
-								onclick={() => toggleRaised(i)}
-								title="Raised buffer"
-							>
-								<Layers class="h-4 w-4" />
 							</Button>
 						{:else}
 							<div class="h-7 w-7 shrink-0"></div>

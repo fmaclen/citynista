@@ -1,7 +1,7 @@
 import { writeFileSync } from 'node:fs';
 
-// Stress fixture #2: focuses on RAISED vs FLUSH buffers (medians + side
-// verges), plus 3-way and 4-way INTERSECTIONS and SLIGHT CURVES — the cases
+// Stress fixture #2: focuses on median vs side buffers, plus 3-way and
+// 4-way INTERSECTIONS and SLIGHT CURVES - the cases
 // the original (straight, transition-only) matrix never covered. Each cell is
 // spatially isolated; mid/centre nodes are labelled for the in-game overlay.
 
@@ -12,7 +12,6 @@ type Lane = {
 	material: Mat;
 	width: number;
 	direction: Dir;
-	raised?: boolean;
 };
 
 const ped = (w = 2): Lane => ({ role: 'pedestrian', material: 'pavement', width: w, direction: 'bidirectional' });
@@ -22,43 +21,42 @@ const veh = (direction: 'forward' | 'backward', material: Mat = 'asphalt', width
 	width,
 	direction
 });
-const buf = (material: Mat, width: number, raised: boolean): Lane => ({
+const buf = (material: Mat, width: number): Lane => ({
 	role: 'buffer',
 	material,
 	width,
-	direction: 'bidirectional',
-	...(raised ? { raised: true } : {})
+	direction: 'bidirectional'
 });
 
-// Cross-sections — every variant pair that differs only by the raised flag is
-// deliberately present so a raised<->flush transition can be inspected.
+// Cross-sections cover centre dividers, side buffers, material changes, and
+// same-position buffer transitions.
 const configs: Record<string, () => Lane[]> = {
 	street: () => [ped(), veh('backward'), veh('forward'), ped()],
-	raisedGrass: () => [ped(), veh('backward'), veh('backward'), buf('grass', 2, true), veh('forward'), veh('forward'), ped()],
-	flushGrass: () => [ped(), veh('backward'), veh('backward'), buf('grass', 2, false), veh('forward'), veh('forward'), ped()],
-	raisedConc: () => [ped(), veh('backward'), veh('backward'), buf('concrete', 2, true), veh('forward'), veh('forward'), ped()],
-	flushConc: () => [ped(), veh('backward'), veh('backward'), buf('concrete', 2, false), veh('forward'), veh('forward'), ped()],
-	raisedSide: () => [ped(), buf('grass', 1.5, true), veh('backward'), veh('forward'), buf('grass', 1.5, true), ped()],
-	flushSide: () => [ped(), buf('grass', 1.5, false), veh('backward'), veh('forward'), buf('grass', 1.5, false), ped()],
+	medianGrass: () => [ped(), veh('backward'), veh('backward'), buf('grass', 2), veh('forward'), veh('forward'), ped()],
+	flushGrass: () => [ped(), veh('backward'), veh('backward'), buf('grass', 2), veh('forward'), veh('forward'), ped()],
+	medianConc: () => [ped(), veh('backward'), veh('backward'), buf('concrete', 2), veh('forward'), veh('forward'), ped()],
+	flushConc: () => [ped(), veh('backward'), veh('backward'), buf('concrete', 2), veh('forward'), veh('forward'), ped()],
+	sideBuffer: () => [ped(), buf('grass', 1.5), veh('backward'), veh('forward'), buf('grass', 1.5), ped()],
+	flushSide: () => [ped(), buf('grass', 1.5), veh('backward'), veh('forward'), buf('grass', 1.5), ped()],
 	avenue: () => [
 		ped(),
-		buf('grass', 1, false),
+		buf('grass', 1),
 		veh('backward'),
 		veh('backward'),
-		buf('concrete', 2, true),
+		buf('concrete', 2),
 		veh('forward'),
 		veh('forward'),
-		buf('grass', 1, false),
+		buf('grass', 1),
 		ped()
 	],
-	dirtRaised: () => [ped(), veh('backward'), buf('dirt', 0.5, true), veh('forward'), ped()],
-	wideRaised: () => [ped(), veh('backward'), veh('backward'), buf('grass', 5, true), veh('forward'), veh('forward'), ped()],
-	onewayRaised: () => [ped(), buf('grass', 2, true), veh('forward'), veh('forward'), ped()],
+	dirtMedian: () => [ped(), veh('backward'), buf('dirt', 0.5), veh('forward'), ped()],
+	wideMedian: () => [ped(), veh('backward'), veh('backward'), buf('grass', 5), veh('forward'), veh('forward'), ped()],
+	onewayBuffer: () => [ped(), buf('grass', 2), veh('forward'), veh('forward'), ped()],
 	highway: () => [
 		veh('backward'),
 		veh('backward'),
 		veh('backward'),
-		buf('concrete', 3, true),
+		buf('concrete', 3),
 		veh('forward'),
 		veh('forward'),
 		veh('forward')
@@ -67,41 +65,41 @@ const configs: Record<string, () => Lane[]> = {
 
 // 14 transition pairs, each emitted straight AND slightly curved = 28 cells.
 const transitions: [string, string][] = [
-	['raisedGrass', 'flushGrass'],
-	['raisedConc', 'flushConc'],
-	['raisedGrass', 'raisedConc'],
+	['medianGrass', 'flushGrass'],
+	['medianConc', 'flushConc'],
+	['medianGrass', 'medianConc'],
 	['flushGrass', 'flushConc'],
-	['raisedGrass', 'flushConc'],
-	['raisedGrass', 'street'],
+	['medianGrass', 'flushConc'],
+	['medianGrass', 'street'],
 	['flushGrass', 'street'],
-	['raisedSide', 'flushSide'],
-	['raisedSide', 'street'],
-	['raisedSide', 'raisedGrass'],
+	['sideBuffer', 'flushSide'],
+	['sideBuffer', 'street'],
+	['sideBuffer', 'medianGrass'],
 	['avenue', 'street'],
-	['avenue', 'raisedGrass'],
-	['onewayRaised', 'raisedGrass'],
-	['wideRaised', 'raisedGrass']
+	['avenue', 'medianGrass'],
+	['onewayBuffer', 'medianGrass'],
+	['wideMedian', 'medianGrass']
 ];
 
 // 7 three-way + 7 four-way specs, each straight AND curved = 28 cells.
 // 3-way order = [E, W, S] (E/W collinear through road, S branch).
 const threeWays: [string, string, string][] = [
-	['raisedGrass', 'raisedGrass', 'raisedGrass'],
-	['raisedGrass', 'raisedGrass', 'street'],
+	['medianGrass', 'medianGrass', 'medianGrass'],
+	['medianGrass', 'medianGrass', 'street'],
 	['avenue', 'avenue', 'street'],
-	['raisedGrass', 'flushGrass', 'street'],
+	['medianGrass', 'flushGrass', 'street'],
 	['flushGrass', 'flushGrass', 'street'],
-	['raisedSide', 'raisedSide', 'street'],
-	['raisedGrass', 'street', 'street']
+	['sideBuffer', 'sideBuffer', 'street'],
+	['medianGrass', 'street', 'street']
 ];
 // 4-way order = [E, W, N, S] (E/W through, N/S cross).
 const fourWays: [string, string, string, string][] = [
-	['raisedGrass', 'raisedGrass', 'raisedGrass', 'raisedGrass'],
-	['raisedGrass', 'raisedGrass', 'street', 'street'],
+	['medianGrass', 'medianGrass', 'medianGrass', 'medianGrass'],
+	['medianGrass', 'medianGrass', 'street', 'street'],
 	['avenue', 'avenue', 'street', 'street'],
-	['raisedGrass', 'raisedGrass', 'flushGrass', 'flushGrass'],
+	['medianGrass', 'medianGrass', 'flushGrass', 'flushGrass'],
 	['highway', 'highway', 'street', 'street'],
-	['raisedGrass', 'street', 'raisedGrass', 'street'],
+	['medianGrass', 'street', 'medianGrass', 'street'],
 	['flushGrass', 'flushGrass', 'street', 'street']
 ];
 

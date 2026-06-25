@@ -1,4 +1,4 @@
-import type { Lane, LaneMaterial, LaneRole } from './types';
+import type { Lane, LaneMaterial } from './types';
 
 // Every rule about how lanes render and connect is keyed to a render layer's
 // SURFACE CLASS, not to a lane's function or material name.
@@ -6,11 +6,11 @@ import type { Lane, LaneMaterial, LaneRole } from './types';
 // - roadway: vehicle-level paving. Roadways always flow into each other
 //   across transitions (material changes are a color seam), stop at junction
 //   stop lines, and are covered by the patch inside junctions.
-// - island: raised strips inside the roadway. Islands flow into other islands
-//   or verges across transitions and end in a rounded nose when nothing
-//   continues them.
-// - verge: flush buffer strips. Verges flow into islands/verges and end in a
-//   square cut everywhere else — never a sliver.
+// - island: centre dividers between opposing vehicle flows. Islands flow into
+//   other islands or verges across transitions and end in a rounded nose when
+//   nothing continues them.
+// - verge: side buffer strips. Verges flow into islands/verges and end in a
+//   square cut everywhere else - never a sliver.
 // - walkway: pedestrian paving. Pavement walkways render via the full-width
 //   plate; other materials draw bands over that plate.
 export type SurfaceClass = 'roadway' | 'island' | 'verge' | 'walkway';
@@ -57,18 +57,46 @@ export const ROAD_LAYER_LIST = roadLayers.sort((a, b) => {
 	return materialOrder(a) - materialOrder(b);
 });
 
-export function surfaceClassForLane(lane: { role: LaneRole; raised?: boolean }): SurfaceClass {
-	if (lane.role === 'vehicle') return 'roadway';
-	if (lane.role === 'pedestrian') return 'walkway';
-	return lane.raised ? 'island' : 'verge';
+export function medianBufferIndex(lanes: readonly Lane[]) {
+	const bounds = laneBoundaryOffsets(lanes);
+	const forward: number[] = [];
+	const backward: number[] = [];
+	for (let i = 0; i < lanes.length; i++) {
+		const lane = lanes[i];
+		if (lane.role !== 'vehicle') continue;
+		if (lane.direction === 'forward') forward.push(i);
+		else if (lane.direction === 'backward') backward.push(i);
+	}
+	if (forward.length === 0 || backward.length === 0) return null;
+
+	const maxBackward = Math.max(...backward);
+	const minForward = Math.min(...forward);
+	const maxForward = Math.max(...forward);
+	const minBackward = Math.min(...backward);
+	const dividerOffset =
+		maxBackward < minForward
+			? (bounds[maxBackward + 1] + bounds[minForward]) / 2
+			: (bounds[maxForward + 1] + bounds[minBackward]) / 2;
+
+	for (let i = 0; i < lanes.length; i++) {
+		if (lanes[i].role !== 'buffer') continue;
+		if (bounds[i] - 0.001 <= dividerOffset && dividerOffset <= bounds[i + 1] + 0.001) {
+			return i;
+		}
+	}
+	return null;
 }
 
-export function laneLayer(lane: {
-	role: LaneRole;
-	material: LaneMaterial;
-	raised?: boolean;
-}): LaneLayerId {
-	return `${surfaceClassForLane(lane)}:${lane.material}`;
+export function surfaceClassForLane(lanes: readonly Lane[], index: number): SurfaceClass {
+	const lane = lanes[index];
+	if (lane.role === 'vehicle') return 'roadway';
+	if (lane.role === 'pedestrian') return 'walkway';
+	return medianBufferIndex(lanes) === index ? 'island' : 'verge';
+}
+
+export function laneLayer(lanes: readonly Lane[], index: number): LaneLayerId {
+	const lane = lanes[index];
+	return `${surfaceClassForLane(lanes, index)}:${lane.material}`;
 }
 
 export function surfaceClassOf(layer: RoadLayerId): SurfaceClass {
@@ -81,7 +109,7 @@ export function isRoadway(layer: RoadLayerId): boolean {
 }
 
 // Islands and verges pool together when matching strips across a node: a
-// raised median can flow into a flush buffer and vice versa.
+// centre median can flow into a side buffer and vice versa.
 export function isIslandLike(layer: RoadLayerId): boolean {
 	const surfaceClass = surfaceClassOf(layer);
 	return surfaceClass === 'island' || surfaceClass === 'verge';
@@ -92,10 +120,12 @@ export function laneColor(layer: RoadLayerId): string {
 	return MATERIAL_COLOR[materialOf(layer)];
 }
 
-// Material-agnostic structural identity: asphalt and concrete share a token
-// inside a class, while raised buffers change class and therefore structure.
+// Structural identity is independent of exact material color and of whether a
+// buffer's position classifies it as a centre island or side verge.
 export function laneStructureToken(lane: Lane) {
-	return `${surfaceClassForLane(lane)}:${lane.direction}:${lane.width}`;
+	const materialClass =
+		lane.role === 'vehicle' ? 'roadway' : lane.role === 'pedestrian' ? 'walkway' : 'buffer';
+	return `${lane.role}:${materialClass}:${lane.direction}:${lane.width}`;
 }
 
 export function lanesStructureKey(lanes: Lane[]) {
@@ -138,4 +168,13 @@ function materialOrder(layer: RoadLayerId): number {
 function layerClassOrder(layer: RoadLayerId): number {
 	if (layer === 'plate') return CLASS_ORDER.plate;
 	return CLASS_ORDER[surfaceClassOf(layer)];
+}
+
+function laneBoundaryOffsets(lanes: readonly Lane[]) {
+	const total = lanes.reduce((sum, lane) => sum + lane.width, 0);
+	const bounds = [-total / 2];
+	for (const lane of lanes) {
+		bounds.push(bounds[bounds.length - 1] + lane.width);
+	}
+	return bounds;
 }

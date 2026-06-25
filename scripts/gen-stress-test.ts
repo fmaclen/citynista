@@ -10,7 +10,6 @@ type Lane = {
 	material: 'pavement' | 'asphalt' | 'concrete' | 'grass' | 'dirt';
 	width: number;
 	direction: 'forward' | 'backward' | 'bidirectional';
-	raised?: boolean;
 };
 
 const ped = (w = 3): Lane => ({
@@ -24,12 +23,11 @@ const veh = (
 	material: Lane['material'] = 'asphalt',
 	width = 3.5
 ): Lane => ({ role: 'vehicle', material, width, direction });
-const median = (material: Lane['material'], width = 2, raised = true): Lane => ({
+const median = (material: Lane['material'], width = 2): Lane => ({
 	role: 'buffer',
 	material,
 	width,
-	direction: 'bidirectional',
-	raised
+	direction: 'bidirectional'
 });
 
 const configs: Record<string, () => Lane[]> = {
@@ -39,7 +37,7 @@ const configs: Record<string, () => Lane[]> = {
 		ped(),
 		veh('backward'),
 		veh('backward'),
-		median('grass', 2, true),
+		median('grass', 2),
 		veh('forward'),
 		veh('forward'),
 		ped()
@@ -48,20 +46,20 @@ const configs: Record<string, () => Lane[]> = {
 		ped(),
 		veh('backward'),
 		veh('backward'),
-		median('concrete', 2, true),
+		median('concrete', 2),
 		veh('forward'),
 		veh('forward'),
 		ped()
 	],
-	dirtMedian: () => [ped(), veh('backward'), median('dirt', 0.5, true), veh('forward'), ped()],
-	flushGrass: () => [ped(), veh('backward'), median('grass', 3, false), veh('forward'), ped()],
+	dirtMedian: () => [ped(), veh('backward'), median('dirt', 0.5), veh('forward'), ped()],
+	flushGrass: () => [ped(), veh('backward'), median('grass', 3), veh('forward'), ped()],
 	oneway2: () => [ped(), veh('forward'), veh('forward'), ped()],
 	highway: () => [
 		ped(),
 		veh('backward'),
 		veh('backward'),
 		veh('backward'),
-		median('concrete', 3, true),
+		median('concrete', 3),
 		veh('forward'),
 		veh('forward'),
 		veh('forward'),
@@ -74,7 +72,7 @@ const configs: Record<string, () => Lane[]> = {
 		ped(),
 		veh('backward'),
 		veh('backward'),
-		median('grass', 6, true),
+		median('grass', 6),
 		veh('forward'),
 		veh('forward'),
 		ped()
@@ -82,7 +80,7 @@ const configs: Record<string, () => Lane[]> = {
 	offcenter: () => [
 		ped(),
 		veh('backward'),
-		median('grass', 2, true),
+		median('grass', 2),
 		veh('forward'),
 		veh('forward'),
 		veh('forward'),

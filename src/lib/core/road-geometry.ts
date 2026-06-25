@@ -191,12 +191,14 @@ export function getLaneIntervals(lanes: Lane[]): LaneInterval[] {
 	const intervals: LaneInterval[] = [];
 	let offset = -getTotalWidth(lanes) / 2;
 
-	for (const lane of lanes) {
+	for (let i = 0; i < lanes.length; i++) {
+		const lane = lanes[i];
+		const layer = laneLayer(lanes, i);
 		const previous = intervals[intervals.length - 1];
-		if (previous && previous.laneType === laneLayer(lane)) {
+		if (previous && previous.laneType === layer) {
 			previous.end += lane.width;
 		} else {
-			intervals.push({ laneType: laneLayer(lane), start: offset, end: offset + lane.width });
+			intervals.push({ laneType: layer, start: offset, end: offset + lane.width });
 		}
 		offset += lane.width;
 	}
@@ -1676,14 +1678,7 @@ function hasCenterMedian(lanes: Lane[]): boolean {
 function centerMedianInterval(lanes: Lane[]) {
 	const intervals = getLaneIntervals(lanes);
 	for (let i = 0; i < intervals.length; i++) {
-		if (!isIslandLike(intervals[i].laneType)) continue;
-		const roadBefore = intervals
-			.slice(0, i)
-			.some((iv) => surfaceClassOf(iv.laneType) === 'roadway');
-		const roadAfter = intervals
-			.slice(i + 1)
-			.some((iv) => surfaceClassOf(iv.laneType) === 'roadway');
-		if (roadBefore && roadAfter) return intervals[i];
+		if (surfaceClassOf(intervals[i].laneType) === 'island') return intervals[i];
 	}
 	return null;
 }
@@ -1703,7 +1698,7 @@ function segmentsCross(p1: Point, p2: Point, p3: Point, p4: Point): boolean {
 const MEDIAN_BARRIER_REACH = 8;
 
 // Centre-median lines running uninterrupted through the node: a connector
-// crossing one would drive across a raised median, so the default set excludes
+// crossing one would drive across a centre divider, so the default set excludes
 // it (a U-turn or break must be added explicitly). A collinear road pair that
 // both carry a centre median is a barrier along the through road's axis —
 // unless another collinear road pair crosses it, which is a real intersection
@@ -2964,8 +2959,7 @@ function buildJunctionCrosswalks(
 	// corner when the intersection has sidewalks elsewhere.
 	const merge = mergeInfo(graph, node);
 	const through = merge?.throughIds ?? new Set<string>();
-	const hasSidewalk = (arm: IntersectionArm) =>
-		arm.lanes.some((lane) => surfaceClassOf(laneLayer(lane)) === 'walkway');
+	const hasSidewalk = (arm: IntersectionArm) => arm.lanes.some((lane) => lane.role === 'pedestrian');
 	const nodeHasSidewalk = roadArms.some(hasSidewalk);
 
 	// At a stop line every island has already ended — the crossing zone is
