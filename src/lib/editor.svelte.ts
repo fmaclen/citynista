@@ -36,7 +36,7 @@ export interface SetbackHandleInfo {
 	// twice the handle distance (the full taper spans both sides of the node).
 	straddle?: { link: { segmentId: string; atStart: boolean } };
 }
-import type { ModeHandlers, Mode, DrawStyle } from './modes/types';
+import type { ModeHandlers, Mode } from './modes/types';
 import { setupDrawMode } from './modes/draw';
 import { setupSelectMode } from './modes/select';
 import { setupBulldozeMode } from './modes/bulldoze';
@@ -145,7 +145,6 @@ export class Editor {
 	};
 
 	mode = $state<Mode>('select');
-	drawStyle = $state<DrawStyle>('straight');
 	hotbar = $state<(Brush | null)[]>(defaultHotbar());
 	activeSlot = $state(0);
 	activeBrush = $derived(this.hotbar[this.activeSlot]);

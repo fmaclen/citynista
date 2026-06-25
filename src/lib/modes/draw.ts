@@ -43,11 +43,32 @@ type SnapResult =
 	| { kind: 'segment'; snap: SegmentSnap; x: number; y: number }
 	| { kind: 'free'; x: number; y: number };
 
+// Intersection of ray (a + j·u) and ray (b + k·v), j,k > 0; null if parallel,
+// behind a ray, or unreasonably far (a near-straight join curves gently instead).
+const tangentIntersection = (
+	ax: number,
+	ay: number,
+	ux: number,
+	uy: number,
+	bx: number,
+	by: number,
+	vx: number,
+	vy: number
+) => {
+	const uv = ux * vy - uy * vx;
+	if (Math.abs(uv) < 1e-6) return null;
+	const ex = bx - ax;
+	const ey = by - ay;
+	const j = (ex * vy - ey * vx) / uv;
+	const k = (ex * uy - ey * ux) / uv;
+	if (j <= 0 || k <= 0) return null;
+	const chord = Math.hypot(ex, ey);
+	if (j > chord * 1.5 || k > chord * 1.5) return null;
+	return { x: ax + ux * j, y: ay + uy * j };
+};
+
 export function setupDrawMode(editor: Editor): ModeHandlers {
 	let startNodeId: string | null = null;
-	// Curved style: the apex click fixes the quadratic control point before
-	// the end click places the segment.
-	let pendingControl: { x: number; y: number } | null = null;
 	let shiftHeld = false;
 	let lastWorld: { x: number; z: number } | null = null;
 
@@ -66,16 +87,6 @@ export function setupDrawMode(editor: Editor): ModeHandlers {
 	cursorNode.rotation.x = -Math.PI / 2;
 	cursorNode.visible = false;
 	editor.sceneManager.scene.add(cursorNode);
-
-	const apexMaterial = new THREE.MeshBasicMaterial({
-		color: GHOST_NODE_SNAPPED_COLOR,
-		transparent: true,
-		opacity: 0.9
-	});
-	const apexMarker = new THREE.Mesh(new THREE.CircleGeometry(2.5, 24), apexMaterial);
-	apexMarker.rotation.x = -Math.PI / 2;
-	apexMarker.visible = false;
-	editor.sceneManager.scene.add(apexMarker);
 
 	let cursorRadius = 0;
 	const updateCursorRadius = () => {
@@ -209,9 +220,9 @@ export function setupDrawMode(editor: Editor): ModeHandlers {
 		return { x: anchorX + Math.cos(best) * distance, y: anchorY + Math.sin(best) * distance };
 	};
 
-	// Smooth style: the control point sits on the start-tangent ray where it
-	// meets the chord's perpendicular bisector — an arc-like curve that
-	// leaves the previous road without a kink. Too sharp an angle falls
+	// Automatic curves put the control point on a continuation tangent ray
+	// where it meets the chord's perpendicular bisector — an arc-like curve
+	// that leaves the previous road without a kink. Too sharp an angle falls
 	// back to straight.
 	const smoothControl = (
 		sx: number,
@@ -228,6 +239,31 @@ export function setupDrawMode(editor: Editor): ModeHandlers {
 		if (along < chord * 0.1) return null;
 		const reach = Math.min((chord * chord) / (2 * along), chord * 1.5);
 		return { x: sx + tangent.x * reach, y: sy + tangent.y * reach };
+	};
+
+	const solveControl = (startNode: { x: number; y: number }, target: SnapResult) => {
+		if (shiftHeld) return null;
+		const startTangent = startNodeId
+			? continuationTangentAt(startNodeId, target.x, target.y)
+			: null;
+		const endTangent =
+			target.kind === 'node' ? continuationTangentAt(target.nodeId, startNode.x, startNode.y) : null;
+		if (startTangent && endTangent) {
+			const both = tangentIntersection(
+				startNode.x,
+				startNode.y,
+				startTangent.x,
+				startTangent.y,
+				target.x,
+				target.y,
+				endTangent.x,
+				endTangent.y
+			);
+			if (both) return both;
+		}
+		if (startTangent) return smoothControl(startNode.x, startNode.y, startTangent, target.x, target.y);
+		if (endTangent) return smoothControl(target.x, target.y, endTangent, startNode.x, startNode.y);
+		return null;
 	};
 
 	// Node snapping covers the node's visible ring, pixel-floored — over a
@@ -270,15 +306,8 @@ export function setupDrawMode(editor: Editor): ModeHandlers {
 		const startNode = editor.graph.nodes.get(startNodeId);
 		if (!startNode) return snap;
 
-		const anchor =
-			editor.drawStyle === 'curved' && pendingControl
-				? pendingControl
-				: { x: startNode.x, y: startNode.y };
-		const tangent =
-			editor.drawStyle === 'curved' && pendingControl
-				? null
-				: continuationTangentAt(startNodeId, worldX, worldZ);
-		const snapped = angleSnap(anchor.x, anchor.y, worldX, worldZ, tangent);
+		const tangent = continuationTangentAt(startNodeId, worldX, worldZ);
+		const snapped = angleSnap(startNode.x, startNode.y, worldX, worldZ, tangent);
 		return { kind: 'free', x: snapped.x, y: snapped.y };
 	};
 
@@ -310,21 +339,6 @@ export function setupDrawMode(editor: Editor): ModeHandlers {
 		startNodeId = null;
 	};
 
-	// The control point of the segment a click at `target` would create —
-	// null for a straight segment.
-	const pendingSegmentControl = (
-		startNode: { x: number; y: number },
-		targetX: number,
-		targetY: number
-	) => {
-		if (editor.drawStyle === 'curved') return pendingControl;
-		if (editor.drawStyle === 'smooth' && startNodeId !== null) {
-			const tangent = continuationTangentAt(startNodeId, targetX, targetY);
-			if (tangent) return smoothControl(startNode.x, startNode.y, tangent, targetX, targetY);
-		}
-		return null;
-	};
-
 	const updatePreview = (worldX: number, worldZ: number) => {
 		const target = resolveTarget(worldX, worldZ);
 
@@ -334,11 +348,6 @@ export function setupDrawMode(editor: Editor): ModeHandlers {
 		cursorMaterial.color.setHex(
 			target.kind === 'free' ? GHOST_NODE_COLOR : GHOST_NODE_SNAPPED_COLOR
 		);
-
-		apexMarker.visible = pendingControl !== null;
-		if (pendingControl) {
-			apexMarker.position.set(pendingControl.x, GHOST_NODE_Y, pendingControl.y);
-		}
 
 		if (startNodeId === null) {
 			ghostRenderer.clear();
@@ -361,7 +370,7 @@ export function setupDrawMode(editor: Editor): ModeHandlers {
 			previewEnd.id,
 			cloneLanes(editor.activeBrush?.lanes ?? [])
 		);
-		const control = pendingSegmentControl(startNode, target.x, target.y);
+		const control = startNodeId ? solveControl(startNode, target) : null;
 		if (control) {
 			preview.setControlPoint(control.x, control.y);
 		}
@@ -383,12 +392,9 @@ export function setupDrawMode(editor: Editor): ModeHandlers {
 				editor.rebuildRoads();
 				editor.graph.save();
 			}
-		} else if (editor.drawStyle === 'curved' && pendingControl === null) {
-			// The apex click: a free point, never anchored to the graph.
-			pendingControl = { x: target.x, y: target.y };
 		} else {
 			const startNode = editor.graph.nodes.get(startNodeId);
-			const control = startNode ? pendingSegmentControl(startNode, target.x, target.y) : null;
+			const control = startNode ? solveControl(startNode, target) : null;
 			const endNodeId = anchorNodeId(target);
 
 			if (startNodeId !== endNodeId) {
@@ -406,7 +412,6 @@ export function setupDrawMode(editor: Editor): ModeHandlers {
 			editor.rebuildRoads();
 			editor.graph.save();
 			startNodeId = endNodeId;
-			pendingControl = null;
 			ghostRenderer.clear();
 		}
 
@@ -420,17 +425,8 @@ export function setupDrawMode(editor: Editor): ModeHandlers {
 		updatePreview(worldPos.x, worldPos.z);
 	};
 
-	// Escape unwinds one stage at a time: apex, then pending segment, then
-	// draw mode itself. Tab cycles the drawing style.
+	// Escape unwinds one stage at a time: pending segment, then draw mode itself.
 	const onKeyDown = (event: KeyboardEvent) => {
-		if (event.key === 'Tab') {
-			event.preventDefault();
-			const order = ['straight', 'curved', 'smooth'] as const;
-			editor.drawStyle = order[(order.indexOf(editor.drawStyle) + 1) % order.length];
-			pendingControl = null;
-			if (lastWorld) updatePreview(lastWorld.x, lastWorld.z);
-			return;
-		}
 		if (event.key === 'Shift' && lastWorld) {
 			shiftHeld = true;
 			updatePreview(lastWorld.x, lastWorld.z);
@@ -438,13 +434,9 @@ export function setupDrawMode(editor: Editor): ModeHandlers {
 		}
 		if (event.key !== 'Escape') return;
 
-		if (pendingControl !== null) {
-			pendingControl = null;
-			if (lastWorld) updatePreview(lastWorld.x, lastWorld.z);
-		} else if (startNodeId !== null) {
+		if (startNodeId !== null) {
 			discardOrphanStart();
 			ghostRenderer.clear();
-			apexMarker.visible = false;
 		} else {
 			editor.mode = 'select';
 		}
@@ -454,11 +446,8 @@ export function setupDrawMode(editor: Editor): ModeHandlers {
 		discardOrphanStart();
 		ghostRenderer.dispose();
 		editor.sceneManager.scene.remove(cursorNode);
-		editor.sceneManager.scene.remove(apexMarker);
 		cursorNode.geometry.dispose();
 		cursorMaterial.dispose();
-		apexMarker.geometry.dispose();
-		apexMaterial.dispose();
 	};
 
 	return {

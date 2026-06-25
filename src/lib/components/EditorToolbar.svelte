@@ -1,6 +1,5 @@
 <script lang="ts">
 	import { getEditorContext } from '$lib/editor.svelte';
-	import type { DrawStyle } from '$lib/modes/types';
 	import { getTotalWidth, laneSwatchColor } from '$lib/core/lane-template';
 	import { MATERIAL_COLOR } from '$lib/core/lane-types';
 	import { Button } from '$lib/components/ui/button';
@@ -10,11 +9,8 @@
 		Plus,
 		Redo2,
 		Scissors,
-		Slash,
-		Spline,
 		Undo2,
 		Tractor,
-		Waves
 	} from '@lucide/svelte';
 
 	const editor = getEditorContext();
@@ -22,12 +18,6 @@
 	const maxBrushWidth = $derived(
 		Math.max(1, ...editor.hotbar.flatMap((b) => (b ? [getTotalWidth(b.lanes)] : [])))
 	);
-
-	const DRAW_STYLES: { id: DrawStyle; label: string; icon: typeof Slash }[] = [
-		{ id: 'straight', label: 'Straight', icon: Slash },
-		{ id: 'curved', label: 'Curved (start, apex, end)', icon: Spline },
-		{ id: 'smooth', label: 'Smooth (tangent-continuous)', icon: Waves }
-	];
 
 	// Toolbar buttons return focus to the page after acting, so mode keys
 	// (Escape, Tab, Delete) and shortcuts keep working right after a click —
@@ -129,22 +119,6 @@
 				{/if}
 			</button>
 		{/each}
-
-		{#if editor.mode === 'draw'}
-			<div class="mx-1 h-6 w-px bg-border"></div>
-
-			{#each DRAW_STYLES as style (style.id)}
-				<Button
-					variant={editor.drawStyle === style.id ? 'default' : 'ghost'}
-					size="icon"
-					onclick={press(() => (editor.drawStyle = style.id))}
-					title="{style.label} (Tab cycles)"
-					aria-pressed={editor.drawStyle === style.id}
-				>
-					<style.icon class="h-4 w-4" />
-				</Button>
-			{/each}
-		{/if}
 
 		<div class="mx-1 h-6 w-px bg-border"></div>
 
