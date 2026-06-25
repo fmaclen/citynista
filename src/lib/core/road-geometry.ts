@@ -5,8 +5,8 @@ import type { Node } from './node.svelte';
 import type { Segment } from './segment.svelte';
 import type { Lane, LaneConnectionRef, LaneMaterial } from './types';
 import { getTotalWidth } from './lane-template';
+import { resolveNodeStrips, type NodeStripResolution } from './node-resolution';
 import {
-	isIslandLike,
 	isRoadway,
 	laneLayer,
 	lanePaintBetween,
@@ -421,44 +421,6 @@ function mirrorIntervals(intervals: LaneInterval[]): LaneInterval[] {
 		.reverse();
 }
 
-// Islands (grass and median strips) connect across types: a median flows
-// into a grass strip and vice versa, centered or not. Best same-type overlap
-// wins; otherwise the nearest island within reach (center distance no more
-// than the two widths combined, so verges never grab a far-away center
-// strip). Null means the strip has nothing to flow into and ends instead.
-function islandMatch(interval: LaneInterval, candidates: LaneInterval[]): LaneInterval | null {
-	const center = (i: { start: number; end: number }) => (i.start + i.end) / 2;
-	const width = (i: { start: number; end: number }) => i.end - i.start;
-
-	let best: LaneInterval | null = null;
-	let bestOverlap = 0;
-	for (const candidate of candidates) {
-		if (candidate.laneType !== interval.laneType) continue;
-		const overlap =
-			Math.min(interval.end, candidate.end) - Math.max(interval.start, candidate.start);
-		if (overlap > bestOverlap) {
-			bestOverlap = overlap;
-			best = candidate;
-		}
-	}
-	if (best) return best;
-
-	let nearest: LaneInterval | null = null;
-	let nearestDistance = Infinity;
-	for (const candidate of candidates) {
-		if (!isIslandLike(candidate.laneType)) continue;
-		const distance = Math.abs(center(candidate) - center(interval));
-		if (distance < nearestDistance) {
-			nearest = candidate;
-			nearestDistance = distance;
-		}
-	}
-	if (nearest && nearestDistance <= width(interval) + width(nearest)) {
-		return nearest;
-	}
-	return null;
-}
-
 export interface TransitionMorph {
 	// Target offsets at the node for each of the segment's own lane
 	// intervals (indexed like getLaneIntervals). Null means the strip has no
@@ -503,34 +465,49 @@ export interface TransitionMorph {
 // recompute only on a real change.
 const transitionMorphCache = new Map<string, { sig: string; morph: TransitionMorph | null }>();
 
-function morphSignature(graph: Graph, node: Node) {
-	let sig = `${node.x},${node.y}`;
-	for (const segId of [...node.connectedSegments].sort()) {
-		const seg = graph.segments.get(segId);
-		if (!seg) continue;
-		const isStart = seg.startNodeId === node.id;
-		const setback = isStart ? seg.setbackStart : seg.setbackEnd;
-		const far = graph.nodes.get(isStart ? seg.endNodeId : seg.startNodeId);
-		sig += `|${segId}:${seg.lanesKey}:${isStart ? 's' : 'e'}:${setback ?? '_'}:${seg.controlX ?? '_'},${seg.controlY ?? '_'}:${far?.x ?? '_'},${far?.y ?? '_'}`;
-	}
-	return sig;
-}
-
-export function transitionMorph(graph: Graph, node: Node, segmentId: string) {
+export function transitionMorph(
+	graph: Graph,
+	node: Node,
+	segmentId: string,
+	centerlines?: Map<string, CenterlineSample[]>
+) {
 	if (transitionMorphCache.size > 4096) transitionMorphCache.clear();
+	if (!isTransitionNode(graph, node)) return null;
+
+	const pair = nodeThroughPair(graph, node);
+	if (!pair || (pair[0].id !== segmentId && pair[1].id !== segmentId)) return null;
+
+	const resolution = resolveNodeStrips(
+		graph,
+		node,
+		centerlines ?? transitionNodeCenterlines(graph, node, pair)
+	);
 	const key = `${node.id}|${segmentId}`;
-	const sig = morphSignature(graph, node);
+	const sig = resolution.signature;
 	const cached = transitionMorphCache.get(key);
 	if (cached && cached.sig === sig) return cached.morph;
-	const morph = computeTransitionMorph(graph, node, segmentId);
+	const morph = computeTransitionMorph(graph, node, segmentId, resolution);
 	transitionMorphCache.set(key, { sig, morph });
 	return morph;
+}
+
+function transitionNodeCenterlines(graph: Graph, node: Node, pair: [Segment, Segment]) {
+	const centerlines = new Map<string, CenterlineSample[]>();
+	for (const segment of pair) {
+		const startNode = graph.nodes.get(segment.startNodeId);
+		const endNode = graph.nodes.get(segment.endNodeId);
+		if (!startNode || !endNode) continue;
+		const samples = sampleTrimmedCenterline(segment, startNode, endNode, 0, 0);
+		if (samples.length >= 2) centerlines.set(segment.id, samples);
+	}
+	return centerlines;
 }
 
 function computeTransitionMorph(
 	graph: Graph,
 	node: Node,
-	segmentId: string
+	segmentId: string,
+	resolution: NodeStripResolution
 ): TransitionMorph | null {
 	if (!isTransitionNode(graph, node)) return null;
 
@@ -543,12 +520,6 @@ function computeTransitionMorph(
 	const halfSelf = getTotalWidth(self.lanes) / 2;
 	const halfOther = getTotalWidth(other.lanes) / 2;
 
-	const selfIntervals = getLaneIntervals(self.lanes);
-	// Frames continue head-to-tail only when one segment ends here and the
-	// other starts here; otherwise the other side's frame is mirrored.
-	const flipped = (self.startNodeId === node.id) === (other.startNodeId === node.id);
-	const otherLanesInSelfFrame = flipped ? [...other.lanes].reverse() : other.lanes;
-
 	// Deterministic from both sides: the narrower segment anchors; equal
 	// widths fall back to the structural lane-stack key.
 	const selfStructureKey = lanesStructureKey(self.lanes);
@@ -556,6 +527,23 @@ function computeTransitionMorph(
 	const selfIsAnchor =
 		halfSelf < halfOther - 0.01 ||
 		(Math.abs(halfSelf - halfOther) <= 0.01 && selfStructureKey <= otherStructureKey);
+	const arm = resolution.arms.find((candidate) => candidate.segmentId === segmentId);
+	if (!arm) return null;
+	const targets = arm.strips.map((strip) => strip.node);
+	const roadwayUnderfills = arm.strips.map((strip) =>
+		strip.roadwayUnderfill
+			? {
+					laneType: strip.roadwayUnderfill.laneType,
+					start: strip.roadwayUnderfill.node.start,
+					end: strip.roadwayUnderfill.node.end
+				}
+			: null
+	);
+	const laneBoundaries = arm.paintBoundaries.map((boundary) => boundary.targetOffset);
+	const centerNose = arm.centerNose
+		? { index: arm.centerNose.intervalIndex, offset: arm.centerNose.offset }
+		: null;
+	const anchorHalfWidth = (arm.node.plateSpan.end - arm.node.plateSpan.start) / 2;
 
 	if (selfIsAnchor) {
 		// The anchor never morphs, so its length is only carried for the
@@ -564,129 +552,27 @@ function computeTransitionMorph(
 			TRANSITION_MAX_LENGTH,
 			Math.max(TRANSITION_MIN_LENGTH, Math.abs(halfSelf - halfOther) * TRANSITION_TAPER)
 		);
-		const laneBoundaries = laneBoundaryTargets(self.lanes, otherLanesInSelfFrame, flipped, true);
 		return {
-			intervals: selfIntervals.map((interval) => ({ start: interval.start, end: interval.end })),
-			roadwayUnderfills: selfIntervals.map(() => null),
+			intervals: targets,
+			roadwayUnderfills,
 			laneBoundaries,
-			centerNose: null,
-			halfWidth: halfSelf,
+			centerNose,
+			halfWidth: anchorHalfWidth,
 			length,
 			anchor: true,
 			key:
-				`${length}:${halfSelf}:anchor|` +
+				`${length}:${anchorHalfWidth}:anchor|` +
 				laneBoundaries.map((b) => (b === null ? 'x' : Math.round(b * 100))).join(',') +
 				':cn0'
 		};
 	}
-
-	let anchorIntervals = getLaneIntervals(other.lanes);
-	if (flipped) anchorIntervals = mirrorIntervals(anchorIntervals);
-
-	const at = (interval: { start: number; end: number }) => ({
-		start: interval.start,
-		end: interval.end
-	});
-
-	const roadwayTarget = (
-		interval: { start: number; end: number },
-		anchorRoadways: LaneInterval[]
-	) => {
-		const boundStart = Math.min(...anchorRoadways.map((i) => i.start));
-		const boundEnd = Math.max(...anchorRoadways.map((i) => i.end));
-		const width = Math.min(interval.end - interval.start, boundEnd - boundStart);
-		const center = Math.min(
-			boundEnd - width / 2,
-			Math.max(boundStart + width / 2, (interval.start + interval.end) / 2)
-		);
-		return { start: center - width / 2, end: center + width / 2 };
-	};
-
-	const roadwayUnderfillLayer = (index: number) => {
-		const adjacent = [selfIntervals[index - 1], selfIntervals[index + 1]]
-			.filter((interval) => interval && isRoadway(interval.laneType))
-			.map((interval) => interval.laneType);
-		return adjacent.length > 0 && adjacent.every((laneType) => laneType === 'roadway:concrete')
-			? roadwayLayer('concrete')
-			: roadwayLayer('asphalt');
-	};
-
-	const roadwayUnderfills: TransitionMorph['roadwayUnderfills'] = selfIntervals.map(() => null);
-
-	const targets = selfIntervals.map((interval) => {
-		const index = selfIntervals.indexOf(interval);
-		const surface = surfaceClassOf(interval.laneType);
-		if (surface === 'walkway') {
-			// Pavement walkways render via the full-width plate; other walkway
-			// materials use the same offsets above it.
-			return at(interval);
-		}
-
-		const own = selfIntervals.filter((i) => i.laneType === interval.laneType);
-		const counterparts = anchorIntervals.filter((i) => i.laneType === interval.laneType);
-
-		if (own.length === counterparts.length && counterparts.length > 0) {
-			return at(counterparts[own.indexOf(interval)]);
-		}
-
-		if (surface === 'roadway') {
-			// Primary roadways always flow into the anchor's roadway,
-			// whatever the material: the strip keeps its width (clamped to
-			// fit) and slides inside the anchor's roadway span, meeting it
-			// at a color seam. With no roadway across at all it pinches out.
-			const anchorRoadways = anchorIntervals.filter((i) => isRoadway(i.laneType));
-			if (anchorRoadways.length === 0) {
-				return {
-					start: (interval.start + interval.end) / 2,
-					end: (interval.start + interval.end) / 2
-				};
-			}
-
-			// Accessory roadways ride the taper too and end square exactly
-			// at the seam — paint ends square; only curbs get noses.
-			return roadwayTarget(interval, anchorRoadways);
-		}
-
-		const match = islandMatch(interval, anchorIntervals);
-		if (match) return at(match);
-
-		const ownCenter = (interval.start + interval.end) / 2;
-		const anchorRoadways = anchorIntervals.filter((i) => isRoadway(i.laneType));
-		const noseTarget = () => {
-			const center =
-				anchorRoadways.length === 0
-					? ownCenter
-					: Math.min(
-							Math.max(...anchorRoadways.map((i) => i.end)),
-							Math.max(Math.min(...anchorRoadways.map((i) => i.start)), ownCenter)
-						);
-			roadwayUnderfills[index] = {
-				laneType: roadwayUnderfillLayer(index),
-				...(anchorRoadways.length === 0
-					? { start: center, end: center }
-					: roadwayTarget(interval, anchorRoadways))
-			};
-			return { start: center, end: center };
-		};
-
-		if (surface === 'island') {
-			// An island with no counterpart pinches toward its centerline:
-			// the target is a zero-width point inside the anchor's roadway,
-			// making a wind-down nose, never a full-width slab against the
-			// seam.
-			return noseTarget();
-		}
-
-		// Unmatched verges wind down like islands, with roadway underfill so
-		// the nose does not expose grass or plate below it.
-		return noseTarget();
-	});
 
 	// The taper length scales with the largest edge displacement any strip
 	// undergoes — lateral shifts (off-center medians, turning-lane stacks)
 	// need just as much easing room as width changes, which this subsumes:
 	// the plate's outer edges displace by exactly the half-width difference.
 	let maxShift = Math.abs(halfSelf - halfOther);
+	const selfIntervals = getLaneIntervals(self.lanes);
 	for (let k = 0; k < targets.length; k++) {
 		const target = targets[k];
 		if (!target) continue;
@@ -707,34 +593,16 @@ function computeTransitionMorph(
 					Math.max(TRANSITION_MIN_LENGTH, maxShift * TRANSITION_TAPER)
 				);
 
-	const laneBoundaries = laneBoundaryTargets(self.lanes, otherLanesInSelfFrame, flipped, false);
-	const selfDivider = markingStructure(self.lanes, false).divider;
-	const anchorCenter = markingStructure(otherLanesInSelfFrame, flipped).centerLine;
-	let centerNose: TransitionMorph['centerNose'] = null;
-	if (selfDivider && anchorCenter) {
-		for (let i = 0; i < selfIntervals.length; i++) {
-			const iv = selfIntervals[i];
-			if (surfaceClassOf(iv.laneType) !== 'island') continue;
-			if (iv.start - 0.01 <= selfDivider.offset && selfDivider.offset <= iv.end + 0.01) {
-				const t = targets[i];
-				if (t && Math.abs(t.end - t.start) < 1e-3) {
-					centerNose = { index: i, offset: anchorCenter.offset };
-				}
-				break;
-			}
-		}
-	}
-
 	return {
 		intervals: targets,
 		roadwayUnderfills,
 		laneBoundaries,
 		centerNose,
-		halfWidth: halfOther,
+		halfWidth: anchorHalfWidth,
 		length,
 		anchor: false,
 		key:
-			`${length}:${halfOther}:` +
+			`${length}:${anchorHalfWidth}:` +
 			`${targets.map((t) => (t ? `${t.start},${t.end}` : 'x')).join(';')}|` +
 			`${roadwayUnderfills
 				.map((u) => (u ? `${u.laneType},${u.start},${u.end}` : 'x'))
@@ -805,97 +673,6 @@ function laneBoundaryOffsets(lanes: Lane[]): number[] {
 		bounds.push(bounds[bounds.length - 1] + lane.width);
 	}
 	return bounds;
-}
-
-function paintDirection(lane: Lane, flipDirections: boolean) {
-	if (!flipDirections || lane.direction === 'bidirectional') return lane.direction;
-	return lane.direction === 'forward' ? 'backward' : 'forward';
-}
-
-// Paintable cross-section markings represented by logical lane correspondence:
-// dashed lines are ordered from the divider outward per direction, while a
-// centre divider exists whenever both vehicle direction groups are present.
-function markingStructure(lanes: Lane[], flipDirections: boolean) {
-	const bounds = laneBoundaryOffsets(lanes);
-	const forwardDashes: { index: number; offset: number }[] = [];
-	const backwardDashes: { index: number; offset: number }[] = [];
-	let centerLine: { index: number; offset: number } | null = null;
-
-	for (let k = 0; k + 1 < lanes.length; k++) {
-		const leftDir = paintDirection(lanes[k], flipDirections);
-		const rightDir = paintDirection(lanes[k + 1], flipDirections);
-		const left = { ...lanes[k], direction: leftDir };
-		const right = { ...lanes[k + 1], direction: rightDir };
-		const paint = lanePaintBetween(left, right);
-		if (!paint) continue;
-		const offset = bounds[k + 1];
-		if (paint.color === 'center') centerLine = { index: k, offset };
-		else if (leftDir === 'forward') forwardDashes.push({ index: k, offset });
-		else backwardDashes.push({ index: k, offset });
-	}
-
-	const forwardLanes: number[] = [];
-	const backwardLanes: number[] = [];
-	for (let i = 0; i < lanes.length; i++) {
-		if (lanes[i].role !== 'vehicle') continue;
-		const dir = paintDirection(lanes[i], flipDirections);
-		if (dir === 'forward') forwardLanes.push(i);
-		else if (dir === 'backward') backwardLanes.push(i);
-	}
-	let divider: { offset: number } | null = null;
-	if (forwardLanes.length > 0 && backwardLanes.length > 0) {
-		const maxB = Math.max(...backwardLanes);
-		const minF = Math.min(...forwardLanes);
-		const maxF = Math.max(...forwardLanes);
-		const minB = Math.min(...backwardLanes);
-		const offset =
-			maxB < minF
-				? (bounds[maxB + 1] + bounds[minF]) / 2
-				: (bounds[maxF + 1] + bounds[minB]) / 2;
-		divider = { offset };
-	}
-
-	const ref = divider ? divider.offset : 0;
-	const centreOut = (a: { offset: number }, b: { offset: number }) =>
-		Math.abs(a.offset - ref) - Math.abs(b.offset - ref) || a.offset - b.offset;
-	forwardDashes.sort(centreOut);
-	backwardDashes.sort(centreOut);
-
-	return { forwardDashes, backwardDashes, centerLine, divider };
-}
-
-// Per-lane boundary targets at a transition: dashed lane lines continue by
-// centre-out correspondence within their travel direction, and centre lines
-// continue only into another logical centre divider; all unmatched markings
-// cut at the morph zone.
-function laneBoundaryTargets(
-	selfLanes: Lane[],
-	anchorLanes: Lane[],
-	flipDirections: boolean,
-	keepOwnOffsets: boolean
-): (number | null)[] {
-	const result: (number | null)[] = selfLanes.slice(1).map(() => null);
-	const self = markingStructure(selfLanes, false);
-	const anchor = markingStructure(anchorLanes, flipDirections);
-
-	const pairDashes = (
-		selfDashes: { index: number; offset: number }[],
-		anchorDashes: { index: number; offset: number }[]
-	) => {
-		for (let i = 0; i < selfDashes.length; i++) {
-			const counterpart = anchorDashes[i];
-			if (!counterpart) continue;
-			result[selfDashes[i].index] = keepOwnOffsets ? selfDashes[i].offset : counterpart.offset;
-		}
-	};
-	pairDashes(self.forwardDashes, anchor.forwardDashes);
-	pairDashes(self.backwardDashes, anchor.backwardDashes);
-
-	if (self.centerLine && anchor.divider) {
-		result[self.centerLine.index] = keepOwnOffsets ? self.centerLine.offset : anchor.divider.offset;
-	}
-
-	return result;
 }
 
 // At patch nodes every road stops short of the node: far enough back that
@@ -2829,7 +2606,7 @@ export function buildNodePaint(
 			halfA < halfB - 0.01 ||
 			(Math.abs(halfA - halfB) <= 0.01 && pairStructureKeyA <= pairStructureKeyB);
 		const anchor = anchorIsA ? pair[0] : pair[1];
-		const anchorMorph = transitionMorph(graph, node, anchor.id);
+		const anchorMorph = transitionMorph(graph, node, anchor.id, centerlines);
 		if (anchorMorph) {
 			boundaryDisposition =
 				!anchorIsA && flipped

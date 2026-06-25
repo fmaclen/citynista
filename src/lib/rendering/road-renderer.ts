@@ -42,6 +42,7 @@ import {
 	centerCrossedAt,
 	type LaneConnection
 } from '../core/lane-connections';
+import { resolveNodeStrips } from '../core/node-resolution';
 
 const LAYER_Y: Record<RoadLayerId, number> = Object.fromEntries(
 	ROAD_LAYER_LIST.map((layer) => [layer, laneLayerY(layer)])
@@ -330,8 +331,8 @@ export class RoadRenderer {
 			// they must stop square at the stop line.
 			const continuityJoinStart = isContinuationNode(graph, startNode, segment.id);
 			const continuityJoinEnd = isContinuationNode(graph, endNode, segment.id);
-			const morphStart = transitionMorph(graph, startNode, segment.id);
-			const morphEnd = transitionMorph(graph, endNode, segment.id);
+			const morphStart = transitionMorph(graph, startNode, segment.id, centerlines);
+			const morphEnd = transitionMorph(graph, endNode, segment.id, centerlines);
 			const arrowStart =
 				arrowsByEnd.get(segmentEndKey(startNode.id, segment.id)) ?? EMPTY_END_ARROWS;
 			const arrowEnd = arrowsByEnd.get(segmentEndKey(endNode.id, segment.id)) ?? EMPTY_END_ARROWS;
@@ -392,6 +393,7 @@ export class RoadRenderer {
 
 			const key = `node:${node.id}`;
 			const parts: string[] = [`${node.x},${node.y}`];
+			parts.push(`nr:${resolveNodeStrips(graph, node, centerlines).signature}`);
 			const centerBroken = centerBreak.has(node.id);
 			parts.push(`cb:${centerBroken}`);
 			// Connector overrides carve the junction pavement and can decide

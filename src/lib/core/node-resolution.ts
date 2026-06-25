@@ -2,13 +2,9 @@ import type { Graph } from './graph.svelte';
 import { getTotalWidth } from './lane-template';
 import {
 	collectIntersectionArms,
-	computeIntersectionTrims,
 	getLaneIntervals,
 	nodeThroughPair,
-	sampleTrimmedCenterline,
-	transitionStraddle,
 	type CenterlineSample,
-	type IntersectionArm,
 	type Point
 } from './road-geometry';
 import type { Node } from './node.svelte';
@@ -18,51 +14,100 @@ import {
 	isIslandLike,
 	isRoadway,
 	laneLayer,
+	lanePaintBetween,
 	lanesStructureKey,
 	surfaceClassOf,
 	type LaneLayerId,
+	type RoadLayerId,
 	type SurfaceClass
 } from './lane-types';
-import { getQuadraticBezierTangent } from '../geometry/bezier';
-import { activeConnectionsAt } from './lane-connections';
 
 export interface Interval {
 	start: number;
 	end: number;
 }
 
+export interface NodeStripResolution {
+	nodeId: string;
+	kind: 'pair' | 'patch';
+	arms: ResolvedNodeArm[];
+	relations: StripRelation[];
+	throughPairIds: [string, string] | null;
+	signature: string;
+}
+
+export interface ResolvedNodeArm {
+	segmentId: string;
+	startsHere: boolean;
+	frame: {
+		stop: Point;
+		into: Point;
+		crossDir: Point;
+		side: Point;
+	};
+	source: {
+		lanesKey: string;
+		structureKey: string;
+		halfWidth: number;
+		roadSpan: Interval;
+		plateSpan: Interval;
+	};
+	node: {
+		roadSpan: Interval;
+		plateSpan: Interval;
+	};
+	strips: ResolvedNodeStrip[];
+	paintBoundaries: ResolvedPaintBoundary[];
+	centerNose: { intervalIndex: number; offset: number } | null;
+	key: string;
+}
+
+export interface ResolvedNodeStrip {
+	intervalIndex: number;
+	laneRange: [number, number];
+	laneType: LaneLayerId;
+	surfaceClass: SurfaceClass;
+	source: Interval;
+	node: Interval | null;
+	disposition: StripDisposition;
+	roadwayUnderfill: { laneType: RoadLayerId; node: Interval } | null;
+	severed: boolean;
+}
+
 export type StripDisposition =
 	| {
 			kind: 'continue';
+			relationId: string;
 			targetArmId: string;
-			targetInterval: Interval;
-			seam: boolean;
+			targetIntervalIndex: number;
+			targetSource: Interval;
+			shared: {
+				lowEdgeId: string;
+				highEdgeId: string;
+				offsetsByArm: Record<string, Interval>;
+			};
+			anchor: 'self' | 'target' | 'none';
 	  }
 	| {
 			kind: 'terminate';
-			cover: SurfaceClass;
+			mode: 'taper' | 'patchStop';
+			target: Interval | null;
+			stopLine: Point | null;
 	  };
 
-export interface ResolvedStrip {
-	laneRange: [number, number];
-	intervalIndex: number;
-	interval: Interval;
-	surfaceClass: SurfaceClass;
-	material: LaneMaterial;
-	direction: LaneDirection;
-	disposition: StripDisposition;
+export interface ResolvedPaintBoundary {
+	boundaryIndex: number;
+	sourceOffset: number;
+	targetOffset: number | null;
+	disposition: 'continue' | 'cutAtTaper' | 'stopAtPatch';
 }
 
-export interface ResolvedArm {
-	segmentId: string;
-	startsHere: boolean;
-	outward: Point;
-	strips: ResolvedStrip[];
-}
-
-export interface NodeResolution {
-	arms: ResolvedArm[];
-	throughPairIds: [string, string] | null;
+export interface StripRelation {
+	id: string;
+	sourceArmId: string;
+	sourceIntervalIndex: number;
+	targetArmId: string;
+	targetIntervalIndex: number;
 }
 
 interface LaneInterval extends Interval {
@@ -73,23 +118,43 @@ interface IndexedInterval extends LaneInterval {
 	index: number;
 	laneRange: [number, number];
 	surfaceClass: SurfaceClass;
-	material: LaneMaterial;
-	direction: LaneDirection;
 }
 
-interface ResolutionArm {
+interface ResolutionArmSource {
 	segment: Segment;
 	startsHere: boolean;
-	outward: Point;
+	frame: ResolvedNodeArm['frame'];
 	intervals: IndexedInterval[];
+	lanesKey: string;
+	structureKey: string;
+	halfWidth: number;
 }
 
-const CENTER_MEDIAN_PAIR_DOT = -0.85;
-const CENTER_MEDIAN_MIN_WIDTH = 0.1;
-const MEDIAN_BARRIER_REACH = 8;
+const resolutionCache = new Map<string, { signature: string; resolution: NodeStripResolution }>();
 
-function materialOf(laneType: LaneLayerId) {
-	return laneType.split(':')[1] as LaneMaterial;
+function roadwayLayer(material: LaneMaterial) {
+	return `roadway:${material}` as const;
+}
+
+function at(interval: Interval) {
+	return { start: interval.start, end: interval.end };
+}
+
+function center(interval: Interval) {
+	return (interval.start + interval.end) / 2;
+}
+
+function width(interval: Interval) {
+	return interval.end - interval.start;
+}
+
+function roadSpan(intervals: LaneInterval[]) {
+	const roadways = intervals.filter((interval) => isRoadway(interval.laneType));
+	if (roadways.length === 0) return { start: 0, end: 0 };
+	return {
+		start: Math.min(...roadways.map((interval) => interval.start)),
+		end: Math.max(...roadways.map((interval) => interval.end))
+	};
 }
 
 function segmentHasRoad(segment: Segment) {
@@ -112,56 +177,156 @@ function isPatchNode(graph: Graph, node: Node) {
 	return counted.length >= 3;
 }
 
-function getSegmentTangentAtNode(
-	segment: Segment,
-	startNode: Node,
-	endNode: Node,
-	atStart: boolean
-) {
-	if (segment.hasControlPoint) {
-		const tangent = getQuadraticBezierTangent(
-			startNode.x,
-			startNode.y,
-			segment.controlX!,
-			segment.controlY!,
-			endNode.x,
-			endNode.y,
-			atStart ? 0 : 1
-		);
-		const len = Math.hypot(tangent.x, tangent.y);
-		if (len > 0.0001) return { x: tangent.x / len, y: tangent.y / len };
+function laneBoundaryOffsets(lanes: Lane[]) {
+	const bounds = [-getTotalWidth(lanes) / 2];
+	for (const lane of lanes) {
+		bounds.push(bounds[bounds.length - 1] + lane.width);
+	}
+	return bounds;
+}
+
+function paintDirection(lane: Lane, flipDirections: boolean) {
+	if (!flipDirections || lane.direction === 'bidirectional') return lane.direction;
+	return lane.direction === 'forward' ? 'backward' : 'forward';
+}
+
+function markingStructure(lanes: Lane[], flipDirections: boolean) {
+	const bounds = laneBoundaryOffsets(lanes);
+	const forwardDashes: { index: number; offset: number }[] = [];
+	const backwardDashes: { index: number; offset: number }[] = [];
+	let centerLine: { index: number; offset: number } | null = null;
+
+	for (let k = 0; k + 1 < lanes.length; k++) {
+		const leftDir = paintDirection(lanes[k], flipDirections);
+		const rightDir = paintDirection(lanes[k + 1], flipDirections);
+		const left = { ...lanes[k], direction: leftDir };
+		const right = { ...lanes[k + 1], direction: rightDir };
+		const paint = lanePaintBetween(left, right);
+		if (!paint) continue;
+		const offset = bounds[k + 1];
+		if (paint.color === 'center') centerLine = { index: k, offset };
+		else if (leftDir === 'forward') forwardDashes.push({ index: k, offset });
+		else backwardDashes.push({ index: k, offset });
 	}
 
-	const dx = endNode.x - startNode.x;
-	const dy = endNode.y - startNode.y;
-	const len = Math.hypot(dx, dy);
-	if (len > 0.0001) return { x: dx / len, y: dy / len };
-	return { x: 1, y: 0 };
+	const forwardLanes: number[] = [];
+	const backwardLanes: number[] = [];
+	for (let i = 0; i < lanes.length; i++) {
+		if (lanes[i].role !== 'vehicle') continue;
+		const dir = paintDirection(lanes[i], flipDirections);
+		if (dir === 'forward') forwardLanes.push(i);
+		else if (dir === 'backward') backwardLanes.push(i);
+	}
+	let divider: { offset: number } | null = null;
+	if (forwardLanes.length > 0 && backwardLanes.length > 0) {
+		const maxB = Math.max(...backwardLanes);
+		const minF = Math.min(...forwardLanes);
+		const maxF = Math.max(...forwardLanes);
+		const minB = Math.min(...backwardLanes);
+		const offset =
+			maxB < minF
+				? (bounds[maxB + 1] + bounds[minF]) / 2
+				: (bounds[maxF + 1] + bounds[minB]) / 2;
+		divider = { offset };
+	}
+
+	const ref = divider ? divider.offset : 0;
+	const centreOut = (a: { offset: number }, b: { offset: number }) =>
+		Math.abs(a.offset - ref) - Math.abs(b.offset - ref) || a.offset - b.offset;
+	forwardDashes.sort(centreOut);
+	backwardDashes.sort(centreOut);
+
+	return { forwardDashes, backwardDashes, centerLine, divider };
 }
 
-function segmentOutwardAtNode(graph: Graph, node: Node, segment: Segment) {
-	const startNode = graph.nodes.get(segment.startNodeId);
-	const endNode = graph.nodes.get(segment.endNodeId);
-	if (!startNode || !endNode) return null;
+function laneBoundaryTargets(
+	selfLanes: Lane[],
+	anchorLanes: Lane[],
+	flipDirections: boolean,
+	keepOwnOffsets: boolean
+) {
+	const result: (number | null)[] = selfLanes.slice(1).map(() => null);
+	const self = markingStructure(selfLanes, false);
+	const anchor = markingStructure(anchorLanes, flipDirections);
 
-	const isStart = segment.startNodeId === node.id;
-	const tangent = getSegmentTangentAtNode(segment, startNode, endNode, isStart);
-	return isStart ? tangent : { x: -tangent.x, y: -tangent.y };
-}
-
-function mirrorInterval<T extends LaneInterval>(interval: T) {
-	return {
-		...interval,
-		start: -interval.end,
-		end: -interval.start
+	const pairDashes = (
+		selfDashes: { index: number; offset: number }[],
+		anchorDashes: { index: number; offset: number }[]
+	) => {
+		for (let i = 0; i < selfDashes.length; i++) {
+			const counterpart = anchorDashes[i];
+			if (!counterpart) continue;
+			result[selfDashes[i].index] = keepOwnOffsets ? selfDashes[i].offset : counterpart.offset;
+		}
 	};
+	pairDashes(self.forwardDashes, anchor.forwardDashes);
+	pairDashes(self.backwardDashes, anchor.backwardDashes);
+
+	if (self.centerLine && anchor.divider) {
+		result[self.centerLine.index] = keepOwnOffsets ? self.centerLine.offset : anchor.divider.offset;
+	}
+
+	return result;
 }
 
-function mirrorIntervals<T extends LaneInterval>(intervals: T[]) {
-	return intervals.map(mirrorInterval).reverse();
+function mirrorIntervals(intervals: LaneInterval[]) {
+	return intervals
+		.map((interval) => ({
+			laneType: interval.laneType,
+			start: -interval.end,
+			end: -interval.start
+		}))
+		.reverse();
 }
 
-function intervalLaneRanges(lanes: Lane[]) {
+function islandMatch(interval: LaneInterval, candidates: LaneInterval[]) {
+	let best: LaneInterval | null = null;
+	let bestOverlap = 0;
+	for (const candidate of candidates) {
+		if (candidate.laneType !== interval.laneType) continue;
+		const amount = Math.min(interval.end, candidate.end) - Math.max(interval.start, candidate.start);
+		if (amount > bestOverlap) {
+			bestOverlap = amount;
+			best = candidate;
+		}
+	}
+	if (best) return best;
+
+	let nearest: LaneInterval | null = null;
+	let nearestDistance = Infinity;
+	for (const candidate of candidates) {
+		if (!isIslandLike(candidate.laneType)) continue;
+		const distance = Math.abs(center(candidate) - center(interval));
+		if (distance < nearestDistance) {
+			nearest = candidate;
+			nearestDistance = distance;
+		}
+	}
+	if (nearest && nearestDistance <= width(interval) + width(nearest)) return nearest;
+	return null;
+}
+
+function roadwayTarget(interval: Interval, anchorRoadways: LaneInterval[]) {
+	const boundStart = Math.min(...anchorRoadways.map((i) => i.start));
+	const boundEnd = Math.max(...anchorRoadways.map((i) => i.end));
+	const targetWidth = Math.min(interval.end - interval.start, boundEnd - boundStart);
+	const targetCenter = Math.min(
+		boundEnd - targetWidth / 2,
+		Math.max(boundStart + targetWidth / 2, (interval.start + interval.end) / 2)
+	);
+	return { start: targetCenter - targetWidth / 2, end: targetCenter + targetWidth / 2 };
+}
+
+function roadwayUnderfillLayer(selfIntervals: LaneInterval[], index: number) {
+	const adjacent = [selfIntervals[index - 1], selfIntervals[index + 1]]
+		.filter((interval) => interval && isRoadway(interval.laneType))
+		.map((interval) => interval.laneType);
+	return adjacent.length > 0 && adjacent.every((laneType) => laneType === 'roadway:concrete')
+		? roadwayLayer('concrete')
+		: roadwayLayer('asphalt');
+}
+
+function laneRanges(lanes: Lane[]) {
 	const ranges: [number, number][] = [];
 	let currentType: LaneLayerId | null = null;
 	let start = 0;
@@ -177,96 +342,151 @@ function intervalLaneRanges(lanes: Lane[]) {
 	return ranges;
 }
 
-function laneDirection(lanes: Lane[], [start, end]: [number, number]) {
-	const direction = lanes[start]?.direction ?? 'bidirectional';
-	for (let i = start + 1; i <= end; i++) {
-		if (lanes[i]?.direction !== direction) return 'bidirectional';
-	}
-	return direction;
-}
-
 function indexedIntervals(lanes: Lane[]) {
-	const ranges = intervalLaneRanges(lanes);
-	return getLaneIntervals(lanes).map((interval, index) => {
-		const laneType = interval.laneType as LaneLayerId;
-		const laneRange = ranges[index] ?? [0, 0];
-		return {
-			...interval,
-			laneType,
-			index,
-			laneRange,
-			surfaceClass: surfaceClassOf(laneType),
-			material: materialOf(laneType),
-			direction: laneDirection(lanes, laneRange)
-		};
-	});
+	const ranges = laneRanges(lanes);
+	return getLaneIntervals(lanes).map((interval, index) => ({
+		...interval,
+		index,
+		laneRange: ranges[index] ?? [0, 0],
+		surfaceClass: surfaceClassOf(interval.laneType)
+	}));
 }
 
-function transformedIntervals(arm: ResolutionArm, inFrameOf: ResolutionArm) {
-	const flipped = inFrameOf.startsHere === arm.startsHere;
-	return flipped ? mirrorIntervals(arm.intervals) : arm.intervals;
+function paintBoundaries(
+	lanes: Lane[],
+	targets: (number | null)[],
+	disposition: ResolvedPaintBoundary['disposition']
+) {
+	const offsets = laneBoundaryOffsets(lanes);
+	return targets.map((targetOffset, boundaryIndex) => ({
+		boundaryIndex,
+		sourceOffset: offsets[boundaryIndex + 1],
+		targetOffset,
+		disposition: targetOffset === null ? disposition : 'continue'
+	}));
 }
 
-function overlap(a: Interval, b: Interval) {
-	return Math.min(a.end, b.end) - Math.max(a.start, b.start);
+function connectionSignature(refs: Node['disabledConnections']) {
+	return (refs ?? [])
+		.map((ref) => `${ref.from.segmentId}.${ref.from.laneIndex}>${ref.to.segmentId}.${ref.to.laneIndex}`)
+		.sort()
+		.join(',');
 }
 
-function center(interval: Interval) {
-	return (interval.start + interval.end) / 2;
+function resolutionSignature(
+	graph: Graph,
+	node: Node,
+	arms: ResolutionArmSource[],
+	kind: NodeStripResolution['kind']
+) {
+	const parts = [
+		node.id,
+		kind,
+		`${node.x},${node.y}`,
+		`dc:${connectionSignature(node.disabledConnections)}`,
+		`ec:${connectionSignature(node.enabledConnections)}`
+	];
+	for (const segmentId of [...node.connectedSegments].sort()) {
+		const segment = graph.segments.get(segmentId);
+		if (!segment) continue;
+		const isStart = segment.startNodeId === node.id;
+		const far = graph.nodes.get(isStart ? segment.endNodeId : segment.startNodeId);
+		const arm = arms.find((candidate) => candidate.segment.id === segmentId);
+		const frame = arm
+			? `${arm.frame.stop.x},${arm.frame.stop.y},${arm.frame.into.x},${arm.frame.into.y},${arm.frame.crossDir.x},${arm.frame.crossDir.y}`
+			: '_';
+		parts.push(
+			[
+				segmentId,
+				segment.lanesKey,
+				lanesStructureKey(segment.lanes),
+				isStart ? 's' : 'e',
+				isStart ? segment.setbackStart : segment.setbackEnd,
+				segment.controlX ?? '_',
+				segment.controlY ?? '_',
+				far?.x ?? '_',
+				far?.y ?? '_',
+				frame
+			].join(':')
+		);
+	}
+	return parts.join('|');
 }
 
-function width(interval: Interval) {
-	return interval.end - interval.start;
+function sourceArmFromIntersection(graph: Graph, arm: ReturnType<typeof collectIntersectionArms>[number]) {
+	const segment = graph.segments.get(arm.segmentId);
+	if (!segment) return null;
+	return {
+		segment,
+		startsHere: arm.startsHere,
+		frame: {
+			stop: arm.stop,
+			into: arm.into,
+			crossDir: arm.crossDir,
+			side: arm.side
+		},
+		intervals: indexedIntervals(segment.lanes),
+		lanesKey: segment.lanesKey,
+		structureKey: lanesStructureKey(segment.lanes),
+		halfWidth: getTotalWidth(segment.lanes) / 2
+	};
 }
 
-function canMatchSurface(a: SurfaceClass, b: SurfaceClass) {
-	if (a === 'roadway' || a === 'walkway') return a === b;
-	if (a === 'island' || a === 'verge') return b === 'island' || b === 'verge';
-	return false;
+function relationFor(
+	self: ResolutionArmSource,
+	other: ResolutionArmSource,
+	interval: IndexedInterval,
+	target: Interval,
+	anchor: StripDisposition extends infer D
+		? D extends { kind: 'continue'; anchor: infer A }
+			? A
+			: never
+		: never,
+	targetIntervalIndex: number
+) {
+	const relationId = `${self.segment.id}:${interval.index}->${other.segment.id}:${targetIntervalIndex}`;
+	return {
+		kind: 'continue',
+		relationId,
+		targetArmId: other.segment.id,
+		targetIntervalIndex,
+		targetSource: target,
+		shared: {
+			lowEdgeId: `${relationId}:low`,
+			highEdgeId: `${relationId}:high`,
+			offsetsByArm: {
+				[self.segment.id]: target,
+				[other.segment.id]: target
+			}
+		},
+		anchor
+	} satisfies StripDisposition;
 }
 
-function bestStructuralCounterpart(interval: IndexedInterval, candidates: IndexedInterval[]) {
-	const byClass = candidates.filter((candidate) =>
-		canMatchSurface(interval.surfaceClass, candidate.surfaceClass)
+function targetIntervalIndex(target: Interval | null, candidates: LaneInterval[]) {
+	if (!target) return -1;
+	const exact = candidates.findIndex(
+		(candidate) => candidate.start === target.start && candidate.end === target.end
 	);
-	let best: IndexedInterval | null = null;
+	if (exact >= 0) return exact;
+	let best = -1;
 	let bestOverlap = 0;
-	for (const candidate of byClass) {
-		const amount = overlap(interval, candidate);
+	for (let i = 0; i < candidates.length; i++) {
+		const amount = Math.min(target.end, candidates[i].end) - Math.max(target.start, candidates[i].start);
 		if (amount > bestOverlap) {
-			best = candidate;
 			bestOverlap = amount;
+			best = i;
 		}
 	}
-	if (best) return best;
-	if (!isIslandLike(interval.laneType)) return null;
-
-	let nearest: IndexedInterval | null = null;
-	let nearestDistance = Infinity;
-	for (const candidate of byClass) {
-		const distance = Math.abs(center(candidate) - center(interval));
-		if (distance < nearestDistance) {
-			nearest = candidate;
-			nearestDistance = distance;
-		}
-	}
-	return nearest && nearestDistance <= width(interval) + width(nearest) ? nearest : null;
+	return best;
 }
 
-function roadwayTarget(interval: Interval, anchorRoadways: LaneInterval[]) {
-	const boundStart = Math.min(...anchorRoadways.map((i) => i.start));
-	const boundEnd = Math.max(...anchorRoadways.map((i) => i.end));
-	const targetWidth = Math.min(width(interval), boundEnd - boundStart);
-	const targetCenter = Math.min(
-		boundEnd - targetWidth / 2,
-		Math.max(boundStart + targetWidth / 2, center(interval))
-	);
-	return { start: targetCenter - targetWidth / 2, end: targetCenter + targetWidth / 2 };
-}
-
-function structuralTransitionTargets(self: ResolutionArm, other: ResolutionArm) {
+function resolveTransitionArm(self: ResolutionArmSource, other: ResolutionArmSource) {
 	const halfSelf = getTotalWidth(self.segment.lanes) / 2;
 	const halfOther = getTotalWidth(other.segment.lanes) / 2;
+	const selfIntervals = getLaneIntervals(self.segment.lanes);
+	const flipped = self.startsHere === other.startsHere;
+	const otherLanesInSelfFrame = flipped ? [...other.segment.lanes].reverse() : other.segment.lanes;
 	const selfStructureKey = lanesStructureKey(self.segment.lanes);
 	const otherStructureKey = lanesStructureKey(other.segment.lanes);
 	const selfIsAnchor =
@@ -274,364 +494,273 @@ function structuralTransitionTargets(self: ResolutionArm, other: ResolutionArm) 
 		(Math.abs(halfSelf - halfOther) <= 0.01 && selfStructureKey <= otherStructureKey);
 
 	if (selfIsAnchor) {
-		return self.intervals.map((interval) => ({ start: interval.start, end: interval.end }));
+		const laneBoundaries = laneBoundaryTargets(
+			self.segment.lanes,
+			otherLanesInSelfFrame,
+			flipped,
+			true
+		);
+		const targets = selfIntervals.map((interval) => at(interval));
+		return {
+			targets,
+			roadwayUnderfills: selfIntervals.map(() => null),
+			laneBoundaries,
+			centerNose: null,
+			anchor: true,
+			anchorHalfWidth: halfSelf,
+			anchorPlateSpan: { start: -halfSelf, end: halfSelf },
+			dispositions: targets.map((target, index) =>
+				relationFor(self, other, self.intervals[index], target, 'self', index)
+			)
+		};
 	}
 
-	const anchorIntervals = transformedIntervals(other, self);
-	const anchorRoadways = anchorIntervals.filter((interval) => isRoadway(interval.laneType));
+	let anchorIntervals = getLaneIntervals(other.segment.lanes);
+	if (flipped) anchorIntervals = mirrorIntervals(anchorIntervals);
 
-	return self.intervals.map((interval) => {
-		if (interval.surfaceClass === 'walkway') return { start: interval.start, end: interval.end };
-		const own = self.intervals.filter((i) => i.surfaceClass === interval.surfaceClass);
-		const counterparts = anchorIntervals.filter((i) =>
-			canMatchSurface(interval.surfaceClass, i.surfaceClass)
-		);
-		if (interval.surfaceClass !== 'roadway' && own.length === counterparts.length) {
-			return counterparts[own.indexOf(interval)] ?? null;
+	const roadwayUnderfills: ({ laneType: RoadLayerId; node: Interval } | null)[] = selfIntervals.map(
+		() => null
+	);
+
+	const targets = selfIntervals.map((interval) => {
+		const index = selfIntervals.indexOf(interval);
+		const surface = surfaceClassOf(interval.laneType);
+		if (surface === 'walkway') return at(interval);
+
+		const own = selfIntervals.filter((i) => i.laneType === interval.laneType);
+		const counterparts = anchorIntervals.filter((i) => i.laneType === interval.laneType);
+
+		if (own.length === counterparts.length && counterparts.length > 0) {
+			return at(counterparts[own.indexOf(interval)]);
 		}
-		if (interval.surfaceClass === 'roadway') {
+
+		if (surface === 'roadway') {
+			const anchorRoadways = anchorIntervals.filter((i) => isRoadway(i.laneType));
 			if (anchorRoadways.length === 0) return { start: center(interval), end: center(interval) };
 			return roadwayTarget(interval, anchorRoadways);
 		}
-		const match = bestStructuralCounterpart(interval, anchorIntervals);
-		if (match) return { start: match.start, end: match.end };
-		if (interval.surfaceClass === 'island') {
-			if (anchorRoadways.length === 0) return null;
-			const zoneStart = Math.min(...anchorRoadways.map((i) => i.start));
-			const zoneEnd = Math.max(...anchorRoadways.map((i) => i.end));
-			const targetCenter = Math.min(zoneEnd, Math.max(zoneStart, center(interval)));
+
+		const match = islandMatch(interval, anchorIntervals);
+		if (match) return at(match);
+
+		const ownCenter = center(interval);
+		const anchorRoadways = anchorIntervals.filter((i) => isRoadway(i.laneType));
+		const noseTarget = () => {
+			const targetCenter =
+				anchorRoadways.length === 0
+					? ownCenter
+					: Math.min(
+							Math.max(...anchorRoadways.map((i) => i.end)),
+							Math.max(Math.min(...anchorRoadways.map((i) => i.start)), ownCenter)
+						);
+			roadwayUnderfills[index] = {
+				laneType: roadwayUnderfillLayer(selfIntervals, index),
+				node:
+					anchorRoadways.length === 0
+						? { start: targetCenter, end: targetCenter }
+						: roadwayTarget(interval, anchorRoadways)
+			};
 			return { start: targetCenter, end: targetCenter };
-		}
-		return null;
+		};
+
+		if (surface === 'island') return noseTarget();
+		return noseTarget();
 	});
-}
 
-function seamFor(interval: IndexedInterval, target: Interval, candidates: IndexedInterval[]) {
-	const counterpart = bestStructuralCounterpart(
-		{ ...interval, start: target.start, end: target.end },
-		candidates
+	const laneBoundaries = laneBoundaryTargets(
+		self.segment.lanes,
+		otherLanesInSelfFrame,
+		flipped,
+		false
 	);
-	return counterpart ? counterpart.material !== interval.material : false;
-}
-
-function sameSectionDisposition(
-	arm: ResolutionArm,
-	other: ResolutionArm,
-	interval: IndexedInterval
-) {
-	const targets = transformedIntervals(other, arm);
-	const target = targets[interval.index] ?? bestStructuralCounterpart(interval, targets);
-	if (!target) return { kind: 'terminate', cover: 'roadway' } satisfies StripDisposition;
-	return {
-		kind: 'continue',
-		targetArmId: other.segment.id,
-		targetInterval: { start: target.start, end: target.end },
-		seam: target.material !== interval.material
-	} satisfies StripDisposition;
-}
-
-function transitionDisposition(
-	arm: ResolutionArm,
-	other: ResolutionArm,
-	interval: IndexedInterval
-) {
-	const target = structuralTransitionTargets(arm, other)[interval.index];
-	if (
-		!target ||
-		(isIslandLike(interval.laneType) && Math.abs(target.end - target.start) <= 0.0001)
-	) {
-		return { kind: 'terminate', cover: 'roadway' } satisfies StripDisposition;
+	const selfDivider = markingStructure(self.segment.lanes, false).divider;
+	const anchorCenter = markingStructure(otherLanesInSelfFrame, flipped).centerLine;
+	let centerNose: { intervalIndex: number; offset: number } | null = null;
+	if (selfDivider && anchorCenter) {
+		for (let i = 0; i < selfIntervals.length; i++) {
+			const iv = selfIntervals[i];
+			if (surfaceClassOf(iv.laneType) !== 'island') continue;
+			if (iv.start - 0.01 <= selfDivider.offset && selfDivider.offset <= iv.end + 0.01) {
+				const t = targets[i];
+				if (t && Math.abs(t.end - t.start) < 1e-3) {
+					centerNose = { intervalIndex: i, offset: anchorCenter.offset };
+				}
+				break;
+			}
+		}
 	}
-	return {
-		kind: 'continue',
-		targetArmId: other.segment.id,
-		targetInterval: target,
-		seam: seamFor(interval, target, transformedIntervals(other, arm))
-	} satisfies StripDisposition;
-}
 
-function centerMedianInterval(lanes: Lane[]) {
-	const intervals = getLaneIntervals(lanes);
-	for (let i = 0; i < intervals.length; i++) {
-		if (surfaceClassOf(intervals[i].laneType) === 'island') return intervals[i] as LaneInterval;
-	}
-	return null;
-}
-
-function centerMedianAxisEnd(node: Node, arm: IntersectionArm) {
-	const reach =
-		Math.max(Math.hypot(arm.stop.x - node.x, arm.stop.y - node.y), MEDIAN_BARRIER_REACH) +
-		MEDIAN_BARRIER_REACH;
 	return {
-		x: node.x - arm.into.x * reach,
-		y: node.y - arm.into.y * reach
+		targets,
+		roadwayUnderfills,
+		laneBoundaries,
+		centerNose,
+		anchor: false,
+		anchorHalfWidth: halfOther,
+		anchorPlateSpan: { start: -halfOther, end: halfOther },
+		dispositions: targets.map((target, index) => {
+			const interval = self.intervals[index];
+			if (
+				!target ||
+				(isIslandLike(interval.laneType) && Math.abs(target.end - target.start) <= 0.0001)
+			) {
+				return {
+					kind: 'terminate',
+					mode: 'taper',
+					target,
+					stopLine: null
+				} satisfies StripDisposition;
+			}
+			return relationFor(
+				self,
+				other,
+				interval,
+				target,
+				'target',
+				targetIntervalIndex(target, anchorIntervals)
+			);
+		})
 	};
 }
 
-function centerMedianIntervalInFrame(arm: IntersectionArm, flipped: boolean) {
-	const interval = centerMedianInterval(arm.lanes);
-	if (!interval) return null;
-	return flipped ? mirrorInterval(interval) : interval;
-}
-
-function segmentsCross(p1: Point, p2: Point, p3: Point, p4: Point) {
-	const side = (a: Point, b: Point, c: Point) =>
-		Math.sign((b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x));
-	const d1 = side(p3, p4, p1);
-	const d2 = side(p3, p4, p2);
-	const d3 = side(p1, p2, p3);
-	const d4 = side(p1, p2, p4);
-	return d1 !== d2 && d3 !== d4 && d1 !== 0 && d2 !== 0 && d3 !== 0 && d4 !== 0;
-}
-
-function centerMedianPairs(
-	node: Node,
-	arms: IntersectionArm[],
-	crossingConnectors: { a: Point; b: Point }[] = []
+function buildResolvedArm(
+	self: ResolutionArmSource,
+	resolved: ReturnType<typeof resolveTransitionArm> | null,
+	patchStop: boolean
 ) {
-	const candidates: {
-		a: IntersectionArm;
-		b: IntersectionArm;
-		start: number;
-		end: number;
-		axisA: Point;
-		axisB: Point;
-	}[] = [];
+	const selfIntervals = getLaneIntervals(self.segment.lanes);
+	const targets = resolved?.targets ?? selfIntervals.map((interval) => at(interval));
+	const roadwayUnderfills = resolved?.roadwayUnderfills ?? selfIntervals.map(() => null);
+	const laneBoundaries =
+		resolved?.laneBoundaries ?? self.segment.lanes.slice(1).map(() => null as number | null);
+	const sourceRoadSpan = roadSpan(selfIntervals);
+	const plateSpan = { start: -self.halfWidth, end: self.halfWidth };
+	const nodePlateSpan = resolved?.anchorPlateSpan ?? plateSpan;
+	const nodeIntervals = targets.filter((target) => target !== null);
+	const nodeRoadSpan = roadSpan(
+		selfIntervals.flatMap((interval, index) => {
+			const target = targets[index];
+			return target && isRoadway(interval.laneType) ? [{ ...target, laneType: interval.laneType }] : [];
+		})
+	);
+	const fallbackRoadSpan = nodeIntervals.length > 0 ? nodeRoadSpan : sourceRoadSpan;
+	const strips = self.intervals.map((interval, index) => {
+		const nodeTarget = patchStop ? null : targets[index];
+		const disposition =
+			resolved?.dispositions[index] ??
+			({
+				kind: 'terminate',
+				mode: patchStop ? 'patchStop' : 'taper',
+				target: nodeTarget,
+				stopLine: patchStop ? self.frame.stop : null
+			} satisfies StripDisposition);
+		return {
+			intervalIndex: interval.index,
+			laneRange: interval.laneRange,
+			laneType: interval.laneType,
+			surfaceClass: interval.surfaceClass,
+			source: at(interval),
+			node: nodeTarget,
+			disposition,
+			roadwayUnderfill: roadwayUnderfills[index],
+			severed: false
+		};
+	});
+	const paintDisposition = patchStop ? 'stopAtPatch' : 'cutAtTaper';
+	const arm = {
+		segmentId: self.segment.id,
+		startsHere: self.startsHere,
+		frame: self.frame,
+		source: {
+			lanesKey: self.lanesKey,
+			structureKey: self.structureKey,
+			halfWidth: self.halfWidth,
+			roadSpan: sourceRoadSpan,
+			plateSpan
+		},
+		node: {
+			roadSpan: fallbackRoadSpan,
+			plateSpan: nodePlateSpan
+		},
+		strips,
+		paintBoundaries: paintBoundaries(self.segment.lanes, laneBoundaries, paintDisposition),
+		centerNose: resolved?.centerNose ?? null,
+		key: ''
+	};
+	arm.key = [
+		arm.segmentId,
+		arm.node.plateSpan.start,
+		arm.node.plateSpan.end,
+		arm.strips.map((strip) => (strip.node ? `${strip.node.start},${strip.node.end}` : 'x')).join(';'),
+		arm.paintBoundaries
+			.map((boundary) =>
+				boundary.targetOffset === null ? 'x' : Math.round(boundary.targetOffset * 100)
+			)
+			.join(','),
+		arm.centerNose
+			? `${arm.centerNose.intervalIndex},${Math.round(arm.centerNose.offset * 100)}`
+			: 'x'
+	].join('|');
+	return arm;
+}
 
-	for (let i = 0; i < arms.length; i++) {
-		for (let j = i + 1; j < arms.length; j++) {
-			const a = arms[i];
-			const b = arms[j];
-			if (a.into.x * b.into.x + a.into.y * b.into.y >= CENTER_MEDIAN_PAIR_DOT) continue;
+export function resolveNodeStrips(
+	graph: Graph,
+	node: Node,
+	centerlines: Map<string, CenterlineSample[]>
+) {
+	if (resolutionCache.size > 4096) resolutionCache.clear();
+	const through = nodeThroughPair(graph, node);
+	const kind = isPatchNode(graph, node) ? 'patch' : 'pair';
+	const arms = collectIntersectionArms(graph, node, centerlines)
+		.map((arm) => sourceArmFromIntersection(graph, arm))
+		.filter((arm) => arm !== null);
+	const signature = resolutionSignature(graph, node, arms, kind);
+	const cached = resolutionCache.get(node.id);
+	if (cached?.signature === signature) return cached.resolution;
 
-			const intervalA = centerMedianIntervalInFrame(a, false);
-			if (!intervalA) continue;
+	const throughPairIds = through ? ([through[0].id, through[1].id] as [string, string]) : null;
+	const throughIds = through ? new Set(through.map((segment) => segment.id)) : new Set<string>();
+	const transitionPair =
+		through && lanesStructureKey(through[0].lanes) !== lanesStructureKey(through[1].lanes)
+			? through
+			: null;
+	const transitionIds = transitionPair
+		? new Set(transitionPair.map((segment) => segment.id))
+		: new Set<string>();
 
-			const flipped = a.startsHere === b.startsHere;
-			const intervalB = centerMedianIntervalInFrame(b, flipped);
-			if (!intervalB) continue;
+	const resolvedArms = arms.map((arm) => {
+		if (transitionPair && transitionIds.has(arm.segment.id)) {
+			const other = arms.find(
+				(candidate) => transitionIds.has(candidate.segment.id) && candidate.segment.id !== arm.segment.id
+			);
+			return buildResolvedArm(arm, other ? resolveTransitionArm(arm, other) : null, false);
+		}
+		return buildResolvedArm(arm, null, kind === 'patch' || (through ? !throughIds.has(arm.segment.id) : true));
+	});
 
-			const start = Math.max(intervalA.start, intervalB.start);
-			const end = Math.min(intervalA.end, intervalB.end);
-			if (end - start <= CENTER_MEDIAN_MIN_WIDTH) continue;
-
-			candidates.push({
-				a,
-				b,
-				start,
-				end,
-				axisA: centerMedianAxisEnd(node, a),
-				axisB: centerMedianAxisEnd(node, b)
+	const relations: StripRelation[] = [];
+	for (const arm of resolvedArms) {
+		for (const strip of arm.strips) {
+			if (strip.disposition.kind !== 'continue') continue;
+			relations.push({
+				id: strip.disposition.relationId,
+				sourceArmId: arm.segmentId,
+				sourceIntervalIndex: strip.intervalIndex,
+				targetArmId: strip.disposition.targetArmId,
+				targetIntervalIndex: strip.disposition.targetIntervalIndex
 			});
 		}
 	}
 
-	const armUseCounts = new Map<IntersectionArm, number>();
-	for (const pair of candidates) {
-		armUseCounts.set(pair.a, (armUseCounts.get(pair.a) ?? 0) + 1);
-		armUseCounts.set(pair.b, (armUseCounts.get(pair.b) ?? 0) + 1);
-	}
-
-	const disjoint = candidates.filter(
-		(pair) => armUseCounts.get(pair.a) === 1 && armUseCounts.get(pair.b) === 1
-	);
-	return disjoint.filter((pair) => {
-		const crossedByDividedPair = disjoint.some(
-			(other) => other !== pair && segmentsCross(pair.axisA, pair.axisB, other.axisA, other.axisB)
-		);
-		if (crossedByDividedPair) return false;
-		return !crossingConnectors.some((connector) =>
-			segmentsCross(connector.a, connector.b, pair.axisA, pair.axisB)
-		);
-	});
-}
-
-function extendCenterline(samples: CenterlineSample[], atStart: boolean, distance: number) {
-	if (samples.length < 2 || distance <= 0.01) return samples;
-	const b = atStart ? samples[0] : samples[samples.length - 1];
-	const a = atStart ? samples[1] : samples[samples.length - 2];
-	const dx = b.x - a.x;
-	const dy = b.y - a.y;
-	const len = Math.hypot(dx, dy);
-	if (len < 0.0001) return samples;
-	const ux = dx / len;
-	const uy = dy / len;
-	const extra: CenterlineSample[] = [];
-	const step = 1.5;
-	for (let d = step; d < distance; d += step) {
-		extra.push({ x: b.x + ux * d, y: b.y + uy * d, normalX: b.normalX, normalY: b.normalY });
-	}
-	extra.push({
-		x: b.x + ux * distance,
-		y: b.y + uy * distance,
-		normalX: b.normalX,
-		normalY: b.normalY
-	});
-	return atStart ? [...extra.reverse(), ...samples] : [...samples, ...extra];
-}
-
-function nodeCenterlines(graph: Graph) {
-	const trims = computeIntersectionTrims(graph);
-	const straddleTrim = new Map<string, { start: number; end: number }>();
-	const straddleExtend = new Map<string, { start: number; end: number }>();
-	for (const node of graph.nodes.values()) {
-		const straddle = transitionStraddle(graph, node);
-		if (!straddle) continue;
-		const trim = straddleTrim.get(straddle.narrowId) ?? { start: 0, end: 0 };
-		if (straddle.narrowAtStart) trim.start += straddle.half;
-		else trim.end += straddle.half;
-		straddleTrim.set(straddle.narrowId, trim);
-		const extend = straddleExtend.get(straddle.wideId) ?? { start: 0, end: 0 };
-		if (straddle.wideAtStart) extend.start += straddle.half;
-		else extend.end += straddle.half;
-		straddleExtend.set(straddle.wideId, extend);
-	}
-
-	const centerlines = new Map<string, CenterlineSample[]>();
-	for (const segment of graph.segments.values()) {
-		const startNode = graph.nodes.get(segment.startNodeId);
-		const endNode = graph.nodes.get(segment.endNodeId);
-		if (!startNode || !endNode) continue;
-		const trim = trims.get(segment.id);
-		const extra = straddleTrim.get(segment.id);
-		let samples = sampleTrimmedCenterline(
-			segment,
-			startNode,
-			endNode,
-			(trim?.start ?? 0) + (extra?.start ?? 0),
-			(trim?.end ?? 0) + (extra?.end ?? 0)
-		);
-		const extend = straddleExtend.get(segment.id);
-		if (extend && samples.length >= 2) {
-			if (extend.start > 0) samples = extendCenterline(samples, true, extend.start);
-			if (extend.end > 0) samples = extendCenterline(samples, false, extend.end);
-		}
-		if (samples.length >= 2) centerlines.set(segment.id, samples);
-	}
-	return centerlines;
-}
-
-function resolvedArms(graph: Graph, node: Node) {
-	const arms: ResolutionArm[] = [];
-	for (const segment of validNodeSegments(graph, node)) {
-		const outward = segmentOutwardAtNode(graph, node, segment);
-		if (!outward) continue;
-		arms.push({
-			segment,
-			startsHere: segment.startNodeId === node.id,
-			outward,
-			intervals: indexedIntervals(segment.lanes)
-		});
-	}
-	return arms;
-}
-
-function centerMedianDisposition(
-	arm: ResolutionArm,
-	interval: IndexedInterval,
-	pairs: ReturnType<typeof centerMedianPairs>
-) {
-	if (!isIslandLike(interval.laneType)) return null;
-	const pair = pairs.find((candidate) => {
-		if (candidate.a.segmentId !== arm.segment.id && candidate.b.segmentId !== arm.segment.id) {
-			return false;
-		}
-		return (
-			overlap(interval, { start: candidate.start, end: candidate.end }) > CENTER_MEDIAN_MIN_WIDTH
-		);
-	});
-	if (!pair) return null;
-
-	const isA = pair.a.segmentId === arm.segment.id;
-	const other = isA ? pair.b : pair.a;
-	const flipped = pair.a.startsHere === pair.b.startsHere;
-	const target =
-		isA || !flipped ? { start: pair.start, end: pair.end } : { start: -pair.end, end: -pair.start };
-	return {
-		kind: 'continue',
-		targetArmId: other.segmentId,
-		targetInterval: target,
-		seam: false
-	} satisfies StripDisposition;
-}
-
-export function resolveNodeStrips(graph: Graph, node: Node) {
-	const arms = resolvedArms(graph, node);
-	const through = nodeThroughPair(graph, node);
-	const throughIds = through ? new Set([through[0].id, through[1].id]) : new Set<string>();
-	const structuralPair =
-		through ??
-		(() => {
-			const centerlines = nodeCenterlines(graph);
-			const roadArms = collectIntersectionArms(graph, node, centerlines).filter(
-				(arm) => arm.hasRoad
-			);
-			const crossingConnectors = activeConnectionsAt(graph, node, centerlines).map(
-				(connection) => ({
-					a: connection.fromPoint,
-					b: connection.toPoint
-				})
-			);
-			const pairs = centerMedianPairs(node, roadArms, crossingConnectors);
-			return pairs.length === 1
-				? ([
-						graph.segments.get(pairs[0].a.segmentId),
-						graph.segments.get(pairs[0].b.segmentId)
-					].filter((segment) => segment !== undefined) as Segment[])
-				: null;
-		})();
-	const throughPairIds =
-		structuralPair && structuralPair.length === 2
-			? ([structuralPair[0].id, structuralPair[1].id] as [string, string])
-			: null;
-
-	const centerlines = isPatchNode(graph, node) ? nodeCenterlines(graph) : null;
-	const crossingConnectors = centerlines
-		? activeConnectionsAt(graph, node, centerlines).map((connection) => ({
-				a: connection.fromPoint,
-				b: connection.toPoint
-			}))
-		: [];
-	const roadArms = centerlines
-		? collectIntersectionArms(graph, node, centerlines).filter((arm) => arm.hasRoad)
-		: [];
-	const medianPairs = centerlines ? centerMedianPairs(node, roadArms, crossingConnectors) : [];
-
-	return {
-		arms: arms.map((arm) => {
-			const other =
-				through && throughIds.has(arm.segment.id)
-					? arms.find((candidate) => throughIds.has(candidate.segment.id) && candidate !== arm)
-					: null;
-			const sameSection =
-				other && lanesStructureKey(arm.segment.lanes) === lanesStructureKey(other.segment.lanes);
-
-			return {
-				segmentId: arm.segment.id,
-				startsHere: arm.startsHere,
-				outward: arm.outward,
-				strips: arm.intervals.map((interval) => {
-					let disposition: StripDisposition = { kind: 'terminate', cover: 'roadway' };
-					if (other && sameSection) {
-						disposition = sameSectionDisposition(arm, other, interval);
-					} else if (other) {
-						disposition = transitionDisposition(arm, other, interval);
-					} else {
-						disposition = centerMedianDisposition(arm, interval, medianPairs) ?? disposition;
-					}
-
-					return {
-						laneRange: interval.laneRange,
-						intervalIndex: interval.index,
-						interval: { start: interval.start, end: interval.end },
-						surfaceClass: interval.surfaceClass,
-						material: interval.material,
-						direction: interval.direction,
-						disposition
-					};
-				})
-			};
-		}),
-		throughPairIds
-	};
+	const resolution = {
+		nodeId: node.id,
+		kind,
+		arms: resolvedArms,
+		relations,
+		throughPairIds,
+		signature
+	} satisfies NodeStripResolution;
+	resolutionCache.set(node.id, { signature, resolution });
+	return resolution;
 }
