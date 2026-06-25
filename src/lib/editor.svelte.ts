@@ -1,8 +1,8 @@
 import { getContext, setContext, untrack } from 'svelte';
 import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 import { Graph } from './core/graph.svelte';
-import type { GraphData, Lane, LaneConnectionRef, LaneRef } from './core/types';
-import { getDefaultTemplate, serializeLanes, reverseLanes } from './core/lane-template';
+import type { Brush, GraphData, Lane, LaneConnectionRef, LaneRef } from './core/types';
+import { cloneLanes, defaultHotbar, serializeLanes, reverseLanes } from './core/lane-template';
 import { resolveCrossings } from './core/crossings';
 import {
 	computeIntersectionTrims,
@@ -109,10 +109,6 @@ interface NodeClipboard {
 
 type EditorClipboard = SegmentClipboard | NodeClipboard;
 
-export function cloneLanes(lanes: Lane[]) {
-	return lanes.map((lane) => ({ ...lane }));
-}
-
 function cloneConnectionRef(connection: LaneConnectionRef): LaneConnectionRef {
 	return {
 		from: { ...connection.from },
@@ -150,7 +146,9 @@ export class Editor {
 
 	mode = $state<Mode>('select');
 	drawStyle = $state<DrawStyle>('straight');
-	currentLaneTemplateId = $state(getDefaultTemplate().id);
+	hotbar = $state<(Brush | null)[]>(defaultHotbar());
+	activeSlot = $state(0);
+	activeBrush = $derived(this.hotbar[this.activeSlot]);
 	fps = $state(0);
 	canUndo = $state(false);
 	canRedo = $state(false);
@@ -163,6 +161,17 @@ export class Editor {
 		if (this.selectedNodes.size !== 1 || this.selectedSegments.size !== 0) return null;
 		const nodeId = [...this.selectedNodes][0];
 		return this.canJoinNode(nodeId) ? nodeId : null;
+	});
+	// The shared cross-section of a uniform segment selection — the config you
+	// can drop into a hotbar slot to build with it. Null for empty or mixed.
+	pickableLanes = $derived.by(() => {
+		const segments = [...this.selectedSegments]
+			.map((id) => this.graph.segments.get(id))
+			.filter((segment) => segment !== undefined);
+		if (segments.length === 0) return null;
+		const key = segments[0].lanesKey;
+		if (!segments.every((segment) => segment.lanesKey === key)) return null;
+		return segments[0].lanes;
 	});
 
 	private modeHandlers: ModeHandlers | null = null;
@@ -239,6 +248,40 @@ export class Editor {
 		if (next === undefined) return;
 		this.undoStack.push(this.presentState);
 		this.restoreState(next);
+	}
+
+	activateSlot(index: number) {
+		const brush = this.hotbar[index];
+		if (!brush) return;
+		this.activeSlot = index;
+		this.mode = 'draw';
+	}
+
+	cycleBrush(direction: number) {
+		const filled = this.hotbar.flatMap((brush, i) => (brush ? [i] : []));
+		if (filled.length === 0) return;
+		const at = filled.indexOf(this.activeSlot);
+		const next =
+			filled[(((at < 0 ? 0 : at) + direction) % filled.length + filled.length) % filled.length];
+		this.activeSlot = next;
+		this.mode = 'draw';
+	}
+
+	// Drop the selected road's cross-section into a slot and arm it.
+	pickIntoSlot(index: number) {
+		const lanes = this.pickableLanes;
+		if (!lanes) return;
+		this.hotbar[index] = { name: 'Custom road', lanes: cloneLanes(lanes) };
+		this.clearSelection();
+		this.activeSlot = index;
+		this.mode = 'draw';
+	}
+
+	// Empty a slot. Drawing falls back to select if it held the active brush.
+	clearSlot(index: number) {
+		if (!this.hotbar[index]) return;
+		this.hotbar[index] = null;
+		if (this.activeSlot === index) this.mode = 'select';
 	}
 
 	private restoreState(serialized: string) {

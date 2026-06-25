@@ -1,4 +1,5 @@
 import type {
+	Brush,
 	Lane,
 	LaneMaterial,
 	LaneRole,
@@ -85,9 +86,23 @@ export function getDefaultTemplate(): LaneTemplate {
 	return LANE_TEMPLATES[0];
 }
 
+export function cloneLanes(lanes: Lane[]): Lane[] {
+	return lanes.map((lane) => ({ ...lane }));
+}
+
 export function createLanesFrom(templateId: string): Lane[] {
 	const template = getLaneTemplate(templateId) ?? getDefaultTemplate();
-	return template.lanes.map((lane) => ({ ...lane }));
+	return cloneLanes(template.lanes);
+}
+
+export const HOTBAR_SIZE = 9;
+
+export function defaultHotbar(): (Brush | null)[] {
+	const slots: (Brush | null)[] = Array(HOTBAR_SIZE).fill(null);
+	LANE_TEMPLATES.forEach((template, i) => {
+		if (i < HOTBAR_SIZE) slots[i] = { name: template.name, lanes: cloneLanes(template.lanes) };
+	});
+	return slots;
 }
 
 export function getTotalWidth(lanes: Lane[]): number {

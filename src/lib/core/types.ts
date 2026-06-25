@@ -14,6 +14,11 @@ export interface Lane {
 	markings?: boolean;
 }
 
+export interface Brush {
+	name: string;
+	lanes: Lane[];
+}
+
 // The legacy on-disk lane shape, accepted for migration on load. Old saves used
 // `type` (+ optional `turn`); pre-material saves write `role` + `surface`.
 export type LegacyLaneType =

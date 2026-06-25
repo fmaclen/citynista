@@ -1,12 +1,13 @@
 <script lang="ts">
 	import { getEditorContext } from '$lib/editor.svelte';
 	import type { DrawStyle } from '$lib/modes/types';
-	import { LANE_TEMPLATES, getTotalWidth, laneSwatchColor } from '$lib/core/lane-template';
+	import { getTotalWidth, laneSwatchColor } from '$lib/core/lane-template';
 	import { MATERIAL_COLOR } from '$lib/core/lane-types';
 	import { Button } from '$lib/components/ui/button';
 	import {
 		Combine,
 		MousePointer2,
+		Plus,
 		Redo2,
 		Scissors,
 		Slash,
@@ -18,7 +19,9 @@
 
 	const editor = getEditorContext();
 
-	const maxPresetWidth = Math.max(...LANE_TEMPLATES.map((t) => getTotalWidth(t.lanes)));
+	const maxBrushWidth = $derived(
+		Math.max(1, ...editor.hotbar.flatMap((b) => (b ? [getTotalWidth(b.lanes)] : [])))
+	);
 
 	const DRAW_STYLES: { id: DrawStyle; label: string; icon: typeof Slash }[] = [
 		{ id: 'straight', label: 'Straight', icon: Slash },
@@ -37,11 +40,6 @@
 		};
 	}
 
-	function activatePreset(templateId: string) {
-		editor.currentLaneTemplateId = templateId;
-		editor.mode = 'draw';
-	}
-
 	function onKeyDown(event: KeyboardEvent) {
 		const target = event.target;
 		if (
@@ -55,17 +53,29 @@
 		const index = parseInt(event.key, 10) - 1;
 		if (isNaN(index)) return;
 
-		const template = LANE_TEMPLATES[index];
-		if (template) {
-			activatePreset(template.id);
-		}
+		editor.activateSlot(index);
+	}
+
+	function onWheel(event: WheelEvent) {
+		event.preventDefault();
+		editor.cycleBrush(event.deltaY > 0 ? 1 : -1);
+	}
+
+	function removeSlot(event: MouseEvent, index: number) {
+		event.preventDefault();
+		editor.clearSlot(index);
+		const target = event.currentTarget;
+		if (target instanceof HTMLElement) target.blur();
 	}
 </script>
 
 <svelte:window onkeydown={onKeyDown} />
 
 <div class="fixed bottom-8 left-1/2 z-50 -translate-x-1/2">
-	<nav class="flex flex-row items-center gap-2 rounded-lg border bg-background p-2 shadow-lg">
+	<nav
+		class="flex flex-row items-center gap-2 rounded-lg border bg-background p-2 shadow-lg"
+		onwheel={onWheel}
+	>
 		<Button
 			variant={editor.mode === 'select' ? 'default' : 'ghost'}
 			size="icon"
@@ -78,35 +88,45 @@
 
 		<div class="mx-1 h-6 w-px bg-border"></div>
 
-		{#each LANE_TEMPLATES as template, i (template.id)}
-			{@const totalWidth = getTotalWidth(template.lanes)}
-			{@const active = editor.mode === 'draw' && editor.currentLaneTemplateId === template.id}
+		{#each editor.hotbar as brush, i (i)}
+			{@const active = editor.mode === 'draw' && editor.activeSlot === i}
+			{@const holding = editor.pickableLanes !== null}
 			<button
 				class="relative h-10 w-10 shrink-0 overflow-hidden rounded-md border-2 transition-colors {active
 					? 'border-foreground'
 					: 'border-border hover:border-muted-foreground'}"
-				style="background-color: {MATERIAL_COLOR.grass};"
-				aria-label={template.name}
+				style={brush ? `background-color: ${MATERIAL_COLOR.grass};` : ''}
+				aria-label={brush ? brush.name : `Empty slot ${i + 1}`}
 				aria-pressed={active}
-				title="Draw {template.name} — {totalWidth}m (key {i + 1})"
-				onclick={press(() => activatePreset(template.id))}
+				title={brush
+					? holding
+						? `Replace slot ${i + 1} with the selected road`
+						: `Draw ${brush.name} — ${getTotalWidth(brush.lanes)}m (key ${i + 1}) · right-click to remove`
+					: holding
+						? `Put the selected road in slot ${i + 1}`
+						: `Empty slot ${i + 1}`}
+				onclick={press(() => (holding ? editor.pickIntoSlot(i) : editor.activateSlot(i)))}
+				oncontextmenu={(event) => removeSlot(event, i)}
 			>
-				<div
-					class="absolute inset-y-0 left-1/2 flex -translate-x-1/2"
-					style="width: {(totalWidth / maxPresetWidth) * 100}%;"
-				>
-					{#each template.lanes as lane, j (j)}
-						<div
-							class="h-full"
-							style="width: {(lane.width / totalWidth) * 100}%; background-color: {laneSwatchColor(
-								lane
-							)};"
-						></div>
-					{/each}
-				</div>
-				<span class="absolute right-0.5 bottom-0 text-[9px] leading-none font-medium text-white/70">
-					{i + 1}
-				</span>
+				{#if brush}
+					<div
+						class="absolute inset-y-0 left-1/2 flex -translate-x-1/2"
+						style="width: {(getTotalWidth(brush.lanes) / maxBrushWidth) * 100}%;"
+					>
+						{#each brush.lanes as lane, j (j)}
+							<div
+								class="h-full"
+								style="width: {(lane.width / getTotalWidth(brush.lanes)) *
+									100}%; background-color: {laneSwatchColor(lane)};"
+							></div>
+						{/each}
+					</div>
+				{/if}
+				{#if holding}
+					<div class="absolute inset-0 flex items-center justify-center bg-background/50">
+						<Plus class="h-4 w-4 text-foreground" />
+					</div>
+				{/if}
 			</button>
 		{/each}
 

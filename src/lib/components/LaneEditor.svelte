@@ -1,11 +1,6 @@
 <script lang="ts">
 	import { getEditorContext } from '$lib/editor.svelte';
-	import {
-		LANE_TEMPLATES,
-		createLanesFrom,
-		getTotalWidth,
-		laneSwatchColor
-	} from '$lib/core/lane-template';
+	import { getTotalWidth, laneSwatchColor } from '$lib/core/lane-template';
 	import type { LaneMaterial, LaneRole } from '$lib/core/types';
 	import * as Select from '$lib/components/ui/select';
 	import { Button } from '$lib/components/ui/button';
@@ -142,14 +137,6 @@
 	function addLane() {
 		for (const segment of segments) {
 			segment.lanes.push({ role: 'vehicle', material: 'asphalt', width: 3, direction: 'forward' });
-		}
-		commit();
-	}
-
-	function applyPreset(templateId: string) {
-		if (!templateId) return;
-		for (const segment of segments) {
-			segment.lanes = createLanesFrom(templateId);
 		}
 		commit();
 	}
@@ -347,18 +334,9 @@
 			</div>
 		{:else}
 			<p class="text-xs text-muted-foreground">
-				The selected segments have different lane configurations. Apply a preset to replace all of
-				them.
+				The selected segments have different lane configurations. Select segments that share a
+				configuration to edit them together.
 			</p>
 		{/if}
-
-		<Select.Root type="single" value="" onValueChange={applyPreset}>
-			<Select.Trigger class="w-full" size="sm">Apply preset…</Select.Trigger>
-			<Select.Content>
-				{#each LANE_TEMPLATES as template (template.id)}
-					<Select.Item value={template.id} label={template.name} />
-				{/each}
-			</Select.Content>
-		</Select.Root>
 	</aside>
 {/if}

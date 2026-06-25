@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import { SvelteMap, SvelteSet } from 'svelte/reactivity';
-import { cloneLanes, type ClipboardNodeSnapshot, type Editor } from '../editor.svelte';
+import type { ClipboardNodeSnapshot, Editor } from '../editor.svelte';
 import type { SegmentClipboard } from '../editor.svelte';
+import { cloneLanes } from '../core/lane-template';
 import { Graph } from '../core/graph.svelte';
 import { buildRoadLayers } from '../core/road-geometry';
 import { findCrossingsBetweenSegments } from '../core/crossings';

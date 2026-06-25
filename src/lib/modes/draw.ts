@@ -5,7 +5,7 @@ import type { Segment } from '../core/segment.svelte';
 import type { Node } from '../core/node.svelte';
 import { Graph } from '../core/graph.svelte';
 import { buildRoadLayers } from '../core/road-geometry';
-import { createLanesFrom, getLaneTemplate, getTotalWidth } from '../core/lane-template';
+import { cloneLanes, getTotalWidth } from '../core/lane-template';
 import { splitSegment } from '../core/crossings';
 import { closestPointOnQuadraticBezier, getQuadraticBezierTangent } from '../geometry/bezier';
 import { RoadRenderer } from '../rendering/road-renderer';
@@ -79,8 +79,8 @@ export function setupDrawMode(editor: Editor): ModeHandlers {
 
 	let cursorRadius = 0;
 	const updateCursorRadius = () => {
-		const template = getLaneTemplate(editor.currentLaneTemplateId);
-		const radius = (template ? getTotalWidth(template.lanes) / 2 : 4) + 2;
+		const brush = editor.activeBrush;
+		const radius = (brush ? getTotalWidth(brush.lanes) / 2 : 4) + 2;
 		if (radius === cursorRadius) return;
 
 		cursorRadius = radius;
@@ -359,7 +359,7 @@ export function setupDrawMode(editor: Editor): ModeHandlers {
 		const preview = previewGraph.createSegment(
 			previewStart.id,
 			previewEnd.id,
-			createLanesFrom(editor.currentLaneTemplateId)
+			cloneLanes(editor.activeBrush?.lanes ?? [])
 		);
 		const control = pendingSegmentControl(startNode, target.x, target.y);
 		if (control) {
@@ -395,7 +395,7 @@ export function setupDrawMode(editor: Editor): ModeHandlers {
 				const segment = editor.graph.createSegment(
 					startNodeId,
 					endNodeId,
-					createLanesFrom(editor.currentLaneTemplateId)
+					cloneLanes(editor.activeBrush?.lanes ?? [])
 				);
 				if (control) {
 					segment.setControlPoint(control.x, control.y);
