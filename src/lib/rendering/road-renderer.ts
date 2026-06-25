@@ -99,6 +99,7 @@ function extendCenterline(
 // pedestrian pavement over them; still below the interaction layers.
 const PAINT_Y = TOP_LAYER_Y + 0.02;
 const PAINT_WIDTH = 0.16;
+const CENTER_DOUBLE_OFFSET = 0.16;
 const PAINT_DASH = 2.2;
 const PAINT_GAP = 2.6;
 const PAINT_SOLID_STEP = 2.5;
@@ -767,34 +768,36 @@ export class RoadRenderer {
 			if (to - from < 0.5) return;
 			const target = positions.center;
 			const half = PAINT_WIDTH / 2;
-			let d = from;
-			let previous = pointAt(d, offsetAt(d));
-			while (d < to - 0.05) {
-				const end = Math.min(d + PAINT_SOLID_STEP, to);
-				if (end - d < 0.3) break;
-				const p2 = pointAt(end, offsetAt(end));
-				target.push(
-					previous.x - previous.nx * half,
-					0,
-					previous.z - previous.ny * half,
-					previous.x + previous.nx * half,
-					0,
-					previous.z + previous.ny * half,
-					p2.x - p2.nx * half,
-					0,
-					p2.z - p2.ny * half,
-					previous.x + previous.nx * half,
-					0,
-					previous.z + previous.ny * half,
-					p2.x + p2.nx * half,
-					0,
-					p2.z + p2.ny * half,
-					p2.x - p2.nx * half,
-					0,
-					p2.z - p2.ny * half
-				);
-				previous = p2;
-				d = end;
+			for (const lateral of [CENTER_DOUBLE_OFFSET, -CENTER_DOUBLE_OFFSET]) {
+				let d = from;
+				let previous = pointAt(d, offsetAt(d) + lateral);
+				while (d < to - 0.05) {
+					const end = Math.min(d + PAINT_SOLID_STEP, to);
+					if (end - d < 0.3) break;
+					const p2 = pointAt(end, offsetAt(end) + lateral);
+					target.push(
+						previous.x - previous.nx * half,
+						0,
+						previous.z - previous.ny * half,
+						previous.x + previous.nx * half,
+						0,
+						previous.z + previous.ny * half,
+						p2.x - p2.nx * half,
+						0,
+						p2.z - p2.ny * half,
+						previous.x + previous.nx * half,
+						0,
+						previous.z + previous.ny * half,
+						p2.x + p2.nx * half,
+						0,
+						p2.z + p2.ny * half,
+						p2.x - p2.nx * half,
+						0,
+						p2.z - p2.ny * half
+					);
+					previous = p2;
+					d = end;
+				}
 			}
 		};
 
@@ -845,35 +848,43 @@ export class RoadRenderer {
 			const stepLength = paint.dashed ? PAINT_DASH : PAINT_SOLID_STEP;
 			const gap = paint.dashed ? PAINT_GAP : 0;
 			const half = PAINT_WIDTH / 2;
-			let d = from;
-			let previous = pointAt(d, offsetAt(d));
-			while (d < to - 0.05) {
-				const end = Math.min(d + stepLength, to);
-				if (end - d < 0.3) break;
-				const p1 = gap === 0 ? previous : pointAt(d, offsetAt(d));
-				const p2 = pointAt(end, offsetAt(end));
-				target.push(
-					p1.x - p1.nx * half,
-					0,
-					p1.z - p1.ny * half,
-					p1.x + p1.nx * half,
-					0,
-					p1.z + p1.ny * half,
-					p2.x - p2.nx * half,
-					0,
-					p2.z - p2.ny * half,
-					p1.x + p1.nx * half,
-					0,
-					p1.z + p1.ny * half,
-					p2.x + p2.nx * half,
-					0,
-					p2.z + p2.ny * half,
-					p2.x - p2.nx * half,
-					0,
-					p2.z - p2.ny * half
-				);
-				previous = p2;
-				d = end + gap;
+			const walkStroke = (lateral: number) => {
+				let d = from;
+				let previous = pointAt(d, offsetAt(d) + lateral);
+				while (d < to - 0.05) {
+					const end = Math.min(d + stepLength, to);
+					if (end - d < 0.3) break;
+					const p1 = gap === 0 ? previous : pointAt(d, offsetAt(d) + lateral);
+					const p2 = pointAt(end, offsetAt(end) + lateral);
+					target.push(
+						p1.x - p1.nx * half,
+						0,
+						p1.z - p1.ny * half,
+						p1.x + p1.nx * half,
+						0,
+						p1.z + p1.ny * half,
+						p2.x - p2.nx * half,
+						0,
+						p2.z - p2.ny * half,
+						p1.x + p1.nx * half,
+						0,
+						p1.z + p1.ny * half,
+						p2.x + p2.nx * half,
+						0,
+						p2.z + p2.ny * half,
+						p2.x - p2.nx * half,
+						0,
+						p2.z - p2.ny * half
+					);
+					previous = p2;
+					d = end + gap;
+				}
+			};
+			if (paint.color === 'center') {
+				walkStroke(CENTER_DOUBLE_OFFSET);
+				walkStroke(-CENTER_DOUBLE_OFFSET);
+			} else {
+				walkStroke(0);
 			}
 		}
 
