@@ -55,10 +55,12 @@ export class ConnectionRenderer {
 	private arcGroup: THREE.Group | null = null;
 	private rubber: THREE.Mesh | null = null;
 	private dots: { ref: LaneRef; mesh: THREE.Mesh }[] = [];
+	private arcs: { connection: LaneConnection; mesh: THREE.Mesh }[] = [];
 	private hoveredRef: LaneRef | null = null;
 	private dragTargetRef: LaneRef | null = null;
 	private dragValid = false;
 	private activeMaterial: THREE.MeshBasicMaterial;
+	private highlightArcMaterial: THREE.MeshBasicMaterial;
 	private handleMaterial: THREE.MeshBasicMaterial;
 	private hoverMaterial: THREE.MeshBasicMaterial;
 	private validMaterial: THREE.MeshBasicMaterial;
@@ -75,6 +77,7 @@ export class ConnectionRenderer {
 				depthWrite: false
 			});
 		this.activeMaterial = createEditorLineMaterial();
+		this.highlightArcMaterial = createEditorLineMaterial(HOVER_COLOR);
 		this.handleMaterial = dot(HANDLE_COLOR);
 		this.hoverMaterial = dot(HOVER_COLOR);
 		this.validMaterial = dot(VALID_COLOR);
@@ -92,6 +95,7 @@ export class ConnectionRenderer {
 			const mesh = new THREE.Mesh(arcGeometry(c), this.activeMaterial);
 			mesh.renderOrder = ARC_ORDER;
 			arcGroup.add(mesh);
+			this.arcs.push({ connection: c, mesh });
 		}
 		this.scene.add(arcGroup);
 		this.arcGroup = arcGroup;
@@ -121,6 +125,18 @@ export class ConnectionRenderer {
 		this.hoveredRef = ref;
 		this.dragTargetRef = null;
 		this.applyDotStates();
+		this.applyArcStates();
+	}
+
+	// Movements that start or end at the hovered dot light up in the hover colour.
+	private applyArcStates() {
+		for (const arc of this.arcs) {
+			const lit =
+				this.hoveredRef !== null &&
+				(sameLaneRef(arc.connection.from, this.hoveredRef) ||
+					sameLaneRef(arc.connection.to, this.hoveredRef));
+			arc.mesh.material = lit ? this.highlightArcMaterial : this.activeMaterial;
+		}
 	}
 
 	// While dragging from `sourceRef`, mark the dot under the cursor green (valid
@@ -173,6 +189,7 @@ export class ConnectionRenderer {
 	clear() {
 		this.hideRubberBand();
 		this.dots = [];
+		this.arcs = [];
 		this.hoveredRef = null;
 		this.dragTargetRef = null;
 		for (const g of [this.dotGroup, this.arcGroup]) {
@@ -189,6 +206,7 @@ export class ConnectionRenderer {
 	dispose() {
 		this.clear();
 		this.activeMaterial.dispose();
+		this.highlightArcMaterial.dispose();
 		this.handleMaterial.dispose();
 		this.hoverMaterial.dispose();
 		this.validMaterial.dispose();

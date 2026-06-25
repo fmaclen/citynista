@@ -68,10 +68,11 @@ export function setupConnectorMode(editor: Editor): ModeHandlers {
 			return;
 		}
 
+		// Hovering ANY dot (incoming or outgoing) highlights it and every movement
+		// that starts or ends there; only incoming dots are grabbable for a drag.
 		const near = editor.connectorEndpointNear(world.x, world.z);
-		const hoverIn = near && near.flow === 'in' ? near : null;
-		editor.connectionRenderer.setHovered(hoverIn ? hoverIn.ref : null);
-		setCursor(hoverIn ? 'grab' : 'default');
+		editor.connectionRenderer.setHovered(near ? near.ref : null);
+		setCursor(near ? (near.flow === 'in' ? 'grab' : 'pointer') : 'default');
 	};
 
 	const onMouseUp = (event: MouseEvent) => {
@@ -94,6 +95,15 @@ export function setupConnectorMode(editor: Editor): ModeHandlers {
 		}
 	};
 
+	// Double-clicking a lane dot toggles all of its movements off (a dead-end) or,
+	// if they're already all off, back on.
+	const onDoubleClick = (event: MouseEvent) => {
+		if (event.button !== 0) return;
+		const world = editor.sceneManager.screenToWorld(event.clientX, event.clientY);
+		const near = editor.connectorEndpointNear(world.x, world.z);
+		if (near) editor.toggleAllConnections(near);
+	};
+
 	const onKeyDown = (event: KeyboardEvent) => {
 		if (event.key === 'Escape') {
 			event.preventDefault();
@@ -107,5 +117,5 @@ export function setupConnectorMode(editor: Editor): ModeHandlers {
 		editor.connectionRenderer.clear();
 	};
 
-	return { onMouseDown, onMouseMove, onMouseUp, onKeyDown, cleanup };
+	return { onMouseDown, onMouseMove, onMouseUp, onDoubleClick, onKeyDown, cleanup };
 }

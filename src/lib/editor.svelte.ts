@@ -21,7 +21,12 @@ import {
 	transitionTaper
 } from './core/road-geometry';
 import type { CenterlineSample, Point } from './core/road-geometry';
-import { isDefaultMovement, nodeConnectivity, sameConnectionRef } from './core/lane-connections';
+import {
+	isDefaultMovement,
+	nodeConnectivity,
+	sameConnectionRef,
+	sameLaneRef
+} from './core/lane-connections';
 import type { Barrier, LaneEndpoint, LaneConnection } from './core/lane-connections';
 import { getQuadraticBezierTangent } from './geometry/bezier';
 import { SceneManager, GRID_SUB } from './rendering/scene.svelte';
@@ -1094,9 +1099,13 @@ export class Editor {
 		return best;
 	}
 
-	toggleConnection(from: LaneRef, to: LaneRef) {
-		const node = this.connectorNodeId ? this.graph.nodes.get(this.connectorNodeId) : null;
-		if (!node) return;
+	// Flip one movement's allowed/blocked state on the node, without persisting —
+	// callers batch the save/rebuild so toggling many movements is one undo step.
+	private applyConnectionToggle(
+		node: NonNullable<ReturnType<Graph['nodes']['get']>>,
+		from: LaneRef,
+		to: LaneRef
+	) {
 		const ref = { from, to };
 		// A default movement is toggled by adding/removing it from the disabled
 		// set; a non-default one (U-turn, median break) by adding/removing it from
@@ -1114,6 +1123,32 @@ export class Editor {
 			node.disabledConnections = toggle(node.disabledConnections);
 		} else {
 			node.enabledConnections = toggle(node.enabledConnections);
+		}
+	}
+
+	toggleConnection(from: LaneRef, to: LaneRef) {
+		const node = this.connectorNodeId ? this.graph.nodes.get(this.connectorNodeId) : null;
+		if (!node) return;
+		this.applyConnectionToggle(node, from, to);
+		this.graph.save();
+		this.rebuildRoads();
+		this.refreshConnectors();
+	}
+
+	// Double-clicking a lane dot: if any of its movements are on, turn them all
+	// off (a dead-end); if all are off, turn them back on. Covers every movement
+	// that starts or ends at this dot.
+	toggleAllConnections(endpoint: LaneEndpoint) {
+		const node = this.connectorNodeId ? this.graph.nodes.get(this.connectorNodeId) : null;
+		if (!node) return;
+		const involved = this.currentConnectors.connections.filter(
+			(c) => sameLaneRef(c.from, endpoint.ref) || sameLaneRef(c.to, endpoint.ref)
+		);
+		if (involved.length === 0) return;
+		const anyActive = involved.some((c) => c.active);
+		for (const c of involved) {
+			// Flip only the ones currently in the state we're toggling away from.
+			if (c.active === anyActive) this.applyConnectionToggle(node, c.from, c.to);
 		}
 		this.graph.save();
 		this.rebuildRoads();
