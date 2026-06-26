@@ -124,6 +124,16 @@
 		<div class="mx-1 h-6 w-px bg-border"></div>
 
 		<Button
+			variant={editor.gridEnabled ? 'default' : 'ghost'}
+			size="icon"
+			onclick={press(() => editor.toggleGrid())}
+			title="Toggle snapping grid"
+			aria-pressed={editor.gridEnabled}
+		>
+			<Grid3x3 class="h-4 w-4" />
+		</Button>
+
+		<Button
 			variant={editor.mode === 'split' ? 'default' : 'ghost'}
 			size="icon"
 			onclick={press(() => (editor.mode = 'split'))}
@@ -152,18 +162,6 @@
 			aria-pressed={editor.mode === 'bulldoze'}
 		>
 			<Tractor class="h-4 w-4" />
-		</Button>
-
-		<div class="mx-1 h-6 w-px bg-border"></div>
-
-		<Button
-			variant={editor.gridEnabled ? 'default' : 'ghost'}
-			size="icon"
-			onclick={press(() => editor.toggleGrid())}
-			title="Toggle snapping grid"
-			aria-pressed={editor.gridEnabled}
-		>
-			<Grid3x3 class="h-4 w-4" />
 		</Button>
 	</nav>
 </div>
