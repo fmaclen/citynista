@@ -2,8 +2,7 @@
 
 Status: design, agreed 2026-06-25. Supersedes the ad-hoc transition/marking logic in
 `node-resolution.ts` (`resolveTransitionArm`, `markingStructure`, `laneBoundaryTargets`).
-Builds on `scratchpads/01-lane-connectivity.html` (Citynista ✕ Citybound) and the
-`render-derivation` work.
+Builds on `scratchpads/01-lane-connectivity.html` and the `render-derivation` work.
 
 ## The goal (why this doc exists)
 
@@ -46,8 +45,8 @@ The same graph is consumed two ways depending on locality:
 - **Within-segment transitions (2-arm):** structural lateral matcher + movement as a tie-break
   classifier. The connector's fan-out (one lane → left+through+right) is the *wrong* primitive for a
   lateral taper, so it only labels axes; structure executes the taper.
-- **Junction interiors (3+ arm):** the drivable surface **is** the union of connector ribbons
-  (Citybound's model). Each movement is a swept lane-path; union them; that is the asphalt. This
+- **Junction interiors (3+ arm):** the drivable surface **is** the union of connector ribbons.
+  Each movement is a swept lane-path; union them; that is the asphalt. This
   replaces the parallel connection-pair / gore / merge / patch abstraction over time (slice 5).
 
 > Why both, not just "union of ribbons everywhere": at a 2-arm lane-count change the *born* lanes
