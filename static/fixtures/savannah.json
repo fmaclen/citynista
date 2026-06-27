@@ -1,0 +1,468 @@
+{
+	"graph": {
+		"nodes": [
+			{
+				"id": "node-0",
+				"x": 50,
+				"y": 100
+			},
+			{
+				"id": "node-1",
+				"x": 50.243740380714115,
+				"y": -102.6409049521624,
+				"enabledConnections": [
+					{
+						"from": {
+							"segmentId": "segment-0",
+							"laneIndex": 5
+						},
+						"to": {
+							"segmentId": "segment-1",
+							"laneIndex": 5
+						}
+					},
+					{
+						"from": {
+							"segmentId": "segment-0",
+							"laneIndex": 5
+						},
+						"to": {
+							"segmentId": "segment-1",
+							"laneIndex": 6
+						}
+					}
+				]
+			},
+			{
+				"id": "node-2",
+				"x": -149.81464745980566,
+				"y": -102.31378357899536
+			},
+			{
+				"id": "node-3",
+				"x": 199.75518821240422,
+				"y": -102.60057322878615
+			},
+			{
+				"id": "node-4",
+				"x": 50,
+				"y": -150
+			},
+			{
+				"id": "node-5",
+				"x": 100,
+				"y": -250
+			},
+			{
+				"id": "node-6",
+				"x": 251.30977007481692,
+				"y": -361.34612938838796
+			},
+			{
+				"id": "node-7",
+				"x": 300,
+				"y": -450
+			},
+			{
+				"id": "node-8",
+				"x": 300,
+				"y": -649.478409253959
+			},
+			{
+				"id": "node-9",
+				"x": 300,
+				"y": -900
+			}
+		],
+		"segments": [
+			{
+				"id": "segment-0",
+				"startNodeId": "node-0",
+				"endNodeId": "node-1",
+				"lanes": [
+					{
+						"role": "pedestrian",
+						"material": "pavement",
+						"width": 3,
+						"direction": "bidirectional"
+					},
+					{
+						"role": "buffer",
+						"material": "grass",
+						"width": 1,
+						"direction": "bidirectional"
+					},
+					{
+						"role": "vehicle",
+						"material": "asphalt",
+						"width": 3.5,
+						"direction": "backward"
+					},
+					{
+						"role": "vehicle",
+						"material": "asphalt",
+						"width": 3.5,
+						"direction": "backward"
+					},
+					{
+						"role": "buffer",
+						"material": "concrete",
+						"width": 2,
+						"direction": "bidirectional"
+					},
+					{
+						"role": "vehicle",
+						"material": "asphalt",
+						"width": 3.5,
+						"direction": "forward"
+					},
+					{
+						"role": "vehicle",
+						"material": "asphalt",
+						"width": 3.5,
+						"direction": "forward"
+					},
+					{
+						"role": "buffer",
+						"material": "grass",
+						"width": 1,
+						"direction": "bidirectional"
+					},
+					{
+						"role": "pedestrian",
+						"material": "pavement",
+						"width": 3,
+						"direction": "bidirectional"
+					}
+				],
+				"setbackEnd": 25.650913302084877
+			},
+			{
+				"id": "segment-1",
+				"startNodeId": "node-1",
+				"endNodeId": "node-2",
+				"lanes": [
+					{
+						"role": "pedestrian",
+						"material": "pavement",
+						"width": 3,
+						"direction": "bidirectional"
+					},
+					{
+						"role": "buffer",
+						"material": "grass",
+						"width": 1,
+						"direction": "bidirectional"
+					},
+					{
+						"role": "vehicle",
+						"material": "asphalt",
+						"width": 3.5,
+						"direction": "backward"
+					},
+					{
+						"role": "vehicle",
+						"material": "asphalt",
+						"width": 3.5,
+						"direction": "backward"
+					},
+					{
+						"role": "buffer",
+						"material": "concrete",
+						"width": 2,
+						"direction": "bidirectional"
+					},
+					{
+						"role": "vehicle",
+						"material": "asphalt",
+						"width": 3.5,
+						"direction": "forward"
+					},
+					{
+						"role": "vehicle",
+						"material": "asphalt",
+						"width": 3.5,
+						"direction": "forward"
+					},
+					{
+						"role": "buffer",
+						"material": "grass",
+						"width": 1,
+						"direction": "bidirectional"
+					},
+					{
+						"role": "pedestrian",
+						"material": "pavement",
+						"width": 3,
+						"direction": "bidirectional"
+					}
+				],
+				"setbackStart": 27.17885617989031
+			},
+			{
+				"id": "segment-2",
+				"startNodeId": "node-1",
+				"endNodeId": "node-3",
+				"lanes": [
+					{
+						"role": "pedestrian",
+						"material": "pavement",
+						"width": 3,
+						"direction": "bidirectional"
+					},
+					{
+						"role": "buffer",
+						"material": "grass",
+						"width": 1,
+						"direction": "bidirectional"
+					},
+					{
+						"role": "vehicle",
+						"material": "asphalt",
+						"width": 3.5,
+						"direction": "backward"
+					},
+					{
+						"role": "vehicle",
+						"material": "asphalt",
+						"width": 3.5,
+						"direction": "backward"
+					},
+					{
+						"role": "buffer",
+						"material": "concrete",
+						"width": 2,
+						"direction": "bidirectional"
+					},
+					{
+						"role": "vehicle",
+						"material": "asphalt",
+						"width": 3.5,
+						"direction": "forward"
+					},
+					{
+						"role": "vehicle",
+						"material": "asphalt",
+						"width": 3.5,
+						"direction": "forward"
+					},
+					{
+						"role": "buffer",
+						"material": "grass",
+						"width": 1,
+						"direction": "bidirectional"
+					},
+					{
+						"role": "pedestrian",
+						"material": "pavement",
+						"width": 3,
+						"direction": "bidirectional"
+					}
+				],
+				"setbackStart": 24.232389142145696
+			},
+			{
+				"id": "segment-3",
+				"startNodeId": "node-1",
+				"endNodeId": "node-4",
+				"controlX": 50.24083005178881,
+				"controlY": -126.32106472008388,
+				"lanes": [
+					{
+						"role": "pedestrian",
+						"material": "pavement",
+						"width": 2,
+						"direction": "bidirectional"
+					},
+					{
+						"role": "vehicle",
+						"material": "asphalt",
+						"width": 3,
+						"direction": "backward"
+					},
+					{
+						"role": "vehicle",
+						"material": "asphalt",
+						"width": 3,
+						"direction": "forward"
+					},
+					{
+						"role": "pedestrian",
+						"material": "pavement",
+						"width": 2,
+						"direction": "bidirectional"
+					}
+				],
+				"setbackStart": 40.119536656548846
+			},
+			{
+				"id": "segment-4",
+				"startNodeId": "node-4",
+				"endNodeId": "node-5",
+				"controlX": 49.428827117787534,
+				"controlY": -212.78558644110623,
+				"lanes": [
+					{
+						"role": "pedestrian",
+						"material": "pavement",
+						"width": 2,
+						"direction": "bidirectional"
+					},
+					{
+						"role": "vehicle",
+						"material": "asphalt",
+						"width": 3,
+						"direction": "backward"
+					},
+					{
+						"role": "vehicle",
+						"material": "asphalt",
+						"width": 3,
+						"direction": "forward"
+					},
+					{
+						"role": "pedestrian",
+						"material": "pavement",
+						"width": 2,
+						"direction": "bidirectional"
+					}
+				]
+			},
+			{
+				"id": "segment-5",
+				"startNodeId": "node-5",
+				"endNodeId": "node-6",
+				"lanes": [
+					{
+						"role": "pedestrian",
+						"material": "pavement",
+						"width": 2,
+						"direction": "bidirectional"
+					},
+					{
+						"role": "vehicle",
+						"material": "asphalt",
+						"width": 3,
+						"direction": "backward"
+					},
+					{
+						"role": "vehicle",
+						"material": "asphalt",
+						"width": 3,
+						"direction": "forward"
+					},
+					{
+						"role": "pedestrian",
+						"material": "pavement",
+						"width": 2,
+						"direction": "bidirectional"
+					}
+				]
+			},
+			{
+				"id": "segment-6",
+				"startNodeId": "node-6",
+				"endNodeId": "node-7",
+				"controlX": 296.2072327456428,
+				"controlY": -394.3853619857556,
+				"lanes": [
+					{
+						"role": "pedestrian",
+						"material": "pavement",
+						"width": 2,
+						"direction": "bidirectional"
+					},
+					{
+						"role": "vehicle",
+						"material": "asphalt",
+						"width": 3,
+						"direction": "backward"
+					},
+					{
+						"role": "vehicle",
+						"material": "asphalt",
+						"width": 3,
+						"direction": "forward"
+					},
+					{
+						"role": "pedestrian",
+						"material": "pavement",
+						"width": 2,
+						"direction": "bidirectional"
+					}
+				]
+			},
+			{
+				"id": "segment-7",
+				"startNodeId": "node-7",
+				"endNodeId": "node-8",
+				"lanes": [
+					{
+						"role": "pedestrian",
+						"material": "pavement",
+						"width": 2,
+						"direction": "bidirectional"
+					},
+					{
+						"role": "vehicle",
+						"material": "asphalt",
+						"width": 3,
+						"direction": "backward"
+					},
+					{
+						"role": "vehicle",
+						"material": "asphalt",
+						"width": 3,
+						"direction": "forward"
+					},
+					{
+						"role": "pedestrian",
+						"material": "pavement",
+						"width": 2,
+						"direction": "bidirectional"
+					}
+				]
+			},
+			{
+				"id": "segment-8",
+				"startNodeId": "node-8",
+				"endNodeId": "node-9",
+				"controlX": 300,
+				"controlY": -774.7392046269795,
+				"lanes": [
+					{
+						"role": "pedestrian",
+						"material": "pavement",
+						"width": 2,
+						"direction": "bidirectional"
+					},
+					{
+						"role": "vehicle",
+						"material": "asphalt",
+						"width": 3,
+						"direction": "backward"
+					},
+					{
+						"role": "vehicle",
+						"material": "asphalt",
+						"width": 3,
+						"direction": "forward"
+					},
+					{
+						"role": "pedestrian",
+						"material": "pavement",
+						"width": 2,
+						"direction": "bidirectional"
+					}
+				]
+			}
+		]
+	},
+	"camera": {
+		"zoom": 5.47356575925705,
+		"targetX": 53.211037290422944,
+		"targetZ": -103.45439444531738,
+		"azimuth": 3.165398163397447,
+		"polar": 1.1937304763960295
+	}
+}

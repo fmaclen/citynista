@@ -1,0 +1,72 @@
+{
+	"kind": "junctions",
+	"cols": 3,
+	"cases": [
+		{
+			"index": 0,
+			"label": "4-way divided",
+			"centerNodeId": "node-j0c",
+			"arms": 4
+		},
+		{
+			"index": 1,
+			"label": "4-way undivided",
+			"centerNodeId": "node-j1c",
+			"arms": 4
+		},
+		{
+			"index": 2,
+			"label": "T 3-way",
+			"centerNodeId": "node-j2c",
+			"arms": 3
+		},
+		{
+			"index": 3,
+			"label": "Y 3-way",
+			"centerNodeId": "node-j3c",
+			"arms": 3
+		},
+		{
+			"index": 4,
+			"label": "5-way",
+			"centerNodeId": "node-j4c",
+			"arms": 5
+		},
+		{
+			"index": 5,
+			"label": "4-way sharp angles",
+			"centerNodeId": "node-j5c",
+			"arms": 4
+		},
+		{
+			"index": 6,
+			"label": "asymmetric major/minor",
+			"centerNodeId": "node-j6c",
+			"arms": 4
+		},
+		{
+			"index": 7,
+			"label": "turn pocket (W +1 in)",
+			"centerNodeId": "node-j7c",
+			"arms": 4
+		},
+		{
+			"index": 8,
+			"label": "2 turn lanes (W +2 in)",
+			"centerNodeId": "node-j8c",
+			"arms": 4
+		},
+		{
+			"index": 9,
+			"label": "divided through + buffer (#379)",
+			"centerNodeId": "node-j9c",
+			"arms": 4
+		},
+		{
+			"index": 10,
+			"label": "slip lane (approx, refine manually)",
+			"centerNodeId": "node-j10c",
+			"arms": 4
+		}
+	]
+}

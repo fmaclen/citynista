@@ -436,11 +436,6 @@ export interface TransitionMorph {
 	// straight where a lane exists on both sides and converge into their
 	// neighbor where one branches. Null cuts the paint at the morph zone.
 	laneBoundaries: (number | null)[];
-	// When the centre median noses out on the morphing side AND the other side
-	// renders its divider as a painted centre line, the interval index of that
-	// nosing divider island and the node-side centre offset to fill toward. The
-	// renderer draws a centre line over the nosed gap. Null otherwise.
-	centerNose: { index: number; offset: number } | null;
 	halfWidth: number;
 	length: number;
 	// True for the narrow side's identity morph — it never necks, so its lane
@@ -540,9 +535,6 @@ function computeTransitionMorph(
 			: null
 	);
 	const laneBoundaries = arm.paintBoundaries.map((boundary) => boundary.targetOffset);
-	const centerNose = arm.centerNose
-		? { index: arm.centerNose.intervalIndex, offset: arm.centerNose.offset }
-		: null;
 	const anchorHalfWidth = (arm.node.plateSpan.end - arm.node.plateSpan.start) / 2;
 
 	if (selfIsAnchor) {
@@ -556,14 +548,12 @@ function computeTransitionMorph(
 			intervals: targets,
 			roadwayUnderfills,
 			laneBoundaries,
-			centerNose,
 			halfWidth: anchorHalfWidth,
 			length,
 			anchor: true,
 			key:
 				`${length}:${anchorHalfWidth}:anchor|` +
-				laneBoundaries.map((b) => (b === null ? 'x' : Math.round(b * 100))).join(',') +
-				':cn0'
+				laneBoundaries.map((b) => (b === null ? 'x' : Math.round(b * 100))).join(',')
 		};
 	}
 
@@ -597,7 +587,6 @@ function computeTransitionMorph(
 		intervals: targets,
 		roadwayUnderfills,
 		laneBoundaries,
-		centerNose,
 		halfWidth: anchorHalfWidth,
 		length,
 		anchor: false,
@@ -607,8 +596,7 @@ function computeTransitionMorph(
 			`${roadwayUnderfills
 				.map((u) => (u ? `${u.laneType},${u.start},${u.end}` : 'x'))
 				.join(';')}|` +
-			laneBoundaries.map((b) => (b === null ? 'x' : Math.round(b * 100))).join(',') +
-			`|cn:${centerNose ? `${centerNose.index},${Math.round(centerNose.offset * 100)}` : 'x'}`
+			laneBoundaries.map((b) => (b === null ? 'x' : Math.round(b * 100))).join(',')
 	};
 }
 
@@ -1798,6 +1786,105 @@ function protectNodeBand(
 	}
 }
 
+function outerCornerLayer(arm: IntersectionArm, edge: 'high' | 'low') {
+	const positiveOffsetSide = edge === 'high' ? arm.startsHere : !arm.startsHere;
+	const laneIndex = positiveOffsetSide ? arm.lanes.length - 1 : 0;
+	const layer = laneLayer(arm.lanes, laneIndex);
+	// The corner takes the adjacent edge's material — any verge/walkway shoulder
+	// (dirt, grass, asphalt, concrete) wraps the corner; a pavement edge equals
+	// the neutral plate, so it stays the structural fill.
+	const surfaceClass = surfaceClassOf(layer);
+	if ((surfaceClass === 'verge' || surfaceClass === 'walkway') && !layer.endsWith(':pavement')) {
+		return layer;
+	}
+	return null;
+}
+
+function addJunctionCornerFill(
+	bandsByType: Map<RoadLayerId, Paths>,
+	metadata: NodeGeometryMetadata | undefined,
+	layer: RoadLayerId | null,
+	points: Point[],
+	platePaths: Paths
+) {
+	if (!layer) return;
+
+	const band = normalizeWinding(points.map((point) => toClipperPoint(point.x, point.y)));
+	const clipped = executeBoolean(ClipperLib.ClipType.ctIntersection, [band], platePaths);
+	if (clipped.length === 0) return;
+
+	getOrCreateBands(bandsByType, layer).push(...clipped);
+	if (metadata) {
+		protectNodeBand(metadata, layer, clipped, []);
+	}
+}
+
+function highCornerMouth(arm: IntersectionArm) {
+	const mouth = offsetPoint(arm.stop, arm.into, -MOUTH_OVERLAP);
+	return {
+		outer: offsetPoint(mouth, arm.side, arm.halfWidth),
+		inner: offsetPoint(mouth, arm.side, arm.toward.roadEdge)
+	};
+}
+
+function lowCornerMouth(arm: IntersectionArm) {
+	const mouth = offsetPoint(arm.stop, arm.into, -MOUTH_OVERLAP);
+	return {
+		outer: offsetPoint(mouth, arm.side, -arm.halfWidth),
+		inner: offsetPoint(mouth, arm.side, -arm.away.roadEdge)
+	};
+}
+
+function addJunctionCornerFills(
+	node: Node,
+	arms: IntersectionArm[],
+	platePaths: Paths,
+	bandsByType: Map<RoadLayerId, Paths>,
+	metadata?: NodeGeometryMetadata
+) {
+	for (let i = 0; i < arms.length; i++) {
+		const armA = arms[i];
+		const armB = arms[(i + 1) % arms.length];
+		const layerA = outerCornerLayer(armA, 'high');
+		const layerB = outerCornerLayer(armB, 'low');
+		if (!layerA && !layerB) continue;
+
+		const highOuter = offsetPoint(armA.stop, armA.side, armA.halfWidth);
+		const lowOuter = offsetPoint(armB.stop, armB.side, -armB.halfWidth);
+		const curve = sampleCornerCurve(highOuter, armA.into, lowOuter, armB.into);
+		const center = { x: node.x, y: node.y };
+		const mouthA = highCornerMouth(armA);
+		const mouthB = lowCornerMouth(armB);
+
+		if (layerA === layerB) {
+			addJunctionCornerFill(
+				bandsByType,
+				metadata,
+				layerA,
+				[mouthA.outer, ...curve, mouthB.outer, mouthB.inner, center, mouthA.inner],
+				platePaths
+			);
+			continue;
+		}
+
+		const mid = Math.floor(curve.length / 2);
+		addJunctionCornerFill(
+			bandsByType,
+			metadata,
+			layerA,
+			[mouthA.outer, ...curve.slice(0, mid + 1), center, mouthA.inner],
+			platePaths
+		);
+		addJunctionCornerFill(
+			bandsByType,
+			metadata,
+			layerB,
+			[...curve.slice(mid), mouthB.outer, mouthB.inner, center],
+			platePaths
+		);
+	}
+}
+
 // A patch node is built explicitly: every road already stops at its trimmed
 // stop line; a paved patch connects the road-bearing mouths, and sidewalk
 // bands wrap every corner between adjacent arms, blending between their real
@@ -1827,11 +1914,10 @@ function addIntersection(
 	// Full pavement plate: every arm's stop-line mouth connected by the outer
 	// corner curves. One solid polygon seals the junction interior gray by
 	// construction, whatever mix of roads and paths meets here; the asphalt
-	// patch and medians draw on top of it. Grass never enters a junction —
-	// verges stop square at their stop lines and the corners are pavement.
-	// Mouths reach slightly into the segments, underlapping the strips: any
-	// antialiasing crack along a stop line shows junction surface, never the
-	// ground, and nothing pokes over the lanes.
+	// patch, medians, and material corner fills draw on top of it. Mouths reach
+	// slightly into the segments, underlapping the strips: any antialiasing
+	// crack along a stop line shows junction surface, never the ground, and
+	// nothing pokes over the lanes.
 	const sidewalkBands = getOrCreateBands(bandsByType, 'plate');
 	const plate: Point[] = [];
 	for (let i = 0; i < arms.length; i++) {
@@ -1858,9 +1944,11 @@ function addIntersection(
 		offsetPoint(arm.stop, arm.side, arm.halfWidth),
 		offsetPoint(arm.stop, arm.side, -arm.halfWidth)
 	]);
-	for (const path of unionPaths([plateRing, ...clipSpokesToMouths(plateSpokes, plateCorners)])) {
+	const platePaths = unionPaths([plateRing, ...clipSpokesToMouths(plateSpokes, plateCorners)]);
+	for (const path of platePaths) {
 		sidewalkBands.push(path);
 	}
+	addJunctionCornerFills(node, arms, platePaths, bandsByType, metadata);
 
 	const roadArms = arms.filter((arm) => arm.hasRoad);
 	if (roadArms.length < 2) return;

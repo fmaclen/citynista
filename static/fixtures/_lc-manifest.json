@@ -1,0 +1,238 @@
+{
+	"kind": "transitions",
+	"cols": 3,
+	"cases": [
+		{
+			"index": 0,
+			"cls": "same",
+			"a": "street",
+			"b": "street",
+			"midNodeId": "node-0-m",
+			"reversed": false
+		},
+		{
+			"index": 1,
+			"cls": "same",
+			"a": "avenue+grass",
+			"b": "avenue+grass",
+			"midNodeId": "node-1-m",
+			"reversed": true
+		},
+		{
+			"index": 2,
+			"cls": "same",
+			"a": "oneway2",
+			"b": "oneway2",
+			"midNodeId": "node-2-m",
+			"reversed": false
+		},
+		{
+			"index": 3,
+			"cls": "born-outside",
+			"a": "twoway 2x2",
+			"b": "2x3 (curb)",
+			"midNodeId": "node-3-m",
+			"reversed": true
+		},
+		{
+			"index": 4,
+			"cls": "born-median",
+			"a": "twoway 2x2",
+			"b": "2x3 (median/turn pocket)",
+			"midNodeId": "node-4-m",
+			"reversed": false
+		},
+		{
+			"index": 5,
+			"cls": "born-outside-oneway",
+			"a": "oneway2",
+			"b": "oneway3 (curb)",
+			"midNodeId": "node-5-m",
+			"reversed": true
+		},
+		{
+			"index": 6,
+			"cls": "dropped-outside",
+			"a": "twoway 3x3",
+			"b": "2x2 (curb drop)",
+			"midNodeId": "node-6-m",
+			"reversed": false
+		},
+		{
+			"index": 7,
+			"cls": "dropped-median",
+			"a": "twoway 3x3",
+			"b": "2x2 (median drop)",
+			"midNodeId": "node-7-m",
+			"reversed": true
+		},
+		{
+			"index": 8,
+			"cls": "turn-pocket",
+			"a": "avenue+grass",
+			"b": "left-turn bay",
+			"midNodeId": "node-8-m",
+			"reversed": false
+		},
+		{
+			"index": 9,
+			"cls": "center-appears",
+			"a": "undivided 2x2",
+			"b": "+grass median",
+			"midNodeId": "node-9-m",
+			"reversed": true
+		},
+		{
+			"index": 10,
+			"cls": "center-vanishes",
+			"a": "+grass median",
+			"b": "undivided 2x2",
+			"midNodeId": "node-10-m",
+			"reversed": false
+		},
+		{
+			"index": 11,
+			"cls": "center-material",
+			"a": "grass median",
+			"b": "concrete median",
+			"midNodeId": "node-11-m",
+			"reversed": true
+		},
+		{
+			"index": 12,
+			"cls": "center-material",
+			"a": "grass median",
+			"b": "dirt median",
+			"midNodeId": "node-12-m",
+			"reversed": false
+		},
+		{
+			"index": 13,
+			"cls": "center-width",
+			"a": "grass median 2",
+			"b": "grass median 6",
+			"midNodeId": "node-13-m",
+			"reversed": true
+		},
+		{
+			"index": 14,
+			"cls": "center-flush-raised",
+			"a": "flush grass",
+			"b": "raised grass",
+			"midNodeId": "node-14-m",
+			"reversed": false
+		},
+		{
+			"index": 15,
+			"cls": "edge-appears",
+			"a": "no sidewalks",
+			"b": "+sidewalks",
+			"midNodeId": "node-15-m",
+			"reversed": true
+		},
+		{
+			"index": 16,
+			"cls": "edge-vanishes",
+			"a": "+sidewalks",
+			"b": "no sidewalks",
+			"midNodeId": "node-16-m",
+			"reversed": false
+		},
+		{
+			"index": 17,
+			"cls": "edge-verge",
+			"a": "sidewalk",
+			"b": "verge+sidewalk",
+			"midNodeId": "node-17-m",
+			"reversed": true
+		},
+		{
+			"index": 18,
+			"cls": "material-seam",
+			"a": "asphalt road",
+			"b": "concrete road",
+			"midNodeId": "node-18-m",
+			"reversed": false
+		},
+		{
+			"index": 19,
+			"cls": "material-seam",
+			"a": "asphalt avenue",
+			"b": "concrete avenue",
+			"midNodeId": "node-19-m",
+			"reversed": true
+		},
+		{
+			"index": 20,
+			"cls": "width-only",
+			"a": "lanes 3.5",
+			"b": "lanes 3.0",
+			"midNodeId": "node-20-m",
+			"reversed": false
+		},
+		{
+			"index": 21,
+			"cls": "symmetric-widen",
+			"a": "street",
+			"b": "avenue",
+			"midNodeId": "node-21-m",
+			"reversed": true
+		},
+		{
+			"index": 22,
+			"cls": "asymmetric",
+			"a": "avenue+grass",
+			"b": "off-centre 1|3",
+			"midNodeId": "node-22-m",
+			"reversed": false
+		},
+		{
+			"index": 23,
+			"cls": "big-jump",
+			"a": "street",
+			"b": "highway",
+			"midNodeId": "node-23-m",
+			"reversed": true
+		},
+		{
+			"index": 24,
+			"cls": "oneway-count",
+			"a": "oneway2",
+			"b": "oneway4 (2 turn + 2 straight)",
+			"midNodeId": "node-24-m",
+			"reversed": false
+		},
+		{
+			"index": 25,
+			"cls": "user-chain",
+			"a": "2x2 grass median",
+			"b": "2back|3fwd no median",
+			"midNodeId": "node-25-m",
+			"reversed": true
+		},
+		{
+			"index": 26,
+			"cls": "user-chain",
+			"a": "2back|3fwd",
+			"b": "wide 5.5 median",
+			"midNodeId": "node-26-m",
+			"reversed": false
+		},
+		{
+			"index": 27,
+			"cls": "user-chain",
+			"a": "3back|2fwd off-median",
+			"b": "2x2 grass median",
+			"midNodeId": "node-27-m",
+			"reversed": true
+		},
+		{
+			"index": 28,
+			"cls": "orient-mirror",
+			"a": "avenue+grass (mirrored)",
+			"b": "2x3 (mirrored)",
+			"midNodeId": "node-28-m",
+			"reversed": false
+		}
+	]
+}

@@ -9,18 +9,17 @@ import {
 } from './road-geometry';
 import type { Node } from './node.svelte';
 import type { Segment } from './segment.svelte';
-import type { Lane, LaneDirection, LaneMaterial } from './types';
+import type { Lane } from './types';
 import {
-	isIslandLike,
 	isRoadway,
 	laneLayer,
-	lanePaintBetween,
 	lanesStructureKey,
 	surfaceClassOf,
 	type LaneLayerId,
 	type RoadLayerId,
 	type SurfaceClass
 } from './lane-types';
+import { matchTransitionArm, type MatcherResult } from './lane-matcher';
 
 export interface Interval {
 	start: number;
@@ -58,7 +57,6 @@ export interface ResolvedNodeArm {
 	};
 	strips: ResolvedNodeStrip[];
 	paintBoundaries: ResolvedPaintBoundary[];
-	centerNose: { intervalIndex: number; offset: number } | null;
 	key: string;
 }
 
@@ -132,20 +130,8 @@ interface ResolutionArmSource {
 
 const resolutionCache = new Map<string, { signature: string; resolution: NodeStripResolution }>();
 
-function roadwayLayer(material: LaneMaterial) {
-	return `roadway:${material}` as const;
-}
-
 function at(interval: Interval) {
 	return { start: interval.start, end: interval.end };
-}
-
-function center(interval: Interval) {
-	return (interval.start + interval.end) / 2;
-}
-
-function width(interval: Interval) {
-	return interval.end - interval.start;
 }
 
 function roadSpan(intervals: LaneInterval[]) {
@@ -185,146 +171,6 @@ function laneBoundaryOffsets(lanes: Lane[]) {
 	return bounds;
 }
 
-function paintDirection(lane: Lane, flipDirections: boolean) {
-	if (!flipDirections || lane.direction === 'bidirectional') return lane.direction;
-	return lane.direction === 'forward' ? 'backward' : 'forward';
-}
-
-function markingStructure(lanes: Lane[], flipDirections: boolean) {
-	const bounds = laneBoundaryOffsets(lanes);
-	const forwardDashes: { index: number; offset: number }[] = [];
-	const backwardDashes: { index: number; offset: number }[] = [];
-	let centerLine: { index: number; offset: number } | null = null;
-
-	for (let k = 0; k + 1 < lanes.length; k++) {
-		const leftDir = paintDirection(lanes[k], flipDirections);
-		const rightDir = paintDirection(lanes[k + 1], flipDirections);
-		const left = { ...lanes[k], direction: leftDir };
-		const right = { ...lanes[k + 1], direction: rightDir };
-		const paint = lanePaintBetween(left, right);
-		if (!paint) continue;
-		const offset = bounds[k + 1];
-		if (paint.color === 'center') centerLine = { index: k, offset };
-		else if (leftDir === 'forward') forwardDashes.push({ index: k, offset });
-		else backwardDashes.push({ index: k, offset });
-	}
-
-	const forwardLanes: number[] = [];
-	const backwardLanes: number[] = [];
-	for (let i = 0; i < lanes.length; i++) {
-		if (lanes[i].role !== 'vehicle') continue;
-		const dir = paintDirection(lanes[i], flipDirections);
-		if (dir === 'forward') forwardLanes.push(i);
-		else if (dir === 'backward') backwardLanes.push(i);
-	}
-	let divider: { offset: number } | null = null;
-	if (forwardLanes.length > 0 && backwardLanes.length > 0) {
-		const maxB = Math.max(...backwardLanes);
-		const minF = Math.min(...forwardLanes);
-		const maxF = Math.max(...forwardLanes);
-		const minB = Math.min(...backwardLanes);
-		const offset =
-			maxB < minF
-				? (bounds[maxB + 1] + bounds[minF]) / 2
-				: (bounds[maxF + 1] + bounds[minB]) / 2;
-		divider = { offset };
-	}
-
-	const ref = divider ? divider.offset : 0;
-	const centreOut = (a: { offset: number }, b: { offset: number }) =>
-		Math.abs(a.offset - ref) - Math.abs(b.offset - ref) || a.offset - b.offset;
-	forwardDashes.sort(centreOut);
-	backwardDashes.sort(centreOut);
-
-	return { forwardDashes, backwardDashes, centerLine, divider };
-}
-
-function laneBoundaryTargets(
-	selfLanes: Lane[],
-	anchorLanes: Lane[],
-	flipDirections: boolean,
-	keepOwnOffsets: boolean
-) {
-	const result: (number | null)[] = selfLanes.slice(1).map(() => null);
-	const self = markingStructure(selfLanes, false);
-	const anchor = markingStructure(anchorLanes, flipDirections);
-
-	const pairDashes = (
-		selfDashes: { index: number; offset: number }[],
-		anchorDashes: { index: number; offset: number }[]
-	) => {
-		for (let i = 0; i < selfDashes.length; i++) {
-			const counterpart = anchorDashes[i];
-			if (!counterpart) continue;
-			result[selfDashes[i].index] = keepOwnOffsets ? selfDashes[i].offset : counterpart.offset;
-		}
-	};
-	pairDashes(self.forwardDashes, anchor.forwardDashes);
-	pairDashes(self.backwardDashes, anchor.backwardDashes);
-
-	if (self.centerLine && anchor.divider) {
-		result[self.centerLine.index] = keepOwnOffsets ? self.centerLine.offset : anchor.divider.offset;
-	}
-
-	return result;
-}
-
-function mirrorIntervals(intervals: LaneInterval[]) {
-	return intervals
-		.map((interval) => ({
-			laneType: interval.laneType,
-			start: -interval.end,
-			end: -interval.start
-		}))
-		.reverse();
-}
-
-function islandMatch(interval: LaneInterval, candidates: LaneInterval[]) {
-	let best: LaneInterval | null = null;
-	let bestOverlap = 0;
-	for (const candidate of candidates) {
-		if (candidate.laneType !== interval.laneType) continue;
-		const amount = Math.min(interval.end, candidate.end) - Math.max(interval.start, candidate.start);
-		if (amount > bestOverlap) {
-			bestOverlap = amount;
-			best = candidate;
-		}
-	}
-	if (best) return best;
-
-	let nearest: LaneInterval | null = null;
-	let nearestDistance = Infinity;
-	for (const candidate of candidates) {
-		if (!isIslandLike(candidate.laneType)) continue;
-		const distance = Math.abs(center(candidate) - center(interval));
-		if (distance < nearestDistance) {
-			nearest = candidate;
-			nearestDistance = distance;
-		}
-	}
-	if (nearest && nearestDistance <= width(interval) + width(nearest)) return nearest;
-	return null;
-}
-
-function roadwayTarget(interval: Interval, anchorRoadways: LaneInterval[]) {
-	const boundStart = Math.min(...anchorRoadways.map((i) => i.start));
-	const boundEnd = Math.max(...anchorRoadways.map((i) => i.end));
-	const targetWidth = Math.min(interval.end - interval.start, boundEnd - boundStart);
-	const targetCenter = Math.min(
-		boundEnd - targetWidth / 2,
-		Math.max(boundStart + targetWidth / 2, (interval.start + interval.end) / 2)
-	);
-	return { start: targetCenter - targetWidth / 2, end: targetCenter + targetWidth / 2 };
-}
-
-function roadwayUnderfillLayer(selfIntervals: LaneInterval[], index: number) {
-	const adjacent = [selfIntervals[index - 1], selfIntervals[index + 1]]
-		.filter((interval) => interval && isRoadway(interval.laneType))
-		.map((interval) => interval.laneType);
-	return adjacent.length > 0 && adjacent.every((laneType) => laneType === 'roadway:concrete')
-		? roadwayLayer('concrete')
-		: roadwayLayer('asphalt');
-}
 
 function laneRanges(lanes: Lane[]) {
 	const ranges: [number, number][] = [];
@@ -432,200 +278,9 @@ function sourceArmFromIntersection(graph: Graph, arm: ReturnType<typeof collectI
 	};
 }
 
-function relationFor(
-	self: ResolutionArmSource,
-	other: ResolutionArmSource,
-	interval: IndexedInterval,
-	target: Interval,
-	anchor: StripDisposition extends infer D
-		? D extends { kind: 'continue'; anchor: infer A }
-			? A
-			: never
-		: never,
-	targetIntervalIndex: number
-) {
-	const relationId = `${self.segment.id}:${interval.index}->${other.segment.id}:${targetIntervalIndex}`;
-	return {
-		kind: 'continue',
-		relationId,
-		targetArmId: other.segment.id,
-		targetIntervalIndex,
-		targetSource: target,
-		shared: {
-			lowEdgeId: `${relationId}:low`,
-			highEdgeId: `${relationId}:high`,
-			offsetsByArm: {
-				[self.segment.id]: target,
-				[other.segment.id]: target
-			}
-		},
-		anchor
-	} satisfies StripDisposition;
-}
-
-function targetIntervalIndex(target: Interval | null, candidates: LaneInterval[]) {
-	if (!target) return -1;
-	const exact = candidates.findIndex(
-		(candidate) => candidate.start === target.start && candidate.end === target.end
-	);
-	if (exact >= 0) return exact;
-	let best = -1;
-	let bestOverlap = 0;
-	for (let i = 0; i < candidates.length; i++) {
-		const amount = Math.min(target.end, candidates[i].end) - Math.max(target.start, candidates[i].start);
-		if (amount > bestOverlap) {
-			bestOverlap = amount;
-			best = i;
-		}
-	}
-	return best;
-}
-
-function resolveTransitionArm(self: ResolutionArmSource, other: ResolutionArmSource) {
-	const halfSelf = getTotalWidth(self.segment.lanes) / 2;
-	const halfOther = getTotalWidth(other.segment.lanes) / 2;
-	const selfIntervals = getLaneIntervals(self.segment.lanes);
-	const flipped = self.startsHere === other.startsHere;
-	const otherLanesInSelfFrame = flipped ? [...other.segment.lanes].reverse() : other.segment.lanes;
-	const selfStructureKey = lanesStructureKey(self.segment.lanes);
-	const otherStructureKey = lanesStructureKey(other.segment.lanes);
-	const selfIsAnchor =
-		halfSelf < halfOther - 0.01 ||
-		(Math.abs(halfSelf - halfOther) <= 0.01 && selfStructureKey <= otherStructureKey);
-
-	if (selfIsAnchor) {
-		const laneBoundaries = laneBoundaryTargets(
-			self.segment.lanes,
-			otherLanesInSelfFrame,
-			flipped,
-			true
-		);
-		const targets = selfIntervals.map((interval) => at(interval));
-		return {
-			targets,
-			roadwayUnderfills: selfIntervals.map(() => null),
-			laneBoundaries,
-			centerNose: null,
-			anchor: true,
-			anchorHalfWidth: halfSelf,
-			anchorPlateSpan: { start: -halfSelf, end: halfSelf },
-			dispositions: targets.map((target, index) =>
-				relationFor(self, other, self.intervals[index], target, 'self', index)
-			)
-		};
-	}
-
-	let anchorIntervals = getLaneIntervals(other.segment.lanes);
-	if (flipped) anchorIntervals = mirrorIntervals(anchorIntervals);
-
-	const roadwayUnderfills: ({ laneType: RoadLayerId; node: Interval } | null)[] = selfIntervals.map(
-		() => null
-	);
-
-	const targets = selfIntervals.map((interval) => {
-		const index = selfIntervals.indexOf(interval);
-		const surface = surfaceClassOf(interval.laneType);
-		if (surface === 'walkway') return at(interval);
-
-		const own = selfIntervals.filter((i) => i.laneType === interval.laneType);
-		const counterparts = anchorIntervals.filter((i) => i.laneType === interval.laneType);
-
-		if (own.length === counterparts.length && counterparts.length > 0) {
-			return at(counterparts[own.indexOf(interval)]);
-		}
-
-		if (surface === 'roadway') {
-			const anchorRoadways = anchorIntervals.filter((i) => isRoadway(i.laneType));
-			if (anchorRoadways.length === 0) return { start: center(interval), end: center(interval) };
-			return roadwayTarget(interval, anchorRoadways);
-		}
-
-		const match = islandMatch(interval, anchorIntervals);
-		if (match) return at(match);
-
-		const ownCenter = center(interval);
-		const anchorRoadways = anchorIntervals.filter((i) => isRoadway(i.laneType));
-		const noseTarget = () => {
-			const targetCenter =
-				anchorRoadways.length === 0
-					? ownCenter
-					: Math.min(
-							Math.max(...anchorRoadways.map((i) => i.end)),
-							Math.max(Math.min(...anchorRoadways.map((i) => i.start)), ownCenter)
-						);
-			roadwayUnderfills[index] = {
-				laneType: roadwayUnderfillLayer(selfIntervals, index),
-				node:
-					anchorRoadways.length === 0
-						? { start: targetCenter, end: targetCenter }
-						: roadwayTarget(interval, anchorRoadways)
-			};
-			return { start: targetCenter, end: targetCenter };
-		};
-
-		if (surface === 'island') return noseTarget();
-		return noseTarget();
-	});
-
-	const laneBoundaries = laneBoundaryTargets(
-		self.segment.lanes,
-		otherLanesInSelfFrame,
-		flipped,
-		false
-	);
-	const selfDivider = markingStructure(self.segment.lanes, false).divider;
-	const anchorCenter = markingStructure(otherLanesInSelfFrame, flipped).centerLine;
-	let centerNose: { intervalIndex: number; offset: number } | null = null;
-	if (selfDivider && anchorCenter) {
-		for (let i = 0; i < selfIntervals.length; i++) {
-			const iv = selfIntervals[i];
-			if (surfaceClassOf(iv.laneType) !== 'island') continue;
-			if (iv.start - 0.01 <= selfDivider.offset && selfDivider.offset <= iv.end + 0.01) {
-				const t = targets[i];
-				if (t && Math.abs(t.end - t.start) < 1e-3) {
-					centerNose = { intervalIndex: i, offset: anchorCenter.offset };
-				}
-				break;
-			}
-		}
-	}
-
-	return {
-		targets,
-		roadwayUnderfills,
-		laneBoundaries,
-		centerNose,
-		anchor: false,
-		anchorHalfWidth: halfOther,
-		anchorPlateSpan: { start: -halfOther, end: halfOther },
-		dispositions: targets.map((target, index) => {
-			const interval = self.intervals[index];
-			if (
-				!target ||
-				(isIslandLike(interval.laneType) && Math.abs(target.end - target.start) <= 0.0001)
-			) {
-				return {
-					kind: 'terminate',
-					mode: 'taper',
-					target,
-					stopLine: null
-				} satisfies StripDisposition;
-			}
-			return relationFor(
-				self,
-				other,
-				interval,
-				target,
-				'target',
-				targetIntervalIndex(target, anchorIntervals)
-			);
-		})
-	};
-}
-
 function buildResolvedArm(
 	self: ResolutionArmSource,
-	resolved: ReturnType<typeof resolveTransitionArm> | null,
+	resolved: MatcherResult | null,
 	patchStop: boolean
 ) {
 	const selfIntervals = getLaneIntervals(self.segment.lanes);
@@ -684,7 +339,6 @@ function buildResolvedArm(
 		},
 		strips,
 		paintBoundaries: paintBoundaries(self.segment.lanes, laneBoundaries, paintDisposition),
-		centerNose: resolved?.centerNose ?? null,
 		key: ''
 	};
 	arm.key = [
@@ -693,13 +347,8 @@ function buildResolvedArm(
 		arm.node.plateSpan.end,
 		arm.strips.map((strip) => (strip.node ? `${strip.node.start},${strip.node.end}` : 'x')).join(';'),
 		arm.paintBoundaries
-			.map((boundary) =>
-				boundary.targetOffset === null ? 'x' : Math.round(boundary.targetOffset * 100)
-			)
-			.join(','),
-		arm.centerNose
-			? `${arm.centerNose.intervalIndex},${Math.round(arm.centerNose.offset * 100)}`
-			: 'x'
+			.map((boundary) => (boundary.targetOffset === null ? 'x' : Math.round(boundary.targetOffset * 100)))
+			.join(',')
 	].join('|');
 	return arm;
 }
@@ -734,7 +383,13 @@ export function resolveNodeStrips(
 			const other = arms.find(
 				(candidate) => transitionIds.has(candidate.segment.id) && candidate.segment.id !== arm.segment.id
 			);
-			return buildResolvedArm(arm, other ? resolveTransitionArm(arm, other) : null, false);
+			const resolvedTransition = other
+				? matchTransitionArm(
+						{ segmentId: arm.segment.id, lanes: arm.segment.lanes, startsHere: arm.startsHere },
+						{ segmentId: other.segment.id, lanes: other.segment.lanes, startsHere: other.startsHere }
+					)
+				: null;
+			return buildResolvedArm(arm, resolvedTransition, false);
 		}
 		return buildResolvedArm(arm, null, kind === 'patch' || (through ? !throughIds.has(arm.segment.id) : true));
 	});

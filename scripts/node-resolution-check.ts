@@ -350,7 +350,7 @@ function recordsForNode(
 	node: Node,
 	centerlines: Map<string, CenterlineSample[]>
 ) {
-	const resolution = resolveNodeStrips(graph, node);
+	const resolution = resolveNodeStrips(graph, node, centerlines);
 	const centerMedian = legacyCenterMedianDecisions(graph, node, centerlines);
 	const records: StripRecord[] = [];
 	for (const arm of resolution.arms) {

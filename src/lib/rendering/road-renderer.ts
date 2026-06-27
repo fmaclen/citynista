@@ -29,11 +29,11 @@ interface StripMorph {
 	end?: { length: number; offsetA: number; offsetB: number };
 }
 import { getTotalWidth } from '../core/lane-template';
+import { boundaryOffsets, classifyCrossSection } from '../core/lane-markings';
 import {
 	ROAD_LAYER_LIST,
 	laneColor,
 	laneLayerY,
-	lanePaintBetween,
 	surfaceClassOf
 } from '../core/lane-types';
 import type { Lane } from '../core/types';
@@ -90,6 +90,61 @@ function extendCenterline(
 	return atStart ? [...extra.reverse(), ...samples] : [...samples, ...extra];
 }
 
+function buildCenterlineAdjustments(graph: Graph) {
+	// A straight width-transition straddles its node: the wide side extends
+	// half its taper past the node and the narrow side trims back the same
+	// amount, so the taper reads as one ramp centred on the node.
+	const straddleTrim = new Map<string, { start: number; end: number }>();
+	const straddleExtend = new Map<string, { start: number; end: number }>();
+	for (const node of graph.nodes.values()) {
+		const s = transitionStraddle(graph, node);
+		if (!s) continue;
+		const t = straddleTrim.get(s.narrowId) ?? { start: 0, end: 0 };
+		if (s.narrowAtStart) t.start += s.half;
+		else t.end += s.half;
+		straddleTrim.set(s.narrowId, t);
+		const e = straddleExtend.get(s.wideId) ?? { start: 0, end: 0 };
+		if (s.wideAtStart) e.start += s.half;
+		else e.end += s.half;
+		straddleExtend.set(s.wideId, e);
+	}
+	return { straddleTrim, straddleExtend };
+}
+
+export function buildCenterlines(
+	graph: Graph,
+	trims: SegmentTrims = computeIntersectionTrims(graph),
+	adjustments = buildCenterlineAdjustments(graph)
+) {
+	const centerlines = new Map<string, CenterlineSample[]>();
+
+	for (const segment of graph.segments.values()) {
+		const startNode = graph.nodes.get(segment.startNodeId);
+		const endNode = graph.nodes.get(segment.endNodeId);
+		if (!startNode || !endNode) continue;
+
+		const trim = trims.get(segment.id);
+		const extra = adjustments.straddleTrim.get(segment.id);
+		let samples = sampleTrimmedCenterline(
+			segment,
+			startNode,
+			endNode,
+			(trim?.start ?? 0) + (extra?.start ?? 0),
+			(trim?.end ?? 0) + (extra?.end ?? 0)
+		);
+		const ext = adjustments.straddleExtend.get(segment.id);
+		if (ext && samples.length >= 2) {
+			if (ext.start > 0) samples = extendCenterline(samples, true, ext.start);
+			if (ext.end > 0) samples = extendCenterline(samples, false, ext.end);
+		}
+		if (samples.length >= 2) {
+			centerlines.set(segment.id, samples);
+		}
+	}
+
+	return centerlines;
+}
+
 // Lane paint: thin stripes drawn on the lane boundaries the strips already
 // define. Dashed white between same-direction travel lanes, solid white
 // against accessory lanes (bike, parking, transit), solid muted yellow
@@ -116,7 +171,6 @@ const NOSE_TIP_WIDTH = 1e-3;
 const PAINT_COLORS = { lane: '#C9C9C0', center: '#C3B47C', walk: '#9A9A94' } as const;
 type PaintColor = keyof typeof PAINT_COLORS;
 type ArrowMovement = 'left' | 'through' | 'right';
-type CenterNoseFill = { ownCenter: number; nodeOffset: number; cut: number; end: 'start' | 'end' };
 const ARROW_MOVEMENTS: ArrowMovement[] = ['left', 'through', 'right'];
 const ARROW_CODES: Record<ArrowMovement, string> = { left: 'L', through: 'S', right: 'R' };
 
@@ -251,49 +305,8 @@ export class RoadRenderer {
 	// piece keyed by a hash of its inputs, so a drag only regenerates the
 	// pieces it actually moves.
 	update(graph: Graph, trims: SegmentTrims = computeIntersectionTrims(graph)) {
-		const centerlines = new Map<string, CenterlineSample[]>();
-
-		// A straight width-transition straddles its node: the wide side extends
-		// half its taper past the node and the narrow side trims back the same
-		// amount, so the taper reads as one ramp centred on the node.
-		const straddleTrim = new Map<string, { start: number; end: number }>();
-		const straddleExtend = new Map<string, { start: number; end: number }>();
-		for (const node of graph.nodes.values()) {
-			const s = transitionStraddle(graph, node);
-			if (!s) continue;
-			const t = straddleTrim.get(s.narrowId) ?? { start: 0, end: 0 };
-			if (s.narrowAtStart) t.start += s.half;
-			else t.end += s.half;
-			straddleTrim.set(s.narrowId, t);
-			const e = straddleExtend.get(s.wideId) ?? { start: 0, end: 0 };
-			if (s.wideAtStart) e.start += s.half;
-			else e.end += s.half;
-			straddleExtend.set(s.wideId, e);
-		}
-
-		for (const segment of graph.segments.values()) {
-			const startNode = graph.nodes.get(segment.startNodeId);
-			const endNode = graph.nodes.get(segment.endNodeId);
-			if (!startNode || !endNode) continue;
-
-			const trim = trims.get(segment.id);
-			const extra = straddleTrim.get(segment.id);
-			let samples = sampleTrimmedCenterline(
-				segment,
-				startNode,
-				endNode,
-				(trim?.start ?? 0) + (extra?.start ?? 0),
-				(trim?.end ?? 0) + (extra?.end ?? 0)
-			);
-			const ext = straddleExtend.get(segment.id);
-			if (ext && samples.length >= 2) {
-				if (ext.start > 0) samples = extendCenterline(samples, true, ext.start);
-				if (ext.end > 0) samples = extendCenterline(samples, false, ext.end);
-			}
-			if (samples.length >= 2) {
-				centerlines.set(segment.id, samples);
-			}
-		}
+		const { straddleTrim, straddleExtend } = buildCenterlineAdjustments(graph);
+		const centerlines = buildCenterlines(graph, trims, { straddleTrim, straddleExtend });
 
 		const activeConnectionsByNode = new Map<string, LaneConnection[]>();
 		for (const node of graph.nodes.values()) {
@@ -521,7 +534,6 @@ export class RoadRenderer {
 		);
 
 		const intervals = getLaneIntervals(lanes);
-		const centerFills: CenterNoseFill[] = [];
 		for (let k = 0; k < intervals.length; k++) {
 			const interval = intervals[k];
 			const surface = surfaceClassOf(interval.laneType);
@@ -620,22 +632,6 @@ export class RoadRenderer {
 
 			const cutStart = morphStart && !targetStart ? lengthStart : (pinchStart?.at ?? 0);
 			const cutEnd = morphEnd && !targetEnd ? lengthEnd : (pinchEnd?.at ?? 0);
-			if (morphStart?.centerNose?.index === k && cutStart > 0.3) {
-				centerFills.push({
-					ownCenter: (interval.start + interval.end) / 2,
-					nodeOffset: morphStart.centerNose.offset,
-					cut: cutStart,
-					end: 'start'
-				});
-			}
-			if (morphEnd?.centerNose?.index === k && cutEnd > 0.3) {
-				centerFills.push({
-					ownCenter: (interval.start + interval.end) / 2,
-					nodeOffset: morphEnd.centerNose.offset,
-					cut: cutEnd,
-					end: 'end'
-				});
-			}
 			let stripSamples = samples;
 			if (cutStart > 0 || cutEnd > 0) {
 				const remaining = total - cutStart - cutEnd;
@@ -690,7 +686,6 @@ export class RoadRenderer {
 			continuityJoinEnd,
 			centerBreakStart,
 			centerBreakEnd,
-			centerFills,
 			jitter
 		)) {
 			group.add(mesh);
@@ -719,7 +714,6 @@ export class RoadRenderer {
 		continuityJoinEnd: boolean,
 		centerBreakStart: boolean,
 		centerBreakEnd: boolean,
-		centerFills: CenterNoseFill[],
 		jitter: number
 	): THREE.Mesh[] {
 		const cumulative: number[] = [0];
@@ -753,69 +747,50 @@ export class RoadRenderer {
 				ny
 			};
 		};
-		const strokeSolid = (from: number, to: number, offsetAt: (d: number) => number) => {
-			if (to - from < 0.5) return;
-			const target = positions.center;
-			const half = PAINT_WIDTH / 2;
-			for (const lateral of [CENTER_DOUBLE_OFFSET, -CENTER_DOUBLE_OFFSET]) {
-				let d = from;
-				let previous = pointAt(d, offsetAt(d) + lateral);
-				while (d < to - 0.05) {
-					const end = Math.min(d + PAINT_SOLID_STEP, to);
-					if (end - d < 0.3) break;
-					const p2 = pointAt(end, offsetAt(end) + lateral);
-					target.push(
-						previous.x - previous.nx * half,
-						0,
-						previous.z - previous.ny * half,
-						previous.x + previous.nx * half,
-						0,
-						previous.z + previous.ny * half,
-						p2.x - p2.nx * half,
-						0,
-						p2.z - p2.ny * half,
-						previous.x + previous.nx * half,
-						0,
-						previous.z + previous.ny * half,
-						p2.x + p2.nx * half,
-						0,
-						p2.z + p2.ny * half,
-						p2.x - p2.nx * half,
-						0,
-						p2.z - p2.ny * half
-					);
-					previous = p2;
-					d = end;
-				}
-			}
-		};
+		// Boundary targets at each end come from the morph itself: interior
+		// lane lines stay straight wherever a lane exists on both sides and
+		// converge into their neighbor where one branches. Edge sentinels ride
+		// the plate edge, necking with the whole cross-section at transitions.
+		const marks = classifyCrossSection(lanes);
+		const bounds = boundaryOffsets(lanes);
+		for (const mark of marks) {
+			const leftLane = lanes[mark.boundaryIndex - 1];
+			const rightLane = lanes[mark.boundaryIndex];
+			if (leftLane?.markings === false || rightLane?.markings === false) continue;
 
-		// Boundary targets at each end come from the morph itself: lane
-		// lines stay straight wherever a lane exists on both sides and
-		// converge into their neighbor where one branches; a boundary that
-		// stops existing at the node cuts where the morph begins.
-		let boundary = -halfWidth;
-		for (let k = 0; k + 1 < lanes.length; k++) {
-			boundary += lanes[k].width;
-			const paint = lanePaintBetween(lanes[k], lanes[k + 1]);
-			if (!paint) continue;
-			const offset = boundary;
-
-			const startTarget = morphStart ? morphStart.laneBoundaries[k] : undefined;
-			const endTarget = morphEnd ? morphEnd.laneBoundaries[k] : undefined;
+			const offset = bounds[mark.boundaryIndex];
+			const interiorBoundary = mark.boundaryIndex > 0 && mark.boundaryIndex < lanes.length;
+			const startTarget = morphStart
+				? interiorBoundary
+					? morphStart.laneBoundaries[mark.boundaryIndex - 1]
+					: mark.boundaryIndex === 0
+						? -morphStart.halfWidth
+						: morphStart.halfWidth
+				: undefined;
+			const endTarget = morphEnd
+				? interiorBoundary
+					? morphEnd.laneBoundaries[mark.boundaryIndex - 1]
+					: mark.boundaryIndex === 0
+						? -morphEnd.halfWidth
+						: morphEnd.halfWidth
+				: undefined;
 
 			// Boundary disposition comes from the transition morph. A matched
 			// boundary draws through the taper and follows its target offset;
 			// an unmatched boundary cuts where the morph zone begins.
 			let from = continuityJoinStart || morphStart ? 0 : PAINT_END_INSET;
 			let to = total - (continuityJoinEnd || morphEnd ? 0 : PAINT_END_INSET);
-			if (morphStart && startTarget == null) from = Math.max(from, lengthStart);
-			if (morphEnd && endTarget == null) to = Math.min(to, total - lengthEnd);
+			if (interiorBoundary && morphStart && startTarget == null) {
+				from = Math.max(from, lengthStart);
+			}
+			if (interiorBoundary && morphEnd && endTarget == null) {
+				to = Math.min(to, total - lengthEnd);
+			}
 
 			// The solid centre line stops short of a node where a movement crosses
 			// it (a slip/turn/U-turn opening the carriageway) so it breaks there
 			// instead of running straight through the diverging traffic.
-			if (paint.color === 'center') {
+			if (mark.color === 'yellow') {
 				if (centerBreakStart) from = Math.max(from, CENTER_BREAK_INSET);
 				if (centerBreakEnd) to = Math.min(to, total - CENTER_BREAK_INSET);
 			}
@@ -833,9 +808,9 @@ export class RoadRenderer {
 				}
 				return value;
 			};
-			const target = positions[paint.color];
-			const stepLength = paint.dashed ? PAINT_DASH : PAINT_SOLID_STEP;
-			const gap = paint.dashed ? PAINT_GAP : 0;
+			const target = mark.color === 'yellow' ? positions.center : positions.lane;
+			const stepLength = mark.dashed ? PAINT_DASH : PAINT_SOLID_STEP;
+			const gap = mark.dashed ? PAINT_GAP : 0;
 			const half = PAINT_WIDTH / 2;
 			const walkStroke = (lateral: number) => {
 				let d = from;
@@ -869,23 +844,13 @@ export class RoadRenderer {
 					d = end + gap;
 				}
 			};
-			if (paint.color === 'center') {
-				walkStroke(CENTER_DOUBLE_OFFSET);
-				walkStroke(-CENTER_DOUBLE_OFFSET);
-			} else {
-				walkStroke(0);
-			}
-		}
-
-		for (const fill of centerFills) {
-			const from = fill.end === 'start' ? 0 : total - fill.cut;
-			const to = fill.end === 'start' ? fill.cut : total;
-			const morphLength = fill.end === 'start' ? lengthStart : lengthEnd;
-			strokeSolid(from, to, (d) => {
-				const along = fill.end === 'start' ? d : total - d;
-				const f = morphLength > 0.0001 ? morphEase(along, morphLength) : 1;
-				return fill.nodeOffset + (fill.ownCenter - fill.nodeOffset) * f;
-			});
+			const inset =
+				mark.color === 'yellow'
+					? mark.side * CENTER_DOUBLE_OFFSET
+					: mark.dashed
+						? 0
+						: mark.side * 0.3;
+			walkStroke(inset);
 		}
 
 		const laneCenters: number[] = [];
@@ -1072,11 +1037,14 @@ export class RoadRenderer {
 			if (hasRight) branch(-1);
 		};
 
-		const usableFrom = (morphStart ? lengthStart : 0) + ARROW_END_INSET + ARROW_FIT;
-		const usableTo = total - (morphEnd ? lengthEnd : 0) - ARROW_END_INSET - ARROW_FIT;
 		const drawEndArrows = (arrows: SegmentEndArrows, atStart: boolean) => {
-			if (arrows.lanes.length === 0 || usableTo < usableFrom) return;
-			const base = atStart ? usableFrom : usableTo;
+			if (arrows.lanes.length === 0) return;
+			// Gate each end on its OWN room past its own taper, not a shared window
+			// over both ends — otherwise a short approach to a junction (one end
+			// tapering) suppresses arrows even when the junction end has space.
+			const taper = atStart ? (morphStart ? lengthStart : 0) : morphEnd ? lengthEnd : 0;
+			const base = atStart ? taper + ARROW_END_INSET : total - taper - ARROW_END_INSET;
+			if (base < ARROW_FIT || base > total - ARROW_FIT) return;
 			const travelSign = atStart ? -1 : 1;
 			for (const lane of arrows.lanes) {
 				const offset = laneCenters[lane.laneIndex];

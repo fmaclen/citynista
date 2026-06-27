@@ -5,6 +5,7 @@
 	import FpsCounter from '$lib/components/FpsCounter.svelte';
 	import LaneEditor from '$lib/components/LaneEditor.svelte';
 	import NodeLabels from '$lib/components/NodeLabels.svelte';
+	import { dumpLaneCorrespondence } from '$lib/dev/lane-harness';
 	import { untrack } from 'svelte';
 
 	let containerElement: HTMLDivElement;
@@ -17,6 +18,7 @@
 			const params = new URLSearchParams(window.location.search);
 			const topdown = params.has('topdown');
 			const fixture = params.get('fixture');
+			const harness = params.get('harness');
 			const cam = params.get('cam');
 
 			void (async () => {
@@ -30,6 +32,11 @@
 					await editor.loadCityById(fixture);
 				} else if (!topdown) {
 					editor.restoreCityCamera();
+				}
+
+				if (harness === 'lane') {
+					(window as Window & { __laneHarness?: () => unknown }).__laneHarness = () =>
+						dumpLaneCorrespondence(editor.graph);
 				}
 
 				// ?cam=x,z,zoom is a headless-screenshot override (top-down, no persist).
