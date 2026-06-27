@@ -683,6 +683,29 @@ function laneBoundariesFor(
 		if (lo > 0) laneBoundaries[lo - 1] = offset;
 		if (hi + 1 < self.lanes.length) laneBoundaries[hi] = offset;
 	}
+	// A road-edge / shoulder line (a carriageway boundary against a walkway or
+	// verge) follows that walkway/verge's mapped edge even when the adjacent
+	// carriageway lane drops — otherwise the outer white line cuts to a gap at
+	// the transition. The stable side is the walkway/verge, which maps.
+	for (let index = 0; index + 1 < self.lanes.length; index++) {
+		if (laneBoundaries[index] !== null) continue;
+		const lowCell = self.cells[index];
+		const highCell = self.cells[index + 1];
+		const lowEdge =
+			lowCell &&
+			(surfaceClassOf(lowCell.laneType) === 'walkway' || surfaceClassOf(lowCell.laneType) === 'verge');
+		const highEdge =
+			highCell &&
+			(surfaceClassOf(highCell.laneType) === 'walkway' ||
+				surfaceClassOf(highCell.laneType) === 'verge');
+		const lowMapped = match.selfToAnchor.get(index);
+		const highMapped = match.selfToAnchor.get(index + 1);
+		if (lowEdge && lowMapped !== undefined) {
+			laneBoundaries[index] = keepOwnOffsets ? selfBounds[index + 1] : anchorBounds[lowMapped + 1];
+		} else if (highEdge && highMapped !== undefined) {
+			laneBoundaries[index] = keepOwnOffsets ? selfBounds[index + 1] : anchorBounds[highMapped];
+		}
+	}
 	if (keepOwnOffsets) {
 		for (let index = 0; index + 1 < self.lanes.length; index++) {
 			if (laneBoundaries[index] !== null) continue;
