@@ -1208,7 +1208,11 @@ function addGore(
 		);
 	};
 
-	buildGore(false, 'plate');
+	const mergerHasWalkway = getLaneIntervals(merger.lanes).some(
+		(interval) => surfaceClassOf(interval.laneType) === 'walkway'
+	);
+	const rimLayer = mergerHasWalkway ? 'plate' : roadwayLayer(armCarriageway(merger.lanes));
+	buildGore(false, rimLayer);
 	buildGore(true, roadwayLayer(patchMaterial([merger, ...merge.through])));
 }
 
