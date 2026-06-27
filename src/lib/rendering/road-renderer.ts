@@ -54,6 +54,8 @@ const LAYER_COLORS: Record<RoadLayerId, string> = Object.fromEntries(
 
 const TOP_LAYER_Y = Math.max(...ROAD_LAYER_LIST.map((layer) => laneLayerY(layer)));
 const ROADWAY_UNDERFILL_Y = LAYER_Y.plate + 0.025;
+const LAYER_DEPTH_ORDER = new Map(ROAD_LAYER_LIST.map((layer, index) => [layer, index]));
+const PAINT_DEPTH_ORDER = ROAD_LAYER_LIST.length;
 
 // Segment ribbons reach slightly into their node pieces so no hairline
 // cracks can open between them.
@@ -192,10 +194,19 @@ const EMPTY_END_ARROWS: SegmentEndArrows = { signature: '-', lanes: [] };
 function arrowMovementMap(arrows: SegmentEndArrows) {
 	return new Map(arrows.lanes.map((lane) => [lane.laneIndex, lane.movements]));
 }
-// Tiny per-piece elevation so coplanar pieces never z-fight; stays well
-// below the 0.01 gap between layers.
-const PIECE_JITTER_STEP = 0.0002;
-const PIECE_JITTER_SLOTS = 40;
+// Tiny per-piece elevation so coplanar pieces never z-fight; the full slot
+// budget stays below the 0.012 gap between same-class material layers.
+const PIECE_JITTER_STEP = 0.0015;
+const PIECE_JITTER_SLOTS = 8;
+const DEPTH_BIAS_STEP = -1;
+
+function depthBiasForRoadLayer(layerId: RoadLayerId) {
+	return ((LAYER_DEPTH_ORDER.get(layerId) ?? 0) + 1) * DEPTH_BIAS_STEP;
+}
+
+function depthBiasForPaint() {
+	return (PAINT_DEPTH_ORDER + 1) * DEPTH_BIAS_STEP;
+}
 
 interface RoadRendererOptions {
 	opacity?: number;
@@ -1251,11 +1262,15 @@ export class RoadRenderer {
 	private paintMaterialFor(color: PaintColor): THREE.MeshBasicMaterial {
 		let material = this.paintMaterials.get(color);
 		if (!material) {
+			const depthBias = depthBiasForPaint();
 			material = new THREE.MeshBasicMaterial({
 				color: new THREE.Color(PAINT_COLORS[color]),
 				side: THREE.DoubleSide,
 				transparent: this.opacity < 1,
-				opacity: this.opacity
+				opacity: this.opacity,
+				polygonOffset: true,
+				polygonOffsetFactor: depthBias,
+				polygonOffsetUnits: depthBias
 			});
 			this.paintMaterials.set(color, material);
 		}
@@ -1400,11 +1415,15 @@ export class RoadRenderer {
 	private materialFor(layerId: RoadLayerId): THREE.MeshBasicMaterial {
 		let material = this.materials.get(layerId);
 		if (!material) {
+			const depthBias = depthBiasForRoadLayer(layerId);
 			material = new THREE.MeshBasicMaterial({
 				color: new THREE.Color(LAYER_COLORS[layerId]),
 				side: THREE.DoubleSide,
 				transparent: this.opacity < 1,
-				opacity: this.opacity
+				opacity: this.opacity,
+				polygonOffset: true,
+				polygonOffsetFactor: depthBias,
+				polygonOffsetUnits: depthBias
 			});
 			this.materials.set(layerId, material);
 		}
