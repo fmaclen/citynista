@@ -533,9 +533,20 @@ function roadwayUnderfillLayer(intervals: (Interval & { laneType: LaneLayerId })
 		: roadwayLayer('asphalt');
 }
 
-function droppedRoadwayUnderfill(interval: Interval, target: Interval, lanes: Lane[]) {
-	const lowDrop = target.start > interval.start + EPSILON;
-	const highDrop = target.end < interval.end - EPSILON;
+// A necking roadway only fills its vacated span where it recedes from a VERGE
+// (dirt/grass shoulder) — there the neutral plate would read as pavement, which
+// is wrong, so an asphalt merge-gore is right. Against a walkway (the plate IS
+// the sidewalk) or an island/median (which draws over it), the vacated span
+// must stay the sidewalk/median, so no underfill — otherwise asphalt eats them.
+function droppedRoadwayUnderfill(
+	interval: Interval,
+	target: Interval,
+	lanes: Lane[],
+	lowAdjacentVerge: boolean,
+	highAdjacentVerge: boolean
+) {
+	const lowDrop = target.start > interval.start + EPSILON && lowAdjacentVerge;
+	const highDrop = target.end < interval.end - EPSILON && highAdjacentVerge;
 	if (!lowDrop && !highDrop) return null;
 	const node =
 		lowDrop && !highDrop
@@ -731,7 +742,17 @@ function buildResult(
 				end: Math.max(...matchedTargets.map((cell) => cell.end))
 			};
 			if (isRoadway(interval.laneType)) {
-				roadwayUnderfills[index] = droppedRoadwayUnderfill(interval, target, self.lanes);
+				const vergeBeside = (i: number) => {
+					const neighbor = selfSection.intervals[i];
+					return neighbor ? surfaceClassOf(neighbor.laneType) === 'verge' : false;
+				};
+				roadwayUnderfills[index] = droppedRoadwayUnderfill(
+					interval,
+					target,
+					self.lanes,
+					vergeBeside(index - 1),
+					vergeBeside(index + 1)
+				);
 			}
 			return target;
 		}

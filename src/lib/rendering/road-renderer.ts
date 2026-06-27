@@ -160,6 +160,8 @@ const PAINT_DASH = 2.2;
 const PAINT_GAP = 2.6;
 const PAINT_SOLID_STEP = 2.5;
 const PAINT_END_INSET = 0.2;
+const TURN_BAY_LENGTH = 28;
+const TURN_BAY_ENTRANCE_GAP = 5;
 // How far short of a node the solid centre line stops when a movement crosses
 // it there — a gap wide enough to read as a break, not a dashed continuation.
 const CENTER_BREAK_INSET = 3.5;
@@ -186,6 +188,10 @@ interface SegmentEndArrows {
 }
 
 const EMPTY_END_ARROWS: SegmentEndArrows = { signature: '-', lanes: [] };
+
+function arrowMovementMap(arrows: SegmentEndArrows) {
+	return new Map(arrows.lanes.map((lane) => [lane.laneIndex, lane.movements]));
+}
 // Tiny per-piece elevation so coplanar pieces never z-fight; stays well
 // below the 0.01 gap between layers.
 const PIECE_JITTER_STEP = 0.0002;
@@ -753,6 +759,31 @@ export class RoadRenderer {
 		// the plate edge, necking with the whole cross-section at transitions.
 		const marks = classifyCrossSection(lanes);
 		const bounds = boundaryOffsets(lanes);
+		const startMovements = arrowMovementMap(arrowStart);
+		const endMovements = arrowMovementMap(arrowEnd);
+		const boundaryHasTurnBay = (
+			movementsByLane: Map<number, ArrowMovement[]>,
+			boundaryIndex: number
+		) => {
+			const lowMovements = movementsByLane.get(boundaryIndex - 1);
+			const highMovements = movementsByLane.get(boundaryIndex);
+			// A solid bay line marks a same-direction boundary where weaving is not
+			// permitted: the two incoming lanes have DIFFERENT movement sets (a
+			// dedicated turn lane beside a through or differently-turning lane —
+			// e.g. {left} vs {left,right} at a 5-way with no through). Equal sets
+			// weave (stay dashed); a lane with no movements (outgoing) never bays.
+			if (
+				!lowMovements ||
+				!highMovements ||
+				lowMovements.length === 0 ||
+				highMovements.length === 0
+			) {
+				return false;
+			}
+			if (lowMovements.length !== highMovements.length) return true;
+			const highSet = new Set(highMovements);
+			return lowMovements.some((movement) => !highSet.has(movement));
+		};
 		for (const mark of marks) {
 			const leftLane = lanes[mark.boundaryIndex - 1];
 			const rightLane = lanes[mark.boundaryIndex];
@@ -809,18 +840,23 @@ export class RoadRenderer {
 				return value;
 			};
 			const target = mark.color === 'yellow' ? positions.center : positions.lane;
-			const stepLength = mark.dashed ? PAINT_DASH : PAINT_SOLID_STEP;
-			const gap = mark.dashed ? PAINT_GAP : 0;
 			const half = PAINT_WIDTH / 2;
-			const walkStroke = (lateral: number) => {
-				let d = from;
+			const walkStroke = (
+				strokeTarget: number[],
+				spanFrom: number,
+				spanTo: number,
+				stepLength: number,
+				gap: number,
+				lateral: number
+			) => {
+				let d = spanFrom;
 				let previous = pointAt(d, offsetAt(d) + lateral);
-				while (d < to - 0.05) {
-					const end = Math.min(d + stepLength, to);
+				while (d < spanTo - 0.05) {
+					const end = Math.min(d + stepLength, spanTo);
 					if (end - d < 0.3) break;
 					const p1 = gap === 0 ? previous : pointAt(d, offsetAt(d) + lateral);
 					const p2 = pointAt(end, offsetAt(end) + lateral);
-					target.push(
+					strokeTarget.push(
 						p1.x - p1.nx * half,
 						0,
 						p1.z - p1.ny * half,
@@ -844,13 +880,80 @@ export class RoadRenderer {
 					d = end + gap;
 				}
 			};
+			const bayOverrides: { excludeFrom: number; excludeTo: number; solidFrom: number; solidTo: number }[] =
+				[];
+			const bayEligible = mark.dashed && mark.color === 'white' && interiorBoundary;
+			if (bayEligible && boundaryHasTurnBay(startMovements, mark.boundaryIndex)) {
+				const nodeBoundaryExists = startTarget !== null;
+				if (nodeBoundaryExists) {
+					const bayLength = morphStart
+						? Math.max(lengthStart, TURN_BAY_ENTRANCE_GAP + 0.6)
+						: TURN_BAY_LENGTH;
+					const bayEnd = Math.min(to, from + bayLength);
+					const gapFrom = Math.max(from, bayEnd - TURN_BAY_ENTRANCE_GAP);
+					if (bayEnd - from >= 0.6 && gapFrom - from >= 0.3) {
+						bayOverrides.push({
+							excludeFrom: from,
+							excludeTo: bayEnd,
+							solidFrom: from,
+							solidTo: gapFrom
+						});
+					}
+				}
+			}
+			if (bayEligible && boundaryHasTurnBay(endMovements, mark.boundaryIndex)) {
+				const nodeBoundaryExists = endTarget !== null;
+				if (nodeBoundaryExists) {
+					const bayLength = morphEnd
+						? Math.max(lengthEnd, TURN_BAY_ENTRANCE_GAP + 0.6)
+						: TURN_BAY_LENGTH;
+					const bayStart = Math.max(from, to - bayLength);
+					const gapTo = Math.min(to, bayStart + TURN_BAY_ENTRANCE_GAP);
+					if (to - bayStart >= 0.6 && to - gapTo >= 0.3) {
+						bayOverrides.push({
+							excludeFrom: bayStart,
+							excludeTo: to,
+							solidFrom: gapTo,
+							solidTo: to
+						});
+					}
+				}
+			}
 			const inset =
 				mark.color === 'yellow'
 					? mark.side * CENTER_DOUBLE_OFFSET
 					: mark.dashed
 						? 0
 						: mark.side * 0.3;
-			walkStroke(inset);
+			const orderedOverrides = bayOverrides
+				.sort((a, b) => a.excludeFrom - b.excludeFrom)
+				.reduce<typeof bayOverrides>((merged, next) => {
+					const previous = merged[merged.length - 1];
+					if (!previous || next.excludeFrom > previous.excludeTo) {
+						merged.push(next);
+						return merged;
+					}
+					previous.excludeTo = Math.max(previous.excludeTo, next.excludeTo);
+					return merged;
+				}, []);
+			const stepLength = mark.dashed ? PAINT_DASH : PAINT_SOLID_STEP;
+			const gap = mark.dashed ? PAINT_GAP : 0;
+			let cursor = from;
+			for (const bay of orderedOverrides) {
+				const spanTo = Math.min(bay.excludeFrom, to);
+				if (spanTo - cursor >= 0.3) {
+					walkStroke(target, cursor, spanTo, stepLength, gap, inset);
+				}
+				cursor = Math.max(cursor, bay.excludeTo);
+			}
+			if (to - cursor >= 0.3) {
+				walkStroke(target, cursor, to, stepLength, gap, inset);
+			}
+			for (const bay of bayOverrides) {
+				if (bay.solidTo - bay.solidFrom >= 0.3) {
+					walkStroke(positions.lane, bay.solidFrom, bay.solidTo, PAINT_SOLID_STEP, 0, 0);
+				}
+			}
 		}
 
 		const laneCenters: number[] = [];
