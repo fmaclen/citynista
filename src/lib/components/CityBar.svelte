@@ -68,15 +68,16 @@
 	<Dialog.Content class="sm:max-w-sm">
 		<Dialog.Header>
 			<Dialog.Title>New city</Dialog.Title>
-			<Dialog.Description
-				>The name becomes the city's id (lowercase, hyphenated).</Dialog.Description
-			>
+			<Dialog.Description>Give your new city a name</Dialog.Description>
 		</Dialog.Header>
 		<Input
 			placeholder="e.g. downtown"
 			bind:value={newName}
 			onkeydown={(e) => {
-				if (e.key === 'Enter') create();
+				if (e.key === 'Enter') {
+					e.preventDefault();
+					create();
+				}
 			}}
 		/>
 		<Dialog.Footer>
