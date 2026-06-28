@@ -3,6 +3,7 @@ import type { LaneConnection, LaneEndpoint } from '../core/lane-connections';
 import { sameLaneRef } from '../core/lane-connections';
 import type { LaneRef } from '../core/types';
 import { editorLineGeometry, createEditorLineMaterial, EDITOR_LINE_COLOR } from './editor-line';
+import { HOVER_COLOR } from './editor-palette';
 
 // Lane connectors drawn above everything in connector mode: every allowed
 // movement is a beaded editor line (see editor-line.ts), plus a dot at each lane
@@ -13,7 +14,6 @@ import { editorLineGeometry, createEditorLineMaterial, EDITOR_LINE_COLOR } from 
 const CONNECTION_Y = 0.3;
 const DOT_Y = 0.31;
 const HANDLE_COLOR = EDITOR_LINE_COLOR;
-const HOVER_COLOR = 0x4a9eff;
 const VALID_COLOR = 0x22c55e;
 const INVALID_COLOR = 0xef4444;
 const DOT_RADIUS = 1.2;

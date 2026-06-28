@@ -4,6 +4,7 @@ import type { Segment } from '../core/segment.svelte';
 import type { Node } from '../core/node.svelte';
 import { getQuadraticBezierTangent } from '../geometry/bezier';
 import { CONTROL_SIZE } from '../rendering/selection-renderer';
+import { HOVER_COLOR, RING_THICKNESS } from '../rendering/editor-palette';
 import { nodeHitAt, segmentHitAt } from './picking';
 import { createMarquee } from './marquee';
 
@@ -11,7 +12,7 @@ import { createMarquee } from './marquee';
 // the current zoom; hit areas live in modes/picking.
 const CONTROL_POINT_HIT_PX = 17;
 const STRAIGHT_SNAP_PX = 14;
-const MARQUEE_COLOR = 0x4a9eff;
+const MARQUEE_COLOR = HOVER_COLOR;
 
 type DragTarget =
 	| { type: 'nodes' }
@@ -31,7 +32,7 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 	let setbackDrag: SetbackHandleInfo | null = null;
 	let dragDistance = 0;
 
-	const marquee = createMarquee(editor, MARQUEE_COLOR, 0.12);
+	const marquee = createMarquee(editor, MARQUEE_COLOR, 0.4, RING_THICKNESS);
 	// Control points expressed in their segment's local frame at drag start,
 	// so curves scale and rotate proportionally with their moving endpoints.
 	const controlFrames = new Map<string, { u: number; v: number }>();

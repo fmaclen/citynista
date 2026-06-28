@@ -2,15 +2,14 @@ import type { ModeHandlers } from './types';
 import type { Editor } from '../editor.svelte';
 import { pickAt } from './picking';
 import { createMarquee } from './marquee';
-
-const DANGER_COLOR = 0xef4444;
+import { DANGER_COLOR, RING_THICKNESS } from '../rendering/editor-palette';
 
 // Bulldoze: click demolishes a node (with its segments) or a segment;
 // dragging from open ground draws a red marquee that demolishes everything
 // contained. Deletion goes through the selection so orphan cleanup, saving,
 // and undo all behave exactly like Delete in select mode.
 export function setupBulldozeMode(editor: Editor): ModeHandlers {
-	const marquee = createMarquee(editor, DANGER_COLOR, 0.15);
+	const marquee = createMarquee(editor, DANGER_COLOR, 0.4, RING_THICKNESS);
 
 	const demolishSelection = () => {
 		if (editor.selectedNodes.size === 0 && editor.selectedSegments.size === 0) return;

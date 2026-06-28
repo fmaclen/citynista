@@ -9,14 +9,15 @@ import { cloneLanes, getTotalWidth } from '../core/lane-template';
 import { splitSegment } from '../core/crossings';
 import { closestPointOnQuadraticBezier, getQuadraticBezierTangent } from '../geometry/bezier';
 import { RoadRenderer } from '../rendering/road-renderer';
+import { HOVER_COLOR, SELECT_COLOR, RING_THICKNESS } from '../rendering/editor-palette';
 
 const GHOST_OPACITY = 0.45;
 const GHOST_ELEVATION = 0.06;
-// Matches NodeRenderer's ring style and palette — blue while free (hover),
+// Matches NodeRenderer's ring style and palette — cyan while free (hover),
 // yellow once snapped (committed) — sized to the active preset's width.
-const GHOST_RING_THICKNESS = 1.2;
-const GHOST_NODE_COLOR = 0x4a9eff;
-const GHOST_NODE_SNAPPED_COLOR = 0xfacc15;
+const GHOST_RING_THICKNESS = RING_THICKNESS;
+const GHOST_NODE_COLOR = HOVER_COLOR;
+const GHOST_NODE_SNAPPED_COLOR = SELECT_COLOR;
 const GHOST_NODE_Y = 0.3;
 const MIN_PREVIEW_LENGTH = 1;
 // Snap radii are sized in screen pixels and converted to world units at the

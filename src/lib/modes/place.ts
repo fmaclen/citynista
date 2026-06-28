@@ -8,12 +8,13 @@ import { buildRoadLayers } from '../core/road-geometry';
 import { findCrossingsBetweenSegments } from '../core/crossings';
 import { RoadRenderer } from '../rendering/road-renderer';
 import { NODE_Y_OFFSET } from '../rendering/node-renderer';
+import { SELECT_COLOR, RING_THICKNESS } from '../rendering/editor-palette';
 
 const GHOST_OPACITY = 0.45;
 const GHOST_ELEVATION = 0.06;
 const NODE_SNAP_PX = 20;
-const MARKER_COLOR = 0xfacc15;
-const MARKER_THICKNESS = 1.2;
+const MARKER_COLOR = SELECT_COLOR;
+const MARKER_THICKNESS = RING_THICKNESS;
 const MARKER_Y = NODE_Y_OFFSET;
 
 interface Translation {

@@ -1,15 +1,12 @@
 import * as THREE from 'three';
 import type { Node } from '../core/node.svelte';
+import { HOVER_COLOR, SELECT_COLOR, DANGER_COLOR, RING_THICKNESS } from './editor-palette';
 
 // Node markers: outline rings sized to the widest
 // road meeting at the node (the editor keeps radii in sync on rebuild).
-// Blue means hover, yellow means selected — rings revealed as part of a
+// Cyan means hover, yellow means selected — rings revealed as part of a
 // selection take the selected tone, rings revealed by hover the hover one.
 const DEFAULT_RADIUS = 6;
-const RING_THICKNESS = 1.2;
-const NODE_HOVER_COLOR = 0x4a9eff;
-const NODE_DANGER_COLOR = 0xef4444;
-const NODE_SELECTED_COLOR = 0xfacc15;
 const NODE_OPACITY = 0.9;
 
 export type NodeTone = 'hover' | 'selected' | 'danger';
@@ -37,7 +34,7 @@ export class NodeRenderer {
 	createNode(node: Node) {
 		const geometry = this.ringGeometry(DEFAULT_RADIUS);
 		const material = new THREE.MeshBasicMaterial({
-			color: NODE_HOVER_COLOR,
+			color: HOVER_COLOR,
 			transparent: true,
 			opacity: NODE_OPACITY
 		});
@@ -121,7 +118,7 @@ export class NodeRenderer {
 		const selected = this.selectedNodes.has(nodeId) || tone === 'selected';
 		const material = mesh.material as THREE.MeshBasicMaterial;
 		material.color.setHex(
-			selected ? NODE_SELECTED_COLOR : tone === 'danger' ? NODE_DANGER_COLOR : NODE_HOVER_COLOR
+			selected ? SELECT_COLOR : tone === 'danger' ? DANGER_COLOR : HOVER_COLOR
 		);
 	}
 

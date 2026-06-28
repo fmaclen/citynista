@@ -3,22 +3,20 @@ import type { Segment } from '../core/segment.svelte';
 import type { Node } from '../core/node.svelte';
 import { getQuadraticBezierPoint, getQuadraticBezierTangent } from '../geometry/bezier';
 import { editorLineGeometry, createEditorLineMaterial } from './editor-line';
+import { HOVER_COLOR, SELECT_COLOR, DANGER_COLOR } from './editor-palette';
 
 // Segment highlights: a translucent full-width ribbon with round end caps sized
 // to the node rings. Hover, selection and delete-hover are the *same* highlight
-// and differ only in color — blue for hover, yellow for selection, red for
+// and differ only in color — cyan for hover, yellow for selection, red for
 // delete. The fill sits just above the road and does not write depth, so it
 // composites cleanly over the network at any camera tilt without z-fighting
 // (an earlier LessDepth/depth-write trick relied on bit-equal coplanar depth,
 // which the perspective + logarithmic depth buffer no longer guarantees).
-const HOVER_COLOR = 0x4a9eff;
-const DANGER_COLOR = 0xef4444;
-const SELECT_COLOR = 0xfacc15;
 const HIGHLIGHT_OPACITY = 0.2;
 const FILL_RENDER_ORDER = 1;
 const GUIDE_RENDER_ORDER = 2;
 const CONTROL_RENDER_ORDER = 3;
-const CONTROL_COLOR = 0xfacc15;
+const CONTROL_COLOR = SELECT_COLOR;
 export const CONTROL_SIZE = 4.5;
 const CURVE_SAMPLES = 50;
 const CAP_SEGMENTS = 48;
@@ -103,8 +101,11 @@ function createHighlight(color: number): Highlight {
 		color,
 		transparent: true,
 		opacity: HIGHLIGHT_OPACITY,
-		// A transparent overlay above the road: don't write depth, so coplanar
-		// pieces composite over the network without z-fighting.
+		// A transparent overlay over the road: skip depth entirely. The lane
+		// layers now stack above this fill's Y, so depth-testing would let the
+		// road occlude the highlight (it only peeked through at verges/gaps).
+		// renderOrder keeps it beneath the guides and control handle.
+		depthTest: false,
 		depthWrite: false,
 		side: THREE.DoubleSide
 	});
