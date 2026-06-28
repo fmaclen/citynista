@@ -354,6 +354,33 @@ test.describe('segment copy/paste', () => {
 		]);
 	});
 
+	test('cuts a selected segment and pastes it as a new graph element', async ({ page }) => {
+		await selectSegment(page, -150, -90);
+		await page.keyboard.press('Meta+x');
+
+		// Cut removes the source segment and clears the selection.
+		await expect(page.locator('aside')).not.toBeVisible();
+		await expect
+			.poll(async () => (await savedGraph(page))?.segments.map((segment) => segment.id))
+			.toEqual(['segment-1']);
+
+		// The cut segment is still on the clipboard — paste drops a fresh clone.
+		await page.keyboard.press('Meta+v');
+		const drop = toScreen(150, 0);
+		await page.mouse.move(drop.x, drop.y);
+		await page.mouse.click(drop.x, drop.y);
+
+		await expect
+			.poll(async () => (await savedGraph(page))?.segments.length ?? 0)
+			.toBe(2);
+
+		const graph = await savedGraph(page);
+		expect(graph?.segments.some((segment) => segment.id === 'segment-0')).toBe(false);
+		const clone = graph!.segments.find((segment) => segment.id !== 'segment-1');
+		expect(clone).toBeDefined();
+		expect(clone!.lanes).toEqual(EXPECTED_SEGMENT_0_LANES);
+	});
+
 	test('pastes copied node connector config onto a matching junction', async ({ page }) => {
 		await seedGraph(page, NODE_CONNECTION_GRAPH_DATA);
 

@@ -391,12 +391,14 @@ export class Editor {
 		this.boundClipboardKeyDown = (e: KeyboardEvent) => {
 			if (!(e.metaKey || e.ctrlKey)) return;
 			const key = e.key.toLowerCase();
-			if (key !== 'c' && key !== 'v') return;
+			if (key !== 'c' && key !== 'v' && key !== 'x') return;
 			const target = e.target;
 			if (target instanceof HTMLElement && target.tagName !== 'BODY') return;
 			e.preventDefault();
 			if (key === 'c') {
 				this.copySelection();
+			} else if (key === 'x') {
+				this.cutSelection();
 			} else {
 				this.paste();
 			}
@@ -412,8 +414,16 @@ export class Editor {
 		}
 	}
 
-	private copySelectedSegments() {
+	// Cut is copy-then-delete, scoped to segment geometry (the only thing placement
+	// can recreate). One undo step — the deletion; the later paste/place is its own.
+	private cutSelection() {
 		if (this.selectedSegments.size === 0) return;
+		if (!this.copySelectedSegments()) return;
+		this.deleteSelected();
+	}
+
+	private copySelectedSegments() {
+		if (this.selectedSegments.size === 0) return false;
 
 		const nodes = new SvelteMap<string, ClipboardNodeSnapshot>();
 		const segments: ClipboardSegmentSnapshot[] = [];
@@ -446,12 +456,13 @@ export class Editor {
 			});
 		}
 
-		if (segments.length === 0) return;
+		if (segments.length === 0) return false;
 		this.clipboard = {
 			kind: 'segments',
 			nodes: [...nodes.values()],
 			segments
 		};
+		return true;
 	}
 
 	private sortedNodeArms(nodeId: string) {
