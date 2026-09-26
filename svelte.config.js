@@ -8,10 +8,9 @@ const config = {
 	preprocess: vitePreprocess(),
 
 	kit: {
-		// adapter-auto only supports some environments, see https://svelte.dev/docs/kit/adapter-auto for a list.
-		// If your environment is not supported, or you settled on a specific environment, switch out the adapter.
-		// See https://svelte.dev/docs/kit/adapters for more information about adapters.
-		adapter: adapter()
+		// An explicit runtime pins production and lets the build run on any local
+		// Node; without it the adapter refuses Node versions Vercel does not offer.
+		adapter: adapter({ runtime: 'nodejs24.x' })
 	}
 };
 
