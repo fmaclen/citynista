@@ -31,3 +31,5 @@ _old_reference/**/*
 SCRATCHPAD.md
 
 e2e/screenshots
+
+.worktrees/

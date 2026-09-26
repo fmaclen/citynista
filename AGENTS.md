@@ -26,6 +26,15 @@ Citynista is a web-based city planning tool prototype: draw street networks with
 - **Lint code**: `bun run lint`
 - **E2E tests**: `bun run test` | `bun run test -- -g 'partial name of test'`
 
+## Worktrees
+
+T3 opens each thread in `.worktrees/<branch>` and runs `scripts/worktree-setup` (wired in `t3.json`), which writes this checkout's `PORT` (5300 + slot) and `PREVIEW_PORT` (6300 + slot) to `.env` and installs dependencies. Dev, preview, and Playwright read those ports with `strictPort`, so a collision fails instead of drifting.
+
+- `bun run dev` — dev server on `PORT`
+- `bun run test -- e2e/split.test.ts` or `bun run test -- -g 'partial name'` — builds, serves on `PREVIEW_PORT`, runs only the named tests
+- Every test leaves a screenshot under `test-results/`
+- Run only the tests your change touches; the full suite is the user's to run
+
 ## Architecture
 
 ### Coordinate System
@@ -103,7 +112,7 @@ After drawing (and only then — moving segments in select mode never splits), `
 
 ## LLM Instructions
 
-- never run the dev server, assume the user is already running the dev server
+- outside `.worktrees/`, never run the dev server; assume the user is already running it
 - always use strict typesafety, never use any, don't add return types, always rely on inference
 - use Svelte 5 runes (`$state`, `$effect`, `$derived`) instead of legacy reactivity
 - use `SvelteMap` and `SvelteSet` from 'svelte/reactivity' for reactive collections
