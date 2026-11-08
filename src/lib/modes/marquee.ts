@@ -128,7 +128,12 @@ export function createMarquee(
 				framePositions[i * 3 + 2] = corners[i].y;
 			}
 			for (let i = 0; i < 4; i++) {
-				const inner = insetCorner(corners[(i + 3) % 4], corners[i], corners[(i + 1) % 4], thickness);
+				const inner = insetCorner(
+					corners[(i + 3) % 4],
+					corners[i],
+					corners[(i + 1) % 4],
+					thickness
+				);
 				framePositions[(4 + i) * 3] = inner.x;
 				framePositions[(4 + i) * 3 + 1] = MARQUEE_Y;
 				framePositions[(4 + i) * 3 + 2] = inner.y;

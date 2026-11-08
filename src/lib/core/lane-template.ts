@@ -10,10 +10,7 @@ import type {
 } from './types';
 import { MATERIAL_COLOR } from './lane-types';
 
-export function laneSwatchColor(lane: {
-	role: LaneRole;
-	material: LaneMaterial;
-}) {
+export function laneSwatchColor(lane: { role: LaneRole; material: LaneMaterial }) {
 	return MATERIAL_COLOR[lane.material];
 }
 
@@ -25,8 +22,8 @@ export const LANE_TEMPLATES: LaneTemplate[] = [
 		name: 'Street',
 		lanes: [
 			{ role: 'pedestrian', material: 'pavement', width: 2, direction: 'bidirectional' },
-			{ role: 'vehicle', material: 'asphalt', width: 3, direction: 'backward' },
-			{ role: 'vehicle', material: 'asphalt', width: 3, direction: 'forward' },
+			{ role: 'vehicle', material: 'asphalt', width: 3.5, direction: 'backward' },
+			{ role: 'vehicle', material: 'asphalt', width: 3.5, direction: 'forward' },
 			{ role: 'pedestrian', material: 'pavement', width: 2, direction: 'bidirectional' }
 		]
 	},
@@ -72,6 +69,14 @@ export const LANE_TEMPLATES: LaneTemplate[] = [
 		id: 'path',
 		name: 'Path',
 		lanes: [{ role: 'pedestrian', material: 'pavement', width: 2, direction: 'bidirectional' }]
+	},
+	{
+		id: 'driveway',
+		name: 'Driveway',
+		lanes: [
+			{ role: 'vehicle', material: 'asphalt', width: 3.5, direction: 'backward' },
+			{ role: 'vehicle', material: 'asphalt', width: 3.5, direction: 'forward' }
+		]
 	}
 ];
 
@@ -108,10 +113,7 @@ export function getTotalWidth(lanes: Lane[]): number {
 
 export function serializeLanes(lanes: Lane[]): string {
 	return lanes
-		.map((lane) => {
-			const markings = lane.markings === false ? ':nomark' : '';
-			return `${lane.role}:${lane.material}:${lane.width}:${lane.direction}${markings}`;
-		})
+		.map((lane) => `${lane.role}:${lane.material}:${lane.width}:${lane.direction}`)
 		.join(',');
 }
 
@@ -169,7 +171,7 @@ export function migrateLane(stored: StoredLane): Lane {
 		width: stored.width,
 		direction: base.role === 'vehicle' ? stored.direction : 'bidirectional'
 	};
-	if (stored.markings === false) lane.markings = false;
+	if (stored.id) lane.id = stored.id;
 	return lane;
 }
 

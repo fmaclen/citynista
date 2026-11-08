@@ -13,10 +13,7 @@ export default defineConfig(({ mode }) => {
 			allowedHosts: ['.ts.net'],
 			watch: {
 				usePolling: true,
-				interval: 300,
-				// City auto-saves write JSON here constantly; don't full-reload on them.
-				// External edits to a city file are picked up on a manual reload.
-				ignored: ['**/static/fixtures/**']
+				interval: 300
 			}
 		},
 		preview: { host: '127.0.0.1', port: Number(env.PREVIEW_PORT) || 4173, strictPort: true }

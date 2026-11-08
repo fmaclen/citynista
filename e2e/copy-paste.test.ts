@@ -1,20 +1,81 @@
 import { expect, test } from '@playwright/test';
+import { saveCity } from './save';
 
 const STORAGE_KEY = 'citynista-graph-v2';
 
+interface SavedLaneRef {
+	road: string;
+	end: 'start' | 'end';
+	lane: string;
+}
+
+interface SavedConnection {
+	from: SavedLaneRef;
+	to: SavedLaneRef;
+}
+
+interface SavedCrossing {
+	road: string;
+	end: 'start' | 'end';
+	lanes: [string, string];
+	at?: number;
+	on?: boolean;
+}
+
+interface SavedJunction {
+	connections: SavedConnection[];
+	added?: SavedConnection[];
+	removed?: SavedConnection[];
+	crossings?: SavedCrossing[];
+	control?: Record<string, string>;
+	taper?: number;
+}
+
+interface SavedLane {
+	id?: string;
+	role: string;
+	material: string;
+	width: number;
+	direction: string;
+	raised?: boolean;
+}
+
+interface SavedNode {
+	id: string;
+	x: number;
+	y: number;
+	junction?: SavedJunction;
+}
+
+interface SavedSegment {
+	id: string;
+	startNodeId: string;
+	endNodeId: string;
+	controlX?: number;
+	controlY?: number;
+	offset?: number;
+	lanes: SavedLane[];
+}
+
+interface SavedGraph {
+	nodes: SavedNode[];
+	segments: SavedSegment[];
+}
+
+// node-0's U-turn from the backward lane into the forward lane, switched off.
+const SEGMENT_0_JUNCTION: SavedJunction = {
+	connections: [],
+	removed: [
+		{
+			from: { road: 'segment-0', end: 'start', lane: 'l1' },
+			to: { road: 'segment-0', end: 'start', lane: 'l2' }
+		}
+	]
+};
+
 const GRAPH_DATA = {
 	nodes: [
-		{
-			id: 'node-0',
-			x: -220,
-			y: -60,
-			disabledConnections: [
-				{
-					from: { segmentId: 'segment-0', laneIndex: 1 },
-					to: { segmentId: 'segment-0', laneIndex: 2 }
-				}
-			]
-		},
+		{ id: 'node-0', x: -220, y: -60, junction: SEGMENT_0_JUNCTION },
 		{ id: 'node-1', x: -80, y: -60 },
 		{ id: 'node-2', x: -220, y: 80 },
 		{ id: 'node-3', x: -80, y: 80 }
@@ -26,10 +87,11 @@ const GRAPH_DATA = {
 			endNodeId: 'node-1',
 			controlX: -150,
 			controlY: -120,
+			offset: 1.5,
 			lanes: [
 				{ type: 'sidewalk', width: 2, direction: 'bidirectional' },
 				{ type: 'road', width: 3, direction: 'backward' },
-				{ type: 'turn', width: 3, direction: 'forward', turn: 'left', markings: false },
+				{ type: 'turn', width: 3, direction: 'forward', turn: 'left' },
 				{ type: 'sidewalk', width: 2, direction: 'bidirectional' }
 			]
 		},
@@ -50,160 +112,80 @@ const GRAPH_DATA = {
 };
 
 const NODE_CONNECTION_LANES = [
-	{ type: 'sidewalk', width: 2, direction: 'bidirectional' },
-	{ type: 'road', width: 3, direction: 'backward' },
-	{ type: 'road', width: 3, direction: 'forward' },
-	{ type: 'sidewalk', width: 2, direction: 'bidirectional' }
+	{ id: 'l0', role: 'pedestrian', material: 'pavement', width: 2, direction: 'bidirectional' },
+	{ id: 'l1', role: 'vehicle', material: 'asphalt', width: 3, direction: 'backward' },
+	{ id: 'l2', role: 'vehicle', material: 'asphalt', width: 3, direction: 'forward' },
+	{ id: 'l3', role: 'pedestrian', material: 'pavement', width: 2, direction: 'bidirectional' }
 ];
+
+// Every arm starts at its junction, so l1 (backward) arrives and l2 (forward)
+// leaves.
+const at = (road: string, lane: string): SavedLaneRef => ({ road, end: 'start', lane });
+
+const NODE_A_JUNCTION: SavedJunction = {
+	connections: [],
+	added: [{ from: at('segment-a-east', 'l1'), to: at('segment-a-north', 'l2') }],
+	removed: [
+		{ from: at('segment-a-north', 'l1'), to: at('segment-a-east', 'l2') },
+		{ from: at('segment-a-south', 'l1'), to: at('segment-a-west', 'l2') }
+	],
+	crossings: [{ road: 'segment-a-east', end: 'start', lanes: ['l0', 'l3'], on: false }],
+	control: { 'segment-a-north:start': 'signal', 'segment-a-west:start': 'yield' },
+	taper: 12
+};
+
+const NODE_B_JUNCTION: SavedJunction = {
+	connections: [],
+	removed: [{ from: at('segment-b-west', 'l1'), to: at('segment-b-south', 'l2') }]
+};
 
 const NODE_CONNECTION_GRAPH_DATA = {
 	nodes: [
-		{
-			id: 'node-a',
-			x: -220,
-			y: -30,
-			disabledConnections: [
-				{
-					from: { segmentId: 'segment-a-north', laneIndex: 1 },
-					to: { segmentId: 'segment-a-east', laneIndex: 2 }
-				},
-				{
-					from: { segmentId: 'segment-a-south', laneIndex: 2 },
-					to: { segmentId: 'segment-a-west', laneIndex: 1 }
-				},
-				{
-					from: { segmentId: 'segment-a-east', laneIndex: 0 },
-					to: { segmentId: 'segment-a-north', laneIndex: 3 }
-				}
-			]
-		},
+		{ id: 'node-a', x: -220, y: -30, junction: NODE_A_JUNCTION },
 		{ id: 'node-a-north', x: -220, y: -110 },
 		{ id: 'node-a-east', x: -140, y: -30 },
 		{ id: 'node-a-south', x: -220, y: 50 },
 		{ id: 'node-a-west', x: -300, y: -30 },
-		{
-			id: 'node-b',
-			x: 100,
-			y: -30,
-			disabledConnections: [
-				{
-					from: { segmentId: 'segment-b-west', laneIndex: 1 },
-					to: { segmentId: 'segment-b-south', laneIndex: 2 }
-				}
-			]
-		},
+		{ id: 'node-b', x: 100, y: -30, junction: NODE_B_JUNCTION },
 		{ id: 'node-b-north', x: 100, y: -110 },
 		{ id: 'node-b-east', x: 180, y: -30 },
 		{ id: 'node-b-south', x: 100, y: 50 },
 		{ id: 'node-b-west', x: 20, y: -30 }
 	],
-	segments: [
-		{
-			id: 'segment-a-north',
-			startNodeId: 'node-a',
-			endNodeId: 'node-a-north',
+	segments: (['a', 'b'] as const).flatMap((n) =>
+		(['north', 'east', 'south', 'west'] as const).map((arm) => ({
+			id: `segment-${n}-${arm}`,
+			startNodeId: `node-${n}`,
+			endNodeId: `node-${n}-${arm}`,
 			lanes: NODE_CONNECTION_LANES
-		},
-		{
-			id: 'segment-a-east',
-			startNodeId: 'node-a',
-			endNodeId: 'node-a-east',
-			lanes: NODE_CONNECTION_LANES
-		},
-		{
-			id: 'segment-a-south',
-			startNodeId: 'node-a',
-			endNodeId: 'node-a-south',
-			lanes: NODE_CONNECTION_LANES
-		},
-		{
-			id: 'segment-a-west',
-			startNodeId: 'node-a',
-			endNodeId: 'node-a-west',
-			lanes: NODE_CONNECTION_LANES
-		},
-		{
-			id: 'segment-b-north',
-			startNodeId: 'node-b',
-			endNodeId: 'node-b-north',
-			lanes: NODE_CONNECTION_LANES
-		},
-		{
-			id: 'segment-b-east',
-			startNodeId: 'node-b',
-			endNodeId: 'node-b-east',
-			lanes: NODE_CONNECTION_LANES
-		},
-		{
-			id: 'segment-b-south',
-			startNodeId: 'node-b',
-			endNodeId: 'node-b-south',
-			lanes: NODE_CONNECTION_LANES
-		},
-		{
-			id: 'segment-b-west',
-			startNodeId: 'node-b',
-			endNodeId: 'node-b-west',
-			lanes: NODE_CONNECTION_LANES
-		}
-	]
+		}))
+	)
 };
+
+// The hand edits a junction stores; `connections` is worked out from the roads
+// and these edits, so it is left out of comparisons.
+const edits = (junction: SavedJunction | undefined) =>
+	junction ? { ...junction, connections: undefined } : undefined;
 
 const SCALE = 720 / 500;
 const toScreen = (x: number, y: number) => ({ x: 640 + x * SCALE, y: 360 + y * SCALE });
 
-interface SavedLane {
-	role: string;
-	material: string;
-	width: number;
-	direction: string;
-	raised?: boolean;
-	markings?: boolean;
-}
-
-interface SavedConnection {
-	from: { segmentId: string; laneIndex: number };
-	to: { segmentId: string; laneIndex: number };
-}
-
-interface SavedNode {
-	id: string;
-	x: number;
-	y: number;
-	disabledConnections?: SavedConnection[];
-	enabledConnections?: SavedConnection[];
-}
-
-interface SavedSegment {
-	id: string;
-	startNodeId: string;
-	endNodeId: string;
-	controlX?: number;
-	controlY?: number;
-	lanes: SavedLane[];
-}
-
-interface SavedGraph {
-	nodes: SavedNode[];
-	segments: SavedSegment[];
-}
-
 const EXPECTED_SEGMENT_0_LANES: SavedLane[] = [
-	{ role: 'pedestrian', material: 'pavement', width: 2, direction: 'bidirectional' },
-	{ role: 'vehicle', material: 'asphalt', width: 3, direction: 'backward' },
-	{ role: 'vehicle', material: 'asphalt', width: 3, direction: 'forward', markings: false },
-	{ role: 'pedestrian', material: 'pavement', width: 2, direction: 'bidirectional' }
+	{ id: 'l0', role: 'pedestrian', material: 'pavement', width: 2, direction: 'bidirectional' },
+	{ id: 'l1', role: 'vehicle', material: 'asphalt', width: 3, direction: 'backward' },
+	{ id: 'l2', role: 'vehicle', material: 'asphalt', width: 3, direction: 'forward' },
+	{ id: 'l3', role: 'pedestrian', material: 'pavement', width: 2, direction: 'bidirectional' }
 ];
 
 const laneKey = (lanes: SavedLane[]) =>
 	lanes
 		.map(
 			(lane) =>
-				`${lane.role}:${lane.material}:${lane.width}:${lane.direction}${lane.raised ? ':raised' : ''}${lane.markings === false ? ':nomark' : ''}`
+				`${lane.role}:${lane.material}:${lane.width}:${lane.direction}${lane.raised ? ':raised' : ''}`
 		)
 		.join(',');
 
-async function seedGraph(page: import('@playwright/test').Page, data = GRAPH_DATA) {
+async function seedGraph(page: import('@playwright/test').Page, data: object = GRAPH_DATA) {
 	await page.goto('/?topdown');
 	await expect(page.locator('canvas')).toBeVisible();
 	await page.evaluate(
@@ -217,11 +199,13 @@ async function seedGraph(page: import('@playwright/test').Page, data = GRAPH_DAT
 	await expect(page.locator('nav')).toBeVisible();
 }
 
-const savedGraph = (page: import('@playwright/test').Page) =>
-	page.evaluate((key) => {
+const savedGraph = async (page: import('@playwright/test').Page) => {
+	await saveCity(page);
+	return page.evaluate((key) => {
 		const data = localStorage.getItem(key);
 		return data ? (JSON.parse(data) as SavedGraph) : null;
 	}, STORAGE_KEY);
+};
 
 async function selectSegment(page: import('@playwright/test').Page, x: number, y: number) {
 	await page.locator('canvas').click({ position: toScreen(x, y) });
@@ -232,53 +216,39 @@ async function selectNode(page: import('@playwright/test').Page, x: number, y: n
 	await page.locator('canvas').click({ position: toScreen(x, y) });
 }
 
-const sortedArms = (graph: SavedGraph, nodeId: string) => {
-	const node = graph.nodes.find((n) => n.id === nodeId);
-	if (!node) return [];
-
+// A node's roads in the order the editor walks round it (by the angle each
+// leaves at), which is how a pasted junction matches roads up.
+const sortedArms = (graph: typeof NODE_CONNECTION_GRAPH_DATA, nodeId: string) => {
+	const node = graph.nodes.find((n) => n.id === nodeId)!;
 	return graph.segments
 		.filter((segment) => segment.startNodeId === nodeId || segment.endNodeId === nodeId)
 		.map((segment) => {
-			const otherNodeId = segment.startNodeId === nodeId ? segment.endNodeId : segment.startNodeId;
-			const other = graph.nodes.find((n) => n.id === otherNodeId);
-			const dx = other ? other.x - node.x : 0;
-			const dy = other ? other.y - node.y : 0;
-			return {
-				segmentId: segment.id,
-				laneCount: segment.lanes.length,
-				angle: Math.atan2(dy, dx)
-			};
+			const otherId = segment.startNodeId === nodeId ? segment.endNodeId : segment.startNodeId;
+			const other = graph.nodes.find((n) => n.id === otherId)!;
+			return { id: segment.id, angle: Math.atan2(other.y - node.y, other.x - node.x) };
 		})
 		.sort((a, b) => a.angle - b.angle)
-		.map(({ segmentId, laneCount }) => ({ segmentId, laneCount }));
+		.map(({ id }) => id);
 };
 
-const remapConnections = (
-	connections: SavedConnection[],
-	sourceArms: { segmentId: string; laneCount: number }[],
-	targetArms: { segmentId: string; laneCount: number }[]
-) => {
-	const sourceArmIndices = new Map(sourceArms.map((arm, index) => [arm.segmentId, index]));
-	return connections
-		.map((connection) => {
-			const fromArmIndex = sourceArmIndices.get(connection.from.segmentId);
-			const toArmIndex = sourceArmIndices.get(connection.to.segmentId);
-			const fromArm = fromArmIndex !== undefined ? targetArms[fromArmIndex] : undefined;
-			const toArm = toArmIndex !== undefined ? targetArms[toArmIndex] : undefined;
-			if (
-				!fromArm ||
-				!toArm ||
-				connection.from.laneIndex >= fromArm.laneCount ||
-				connection.to.laneIndex >= toArm.laneCount
-			) {
-				return null;
-			}
-			return {
-				from: { segmentId: fromArm.segmentId, laneIndex: connection.from.laneIndex },
-				to: { segmentId: toArm.segmentId, laneIndex: connection.to.laneIndex }
-			};
-		})
-		.filter((connection) => connection !== null);
+// The source junction's edits renamed onto the target's roads (same order
+// round the node; every arm has the same lanes, so lane ids carry over).
+const remapJunction = (junction: SavedJunction, sourceArms: string[], targetArms: string[]) => {
+	const road = (id: string) => targetArms[sourceArms.indexOf(id)];
+	const ref = (r: SavedLaneRef) => ({ ...r, road: road(r.road) });
+	const pair = (c: SavedConnection) => ({ from: ref(c.from), to: ref(c.to) });
+	return {
+		added: junction.added?.map(pair),
+		removed: junction.removed?.map(pair),
+		crossings: junction.crossings?.map((c) => ({ ...c, road: road(c.road) })),
+		control: Object.fromEntries(
+			Object.entries(junction.control ?? {}).map(([key, value]) => {
+				const [id, end] = key.split(':');
+				return [`${road(id)}:${end}`, value];
+			})
+		),
+		taper: junction.taper
+	};
 };
 
 test.describe('segment copy/paste', () => {
@@ -346,12 +316,19 @@ test.describe('segment copy/paste', () => {
 		expect(clonedStart!.y).toBeCloseTo(0, 0);
 		expect(clonedEnd!.x).toBeCloseTo(220, 0);
 		expect(clonedEnd!.y).toBeCloseTo(0, 0);
-		expect(clonedStart?.disabledConnections).toEqual([
-			{
-				from: { segmentId: clone!.id, laneIndex: 1 },
-				to: { segmentId: clone!.id, laneIndex: 2 }
-			}
-		]);
+		expect(clone!.offset).toBe(1.5);
+		// The copied node keeps its junction edits, renamed onto the clone.
+		expect(edits(clonedStart!.junction)).toEqual({
+			removed: [
+				{
+					from: { road: clone!.id, end: 'start', lane: 'l1' },
+					to: { road: clone!.id, end: 'start', lane: 'l2' }
+				}
+			]
+		});
+		expect(edits(graph!.nodes.find((node) => node.id === 'node-0')?.junction)).toEqual(
+			edits(SEGMENT_0_JUNCTION)
+		);
 	});
 
 	test('cuts a selected segment and pastes it as a new graph element', async ({ page }) => {
@@ -370,9 +347,7 @@ test.describe('segment copy/paste', () => {
 		await page.mouse.move(drop.x, drop.y);
 		await page.mouse.click(drop.x, drop.y);
 
-		await expect
-			.poll(async () => (await savedGraph(page))?.segments.length ?? 0)
-			.toBe(2);
+		await expect.poll(async () => (await savedGraph(page))?.segments.length ?? 0).toBe(2);
 
 		const graph = await savedGraph(page);
 		expect(graph?.segments.some((segment) => segment.id === 'segment-0')).toBe(false);
@@ -389,23 +364,23 @@ test.describe('segment copy/paste', () => {
 		await selectNode(page, 100, -30);
 		await page.keyboard.press('Meta+v');
 
-		const sourceConnections = NODE_CONNECTION_GRAPH_DATA.nodes[0].disabledConnections;
-		const sourceArms = sortedArms(NODE_CONNECTION_GRAPH_DATA, 'node-a');
-		const targetArms = sortedArms(NODE_CONNECTION_GRAPH_DATA, 'node-b');
-		const expectedConnections = remapConnections(sourceConnections, sourceArms, targetArms);
+		const expected = remapJunction(
+			NODE_A_JUNCTION,
+			sortedArms(NODE_CONNECTION_GRAPH_DATA, 'node-a'),
+			sortedArms(NODE_CONNECTION_GRAPH_DATA, 'node-b')
+		);
 
+		// The paste replaces node-b's own edits outright.
 		await expect
 			.poll(async () => {
 				const graph = await savedGraph(page);
-				const target = graph?.nodes.find((node) => node.id === 'node-b');
-				return target?.disabledConnections ?? null;
+				return edits(graph?.nodes.find((node) => node.id === 'node-b')?.junction) ?? null;
 			})
-			.toEqual(expectedConnections);
+			.toEqual(expected);
 
 		const graph = await savedGraph(page);
-		const source = graph?.nodes.find((node) => node.id === 'node-a');
-		const target = graph?.nodes.find((node) => node.id === 'node-b');
-		expect(source?.disabledConnections).toEqual(sourceConnections);
-		expect(target?.enabledConnections).toBeUndefined();
+		expect(edits(graph?.nodes.find((node) => node.id === 'node-a')?.junction)).toEqual(
+			edits(NODE_A_JUNCTION)
+		);
 	});
 });

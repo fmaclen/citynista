@@ -1,8 +1,8 @@
 import { chromium } from '@playwright/test';
 
-// Usage: bun scripts/shot.ts <fixture> <worldX> <worldY> <zoomSteps> <out.png>
+// Usage: bun scripts/shot.ts <example> <worldX> <worldY> <zoomSteps> <out.png>
 // Pans the topdown camera so (worldX,worldY) is centered, optional wheel zoom-in steps.
-const [fixture, xs, ys, zs, out] = process.argv.slice(2);
+const [example, xs, ys, zs, out] = process.argv.slice(2);
 const cx = Number(xs);
 const cy = Number(ys);
 const zoomSteps = Number(zs ?? 0);
@@ -14,7 +14,7 @@ const SCALE = 720 / 500; // px per world unit at default camera
 const browser = await chromium.launch();
 const page = await browser.newPage({ viewport: { width: W, height: H } });
 const port = process.env.PORT ?? '5173';
-await page.goto(`http://localhost:${port}/?fixture=${fixture}&topdown`);
+await page.goto(`http://localhost:${port}/?example=${example}&topdown`);
 await page.waitForSelector('canvas');
 await page.waitForSelector('nav');
 await page.waitForLoadState('networkidle');

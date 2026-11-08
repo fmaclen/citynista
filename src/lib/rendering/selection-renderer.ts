@@ -1,9 +1,22 @@
 import * as THREE from 'three';
 import type { Segment } from '../core/segment.svelte';
-import type { Node } from '../core/node.svelte';
+// Segment ends as drawn (an end attached at another road's edge moved
+// there; see core/attach.ts).
+interface Pt {
+	x: number;
+	y: number;
+}
 import { getQuadraticBezierPoint, getQuadraticBezierTangent } from '../geometry/bezier';
 import { editorLineGeometry, createEditorLineMaterial } from './editor-line';
-import { HOVER_COLOR, SELECT_COLOR, DANGER_COLOR } from './editor-palette';
+import { HOVER_COLOR, SELECT_COLOR, DANGER_COLOR, CURVE_HANDLE } from './editor-palette';
+import {
+	disposeHandleObject,
+	handleMaterial,
+	handleObject,
+	outlineMaterial,
+	squareShape,
+	type ScreenSized
+} from './handle-shapes';
 
 // Segment highlights: a translucent full-width ribbon with round end caps sized
 // to the node rings. Hover, selection and delete-hover are the *same* highlight
@@ -12,12 +25,12 @@ import { HOVER_COLOR, SELECT_COLOR, DANGER_COLOR } from './editor-palette';
 // composites cleanly over the network at any camera tilt without z-fighting
 // (an earlier LessDepth/depth-write trick relied on bit-equal coplanar depth,
 // which the perspective + logarithmic depth buffer no longer guarantees).
+// A selected road also shows its curvature handle: a square on the control
+// point, on beaded guides from the road's ends, in the curve colour.
 const HIGHLIGHT_OPACITY = 0.2;
 const FILL_RENDER_ORDER = 1;
 const GUIDE_RENDER_ORDER = 2;
-const CONTROL_RENDER_ORDER = 3;
-const CONTROL_COLOR = SELECT_COLOR;
-export const CONTROL_SIZE = 4.5;
+const CONTROL_RENDER_ORDER = 8;
 const CURVE_SAMPLES = 50;
 const CAP_SEGMENTS = 48;
 const RIBBON_MARGIN = 1;
@@ -37,13 +50,33 @@ interface SegmentVisual {
 	group: THREE.Group;
 	fill: Highlight;
 	handles: THREE.Mesh;
-	control: THREE.Mesh;
+	control: THREE.Group;
+}
+
+// A point of the drawn line at t, moved by the segment's offset.
+function shifted(segment: Segment, startNode: Pt, endNode: Pt, t: number) {
+	const cx = segment.controlX ?? (startNode.x + endNode.x) / 2;
+	const cy = segment.controlY ?? (startNode.y + endNode.y) / 2;
+	const p = getQuadraticBezierPoint(startNode.x, startNode.y, cx, cy, endNode.x, endNode.y, t);
+	const d = getQuadraticBezierTangent(startNode.x, startNode.y, cx, cy, endNode.x, endNode.y, t);
+	const l = Math.hypot(d.x, d.y) || 1;
+	return { x: p.x - (d.y / l) * segment.offset, y: p.y + (d.x / l) * segment.offset };
+}
+
+// Where the curvature handle is drawn: the control point, moved by the
+// road's offset (its normal half way along).
+export function controlHandle(segment: Segment, startNode: Pt, endNode: Pt) {
+	const cx = segment.controlX ?? (startNode.x + endNode.x) / 2;
+	const cy = segment.controlY ?? (startNode.y + endNode.y) / 2;
+	const mid = shifted(segment, startNode, endNode, 0.5);
+	const line = getQuadraticBezierPoint(startNode.x, startNode.y, cx, cy, endNode.x, endNode.y, 0.5);
+	return { x: cx + mid.x - line.x, y: cy + mid.y - line.y };
 }
 
 function buildRibbonGeometry(
 	segment: Segment,
-	startNode: Node,
-	endNode: Node,
+	startNode: Pt,
+	endNode: Pt,
 	halfWidth: number,
 	y: number
 ) {
@@ -76,12 +109,15 @@ function buildRibbonGeometry(
 		const nx = length > 0.0001 ? -tangent.y / length : 0;
 		const ny = length > 0.0001 ? tangent.x / length : 1;
 
-		positions[i * 6] = point.x + nx * halfWidth;
+		// Where the road is drawn: the line moved by the segment's offset.
+		const px = point.x + nx * segment.offset;
+		const py = point.y + ny * segment.offset;
+		positions[i * 6] = px + nx * halfWidth;
 		positions[i * 6 + 1] = y;
-		positions[i * 6 + 2] = point.y + ny * halfWidth;
-		positions[i * 6 + 3] = point.x - nx * halfWidth;
+		positions[i * 6 + 2] = py + ny * halfWidth;
+		positions[i * 6 + 3] = px - nx * halfWidth;
 		positions[i * 6 + 4] = y;
-		positions[i * 6 + 5] = point.y - ny * halfWidth;
+		positions[i * 6 + 5] = py - ny * halfWidth;
 	}
 
 	const indices: number[] = [];
@@ -125,8 +161,8 @@ function createHighlight(color: number): Highlight {
 function updateHighlight(
 	highlight: Highlight,
 	segment: Segment,
-	startNode: Node,
-	endNode: Node,
+	startNode: Pt,
+	endNode: Pt,
 	startRadius: number,
 	endRadius: number,
 	y: number
@@ -138,11 +174,13 @@ function updateHighlight(
 
 	highlight.startCap.geometry.dispose();
 	highlight.startCap.geometry = new THREE.CircleGeometry(startRadius, CAP_SEGMENTS);
-	highlight.startCap.position.set(startNode.x, y, startNode.y);
+	const start = shifted(segment, startNode, endNode, 0);
+	const end = shifted(segment, startNode, endNode, 1);
+	highlight.startCap.position.set(start.x, y, start.y);
 
 	highlight.endCap.geometry.dispose();
 	highlight.endCap.geometry = new THREE.CircleGeometry(endRadius, CAP_SEGMENTS);
-	highlight.endCap.position.set(endNode.x, y, endNode.y);
+	highlight.endCap.position.set(end.x, y, end.y);
 }
 
 function disposeHighlight(highlight: Highlight) {
@@ -154,17 +192,24 @@ function disposeHighlight(highlight: Highlight) {
 
 export class SelectionRenderer {
 	private scene: THREE.Scene;
+	private screenSized: ScreenSized;
 	private visuals = new Map<string, SegmentVisual>();
 	private hover: Highlight | null = null;
+	private guideMaterial = createEditorLineMaterial(CURVE_HANDLE.color);
+	private controlMaterials = {
+		outline: outlineMaterial(),
+		fill: handleMaterial(CURVE_HANDLE.color)
+	};
 
-	constructor(scene: THREE.Scene) {
+	constructor(scene: THREE.Scene, screenSized: ScreenSized) {
 		this.scene = scene;
+		this.screenSized = screenSized;
 	}
 
 	showHover(
 		segment: Segment,
-		startNode: Node,
-		endNode: Node,
+		startNode: Pt,
+		endNode: Pt,
 		startRadius: number,
 		endRadius: number,
 		danger = false
@@ -191,8 +236,8 @@ export class SelectionRenderer {
 
 	showSegment(
 		segment: Segment,
-		startNode: Node,
-		endNode: Node,
+		startNode: Pt,
+		endNode: Pt,
 		startRadius: number,
 		endRadius: number
 	) {
@@ -201,17 +246,18 @@ export class SelectionRenderer {
 		if (!visual) {
 			const fill = createHighlight(SELECT_COLOR);
 
-			const handles = new THREE.Mesh(new THREE.BufferGeometry(), createEditorLineMaterial());
+			const handles = new THREE.Mesh(new THREE.BufferGeometry(), this.guideMaterial);
 			handles.renderOrder = GUIDE_RENDER_ORDER;
 
-			const control = new THREE.Mesh(
-				new THREE.PlaneGeometry(CONTROL_SIZE, CONTROL_SIZE),
-				new THREE.MeshBasicMaterial({ color: CONTROL_COLOR, depthWrite: false })
+			const control = handleObject(
+				squareShape(CURVE_HANDLE),
+				this.controlMaterials,
+				{ x: 0, y: 0 },
+				{ x: 1, y: 0 },
+				CONTROL_Y,
+				CONTROL_RENDER_ORDER
 			);
-			control.rotation.x = -Math.PI / 2;
-			control.rotation.z = Math.PI / 4;
-			control.renderOrder = CONTROL_RENDER_ORDER;
-			control.userData = { type: 'controlPoint', segmentId: segment.id };
+			this.screenSized.set(control, Infinity);
 
 			const group = new THREE.Group();
 			group.add(fill.ribbon, fill.startCap, fill.endCap);
@@ -225,20 +271,15 @@ export class SelectionRenderer {
 
 		updateHighlight(visual.fill, segment, startNode, endNode, startRadius, endRadius, SELECT_Y);
 
-		const cx = segment.controlX ?? (startNode.x + endNode.x) / 2;
-		const cy = segment.controlY ?? (startNode.y + endNode.y) / 2;
-
+		// The guides and the curvature handle move with the road's offset.
+		const control = controlHandle(segment, startNode, endNode);
 		visual.handles.geometry.dispose();
 		visual.handles.geometry = editorLineGeometry(
-			[
-				{ x: startNode.x, y: startNode.y },
-				{ x: cx, y: cy },
-				{ x: endNode.x, y: endNode.y }
-			],
+			[shifted(segment, startNode, endNode, 0), control, shifted(segment, startNode, endNode, 1)],
 			GUIDE_Y
 		);
 
-		visual.control.position.set(cx, CONTROL_Y, cy);
+		visual.control.position.set(control.x, CONTROL_Y, control.y);
 	}
 
 	hideSegment(segmentId: string) {
@@ -247,9 +288,8 @@ export class SelectionRenderer {
 
 		disposeHighlight(visual.fill);
 		visual.handles.geometry.dispose();
-		(visual.handles.material as THREE.Material).dispose();
-		visual.control.geometry.dispose();
-		(visual.control.material as THREE.Material).dispose();
+		disposeHandleObject(visual.control);
+		this.screenSized.delete(visual.control);
 
 		this.scene.remove(visual.group);
 		this.visuals.delete(segmentId);
@@ -259,5 +299,12 @@ export class SelectionRenderer {
 		for (const segmentId of [...this.visuals.keys()]) {
 			this.hideSegment(segmentId);
 		}
+	}
+
+	dispose() {
+		this.clear();
+		this.guideMaterial.dispose();
+		this.controlMaterials.outline.dispose();
+		this.controlMaterials.fill.dispose();
 	}
 }

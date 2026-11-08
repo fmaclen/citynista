@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { SvelteSet } from 'svelte/reactivity';
 import type { CameraState } from '$lib/core/types';
+import { screenSizedMap } from './handle-shapes';
 
 // Default extent of the buildable world, in metres (world units). The map is a
 // finite diorama slab rather than an endless plane; overridable per SceneManager
@@ -73,6 +74,9 @@ export class SceneManager {
 	camera: THREE.PerspectiveCamera;
 	renderer: THREE.WebGLRenderer;
 	readonly worldSize: number;
+	// Editor handles drawn at a fixed size on screen (see handle-shapes.ts):
+	// each is scaled to world units per pixel, at most its value, every frame.
+	readonly screenSized = screenSizedMap();
 
 	private container: HTMLElement;
 	private animationFrameId: number | null = null;
@@ -216,7 +220,8 @@ export class SceneManager {
 		canvas.addEventListener('wheel', this.handleWheel.bind(this), { passive: false });
 		canvas.addEventListener('mousedown', this.handleMouseDown.bind(this));
 		canvas.addEventListener('mousemove', this.handleMouseMove.bind(this));
-		canvas.addEventListener('mouseup', this.handleMouseUp.bind(this));
+		// A pan or orbit ends on mouse-up anywhere, not only over the canvas.
+		window.addEventListener('mouseup', this.handleWindowMouseUp);
 		canvas.addEventListener('mouseleave', this.handleMouseUp.bind(this));
 		// The editor canvas has no use for the browser context menu.
 		canvas.addEventListener('contextmenu', (event) => event.preventDefault());
@@ -238,7 +243,9 @@ export class SceneManager {
 			this.updateCursor();
 			return;
 		}
-		if (CAMERA_KEYS.has(event.code)) {
+		// Shortcuts like ⌘S aren't camera moves; on macOS their key-up never
+		// arrives, so the key would stay held and the camera would drift.
+		if (CAMERA_KEYS.has(event.code) && !event.metaKey && !event.ctrlKey) {
 			this.heldKeys.add(event.code);
 		}
 	};
@@ -333,6 +340,8 @@ export class SceneManager {
 			this.lastMouseY = event.clientY;
 		}
 	}
+
+	private handleWindowMouseUp = () => this.handleMouseUp();
 
 	private handleMouseUp() {
 		if (this.isPanning) {
@@ -571,6 +580,11 @@ export class SceneManager {
 			this.lastPersistTime = now;
 		}
 
+		const worldPerPixel = this.worldPerPixel();
+		for (const [object, most] of this.screenSized) {
+			object.scale.setScalar(Math.min(worldPerPixel, most));
+		}
+
 		this.renderer.render(this.scene, this.camera);
 
 		if (this.onFps) {
@@ -634,6 +648,7 @@ export class SceneManager {
 		window.removeEventListener('keydown', this.handleKeyDown);
 		window.removeEventListener('keyup', this.handleKeyUp);
 		window.removeEventListener('blur', this.handleBlur);
+		window.removeEventListener('mouseup', this.handleWindowMouseUp);
 
 		this.renderer.domElement.remove();
 		this.renderer.dispose();

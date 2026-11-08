@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 230" font-family="sans-serif" font-size="11">
+<rect width="720" height="230" fill="#6aa86f"/>
+<rect x="0" y="40" width="40" height="120" fill="#3d3d3d" opacity="0.5"/><rect x="680" y="40" width="40" height="120" fill="#3d3d3d" opacity="0.5"/>
+<text x="4" y="34" fill="#fff">junction</text><text x="672" y="34" fill="#fff">junction</text>
+<rect x="40" y="46" width="640" height="12" fill="#9a9a96"/><rect x="40" y="58" width="640" height="4" fill="#4f9a55"/>
+<rect x="40" y="62" width="640" height="78" fill="#3d3d3d"/>
+<rect x="40" y="140" width="640" height="4" fill="#4f9a55"/><rect x="40" y="144" width="640" height="12" fill="#9a9a96"/>
+<rect x="200" y="90" width="320" height="22" rx="11" fill="#4f9a55"/>
+<rect x="560" y="104" width="120" height="8" rx="4" fill="#8f8f8a"/>
+<rect x="40" y="90" width="120" height="8" rx="4" fill="#8f8f8a"/><text x="100" y="86" fill="#fff" text-anchor="middle" font-size="9">buffer</text><text x="600" y="120" fill="#fff" text-anchor="middle" font-size="9">buffer</text>
+<g stroke="#fff" stroke-width="1.5" stroke-dasharray="8 8"><line x1="40" y1="76" x2="680" y2="76"/><line x1="40" y1="126" x2="680" y2="126"/></g>
+<g stroke="#e6c34a" stroke-width="1.5"><line x1="520" y1="90" x2="680" y2="90"/><line x1="40" y1="112" x2="200" y2="112"/></g>
+<g fill="#fff"><path d="M640 97 l-8 0 l0 -4 l-6 6 l6 6 l0 -4 l8 0 z" transform="rotate(180 636 98)"/><path d="M80 105 l8 0 l0 -4 l6 6 l-6 6 l0 -4 l-8 0 z" transform="rotate(180 87 106)"/></g>
+<g stroke="#fff" stroke-width="1"><line x1="40" y1="170" x2="40" y2="180"/><line x1="160" y1="170" x2="160" y2="180"/><line x1="200" y1="170" x2="200" y2="180"/><line x1="520" y1="170" x2="520" y2="180"/><line x1="560" y1="170" x2="560" y2="180"/><line x1="680" y1="170" x2="680" y2="180"/><line x1="40" y1="175" x2="680" y2="175"/></g>
+<g fill="#fff" text-anchor="middle"><text x="100" y="194">pocket</text><text x="180" y="194">opens</text><text x="360" y="194">median 5.5 m</text><text x="540" y="194">opens</text><text x="620" y="194">pocket</text></g>
+<text x="360" y="218" fill="#fff" text-anchor="middle" font-weight="bold">One road, five stretches. No nodes in the middle.</text>
+</svg>

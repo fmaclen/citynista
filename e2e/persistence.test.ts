@@ -1,4 +1,6 @@
 import { expect, test } from '@playwright/test';
+import { saveCity } from './save';
+import { expectSelectMode } from './mode';
 
 const STORAGE_KEY = 'citynista-graph-v2';
 
@@ -23,6 +25,7 @@ test.describe('Persistence', () => {
 		await page.keyboard.press('Escape');
 
 		// Verify data was saved
+		await saveCity(page);
 		const savedData = await page.evaluate((key) => {
 			const data = localStorage.getItem(key);
 			return data ? JSON.parse(data) : null;
@@ -60,12 +63,13 @@ test.describe('Persistence', () => {
 		// First escape cancels the pending segment, second returns to select mode
 		await page.keyboard.press('Escape');
 		await page.keyboard.press('Escape');
-		await expect(page.getByTitle('Select')).toHaveAttribute('aria-pressed', 'true');
+		await expectSelectMode(page);
 
 		// Click on the segment to select it (middle point)
 		await canvas.click({ position: { x: 350, y: 300 }, force: true });
 
 		// Verify segment is selected - check localStorage
+		await saveCity(page);
 		const beforeCurve = await page.evaluate((key) => {
 			const data = localStorage.getItem(key);
 			return data ? JSON.parse(data) : null;
@@ -81,6 +85,7 @@ test.describe('Persistence', () => {
 		await page.mouse.up();
 
 		// Verify the segment still exists and has control point
+		await saveCity(page);
 		const afterCurve = await page.evaluate((key) => {
 			const data = localStorage.getItem(key);
 			return data ? JSON.parse(data) : null;
@@ -104,5 +109,34 @@ test.describe('Persistence', () => {
 
 		expect(afterReload.segments[0].controlX).toBe(afterCurve.segments[0].controlX);
 		expect(afterReload.segments[0].controlY).toBe(afterCurve.segments[0].controlY);
+	});
+
+	test('edits persist across a reload only once saved', async ({ page }) => {
+		const canvas = page.locator('canvas');
+		const panel = page.locator('aside');
+		const drawRoad = async () => {
+			await page.getByRole('button', { name: 'Street' }).click();
+			await canvas.click({ position: { x: 300, y: 360 } });
+			await canvas.click({ position: { x: 700, y: 360 } });
+			await page.keyboard.press('Escape');
+			await page.keyboard.press('Escape');
+		};
+
+		// Unsaved: the reload (past the leave-page prompt) drops the road.
+		await drawRoad();
+		await expect(page.getByLabel('Unsaved changes')).toBeVisible();
+		page.once('dialog', (dialog) => dialog.accept());
+		await page.reload();
+		await expect(page.locator('nav')).toBeVisible();
+		await canvas.click({ position: { x: 500, y: 360 } });
+		await expect(panel).not.toBeVisible();
+
+		// Saved: the road survives the reload.
+		await drawRoad();
+		await saveCity(page);
+		await page.reload();
+		await expect(page.locator('nav')).toBeVisible();
+		await canvas.click({ position: { x: 500, y: 360 } });
+		await expect(panel).toBeVisible();
 	});
 });
