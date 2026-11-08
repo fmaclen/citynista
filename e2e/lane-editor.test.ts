@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { saveCity } from './save';
 
 const STORAGE_KEY = 'citynista-graph-v2';
 
@@ -34,6 +35,7 @@ async function seedGraph(page: import('@playwright/test').Page) {
 }
 
 async function readSavedSegments(page: import('@playwright/test').Page) {
+	await saveCity(page);
 	return page.evaluate((key) => {
 		const data = localStorage.getItem(key);
 		return data ? JSON.parse(data).segments : null;
@@ -65,13 +67,15 @@ test.describe('Lane Editor', () => {
 
 		await widthInputs.first().fill('5');
 		await widthInputs.first().press('Tab');
-		await expect(panel.getByText('13m total')).toBeVisible();
+		// 5 + 3.5 + 3.5 + 2: the Street preset's lanes are 3.5 m.
+		await expect(panel.getByText('14m total')).toBeVisible();
 
 		const segments = await readSavedSegments(page);
 		expect(segments).toHaveLength(2);
 		const edited = segments.find((s: { id: string }) => s.id === 'segment-0');
 		expect(edited.lanes).toHaveLength(4);
 		expect(edited.lanes[0]).toEqual({
+			id: 'l0',
 			role: 'pedestrian',
 			material: 'pavement',
 			width: 5,
@@ -125,19 +129,19 @@ test.describe('Lane Editor', () => {
 		const canvas = page.locator('canvas');
 		const panel = page.locator('aside');
 
-		// Select the street, then shift+click the avenue.
+		// Select the street (copying its lanes), then shift+click the avenue.
 		await canvas.click({ position: toScreen(-100, 0) });
 		await expect(panel).toBeVisible();
+		await page.keyboard.press('ControlOrMeta+c');
 		await canvas.click({ position: toScreen(100, 0), modifiers: ['Shift'] });
 
-		// Different configurations: no lane rows, just the preset escape hatch.
+		// Different configurations: no lane rows to edit.
 		await expect(panel.getByText('Editing 2 segments')).toBeVisible();
 		await expect(panel.getByText('different lane configurations')).toBeVisible();
 		await expect(panel.locator('input[type="number"]')).toHaveCount(0);
 
-		// Overwrite both with a preset; the selection becomes uniform.
-		await panel.getByText('Apply preset…').click();
-		await page.getByRole('option', { name: 'Street' }).click();
+		// Paste the street's lanes over both; the selection becomes uniform.
+		await page.keyboard.press('ControlOrMeta+v');
 		const widthInputs = panel.locator('input[type="number"]');
 		await expect(widthInputs).toHaveCount(4);
 
@@ -150,6 +154,7 @@ test.describe('Lane Editor', () => {
 		for (const segment of segments) {
 			expect(segment.lanes).toHaveLength(4);
 			expect(segment.lanes[0]).toEqual({
+				id: 'l0',
 				role: 'pedestrian',
 				material: 'pavement',
 				width: 6,
@@ -164,32 +169,95 @@ test.describe('Lane Editor', () => {
 		await expect(panel.getByText('Left to right along the drawing direction')).toBeVisible();
 	});
 
-	test('adds lanes and applies presets per segment', async ({ page }) => {
+	test('adds lanes; pasted lanes are owned copies', async ({ page }) => {
 		await seedGraph(page);
 		await selectSegment(page);
 
 		const panel = page.locator('aside');
+		const widthInputs = panel.locator('input[type="number"]');
 
 		await panel.getByRole('button', { name: 'Add lane' }).click();
-		await expect(panel.locator('input[type="number"]')).toHaveCount(5);
+		await expect(widthInputs).toHaveCount(5);
 
-		await panel.getByText('Apply preset…').click();
-		await page.getByRole('option', { name: 'Avenue' }).click();
-		const widthInputs = panel.locator('input[type="number"]');
+		// Copy the street's five lanes onto the avenue. Clicking the street
+		// again takes focus off the Add lane button, so the shortcut reaches
+		// the editor.
+		await selectSegment(page);
+		await page.keyboard.press('ControlOrMeta+c');
+		await page.locator('canvas').click({ position: toScreen(100, 0) });
 		await expect(widthInputs).toHaveCount(9);
+		await page.keyboard.press('ControlOrMeta+v');
+		await expect(widthInputs).toHaveCount(5);
 
-		// Both segments are now avenue-shaped; editing one must not touch the
-		// other — lanes are owned copies, never shared.
+		// Both segments now share a cross-section; editing one must not touch
+		// the other — lanes are owned copies, never shared.
+		await selectSegment(page);
 		await widthInputs.first().fill('7');
 		await widthInputs.first().press('Tab');
 
 		const segments = await readSavedSegments(page);
 		const edited = segments.find((s: { id: string }) => s.id === 'segment-0');
-		expect(edited.lanes).toHaveLength(9);
+		expect(edited.lanes).toHaveLength(5);
 		expect(edited.lanes[0].width).toBe(7);
 
 		const other = segments.find((s: { id: string }) => s.id === 'segment-1');
-		expect(other.lanes).toHaveLength(9);
-		expect(other.lanes[0].width).toBe(3);
+		expect(other.lanes).toHaveLength(5);
+		expect(other.lanes[0].width).toBe(2);
+	});
+
+	test('an added lane goes on the roadway, inside the right-hand sidewalk', async ({ page }) => {
+		await seedGraph(page);
+		await selectSegment(page);
+
+		await page.locator('aside').getByRole('button', { name: 'Add lane' }).click();
+		await expect(page.locator('aside input[type="number"]')).toHaveCount(5);
+
+		const segments = await readSavedSegments(page);
+		const edited = segments.find((s: { id: string }) => s.id === 'segment-0');
+		// Street: sidewalk / backward / forward / sidewalk. The new lane follows
+		// the forward lane it sits beside.
+		expect(edited.lanes.map((l: { id: string }) => l.id)).toEqual(['l0', 'l1', 'l2', 'l4', 'l3']);
+		expect(edited.lanes[3]).toEqual({
+			id: 'l4',
+			role: 'vehicle',
+			material: 'asphalt',
+			width: 3.5,
+			direction: 'forward'
+		});
+	});
+
+	test('panel buttons hand keyboard focus back to the map', async ({ page }) => {
+		await seedGraph(page);
+		await selectSegment(page);
+
+		const panel = page.locator('aside');
+		const widthInputs = panel.locator('input[type="number"]');
+
+		// Escape straight after a click in the panel reaches the editor and
+		// clears the selection.
+		await panel.getByRole('button', { name: 'Add lane' }).click();
+		await expect(widthInputs).toHaveCount(5);
+		await page.keyboard.press('Escape');
+		await expect(panel).not.toBeVisible();
+
+		await selectSegment(page);
+		await panel.getByTitle('Remove lane').first().click();
+		await expect(widthInputs).toHaveCount(4);
+		await page.keyboard.press('Escape');
+		await expect(panel).not.toBeVisible();
+
+		await selectSegment(page);
+		await panel.getByTitle('Direction of travel', { exact: false }).first().click();
+		await expect(page.locator('body')).toBeFocused();
+
+		await panel.getByText('Pavement').first().click();
+		await page.getByRole('option', { name: 'Grass' }).click();
+		await expect(panel.getByText('Grass')).toBeVisible();
+		await expect(page.locator('body')).toBeFocused();
+
+		// A width field keeps focus while it is being typed into.
+		await widthInputs.first().fill('5');
+		await widthInputs.first().press('Enter');
+		await expect(widthInputs.first()).toBeFocused();
 	});
 });

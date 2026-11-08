@@ -1,7 +1,7 @@
 import type { Editor } from '../editor.svelte';
 import type { Segment } from '../core/segment.svelte';
 import type { Node } from '../core/node.svelte';
-import { distanceToQuadraticBezier } from '../geometry/bezier';
+import { closestOnRoad, nodePoint } from '../core/road-line';
 
 // Hit radii are the geometry itself — the node's ring, the road's own half
 // width — with a screen-pixel floor for when the geometry is smaller than
@@ -16,7 +16,8 @@ export function nodeHitAt(editor: Editor, worldX: number, worldZ: number) {
 	let bestScore = 1;
 	for (const node of editor.graph.nodes.values()) {
 		const radius = Math.max(editor.nodeRingRadius(node), floor);
-		const score = Math.hypot(node.x - worldX, node.y - worldZ) / radius;
+		const p = nodePoint(editor.graph, node);
+		const score = Math.hypot(p.x - worldX, p.y - worldZ) / radius;
 		if (score < bestScore) {
 			bestScore = score;
 			best = node;
@@ -30,23 +31,8 @@ export function segmentHitAt(editor: Editor, worldX: number, worldZ: number) {
 	let best: Segment | null = null;
 	let bestScore = 1;
 	for (const segment of editor.graph.segments.values()) {
-		const startNode = editor.graph.nodes.get(segment.startNodeId);
-		const endNode = editor.graph.nodes.get(segment.endNodeId);
-		if (!startNode || !endNode) continue;
-
-		const cx = segment.controlX ?? (startNode.x + endNode.x) / 2;
-		const cy = segment.controlY ?? (startNode.y + endNode.y) / 2;
-
-		const dist = distanceToQuadraticBezier(
-			worldX,
-			worldZ,
-			startNode.x,
-			startNode.y,
-			cx,
-			cy,
-			endNode.x,
-			endNode.y
-		);
+		// Where the road is drawn: its line moved by its offset.
+		const dist = closestOnRoad(editor.graph, segment, worldX, worldZ).distance;
 		const score = dist / Math.max(segment.totalWidth / 2, floor);
 		if (score < bestScore) {
 			bestScore = score;
@@ -87,8 +73,8 @@ function pointInQuad(px: number, py: number, quad: { x: number; y: number }[]) {
 	return sign !== 0;
 }
 
-// Everything inside the marquee quad: nodes by position, segments when both
-// endpoints fall inside. The quad is the marquee's on-screen rectangle
+// Everything inside the marquee quad: nodes where they show, segments when
+// both endpoints fall inside. The quad is the marquee's on-screen rectangle
 // projected onto the ground, so it tracks the camera instead of the world axes.
 export function quadContents(
 	editor: Editor,
@@ -98,20 +84,15 @@ export function quadContents(
 	const segmentIds: string[] = [];
 	if (quad.length < 4) return { nodeIds, segmentIds };
 
+	const inside = new Set<string>();
 	for (const node of editor.graph.nodes.values()) {
-		if (pointInQuad(node.x, node.y, quad)) nodeIds.push(node.id);
+		const p = nodePoint(editor.graph, node);
+		if (pointInQuad(p.x, p.y, quad)) inside.add(node.id);
 	}
+	nodeIds.push(...inside);
 	for (const segment of editor.graph.segments.values()) {
-		const startNode = editor.graph.nodes.get(segment.startNodeId);
-		const endNode = editor.graph.nodes.get(segment.endNodeId);
-		if (
-			startNode &&
-			endNode &&
-			pointInQuad(startNode.x, startNode.y, quad) &&
-			pointInQuad(endNode.x, endNode.y, quad)
-		) {
+		if (inside.has(segment.startNodeId) && inside.has(segment.endNodeId))
 			segmentIds.push(segment.id);
-		}
 	}
 	return { nodeIds, segmentIds };
 }

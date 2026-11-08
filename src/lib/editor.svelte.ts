@@ -1,55 +1,63 @@
+import * as THREE from 'three';
 import { getContext, setContext, untrack } from 'svelte';
 import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 import { Graph } from './core/graph.svelte';
-import { createCityStore, loadStaticCity, type CityStore } from './core/city-store';
+import { CityStore, loadExample } from './core/city-store';
 import type {
 	Brush,
 	CameraState,
 	CityRecord,
 	CitySummary,
 	GraphData,
+	JunctionCrossing,
+	JunctionData,
 	Lane,
-	LaneConnectionRef,
 	LaneRef
 } from './core/types';
 import { cloneLanes, defaultHotbar, serializeLanes, reverseLanes } from './core/lane-template';
 import { resolveCrossings } from './core/crossings';
-import {
-	computeIntersectionTrims,
-	sampleTrimmedCenterline,
-	transitionStraddle,
-	transitionTaper
-} from './core/road-geometry';
-import type { CenterlineSample, Point } from './core/road-geometry';
-import {
-	isDefaultMovement,
-	nodeConnectivity,
-	sameConnectionRef,
-	sameLaneRef
-} from './core/lane-connections';
-import type { Barrier, LaneEndpoint, LaneConnection } from './core/lane-connections';
+import type { Pt as Point } from './lab/model';
+import type { LaneConnection } from './core/lane-connections';
+import { CROSSING_DEPTH, CROSSING_FROM_END, endsOf, type EndInfo } from './lab/junction';
+import { crossingAt } from './core/place';
+import { mapJunction } from './core/junction-data';
+import { nodePoint, roadLine } from './core/road-line';
+import { segmentEnds } from './core/attach';
+import { kindOf } from './lab/connect';
+import { isTravel } from './lab/road';
+import { endKey, type Control, type LaneRef as ModelLaneRef } from './lab/model';
+import { crossSection, frameAt, offsetPoint, project } from './lab/geometry';
 import { getQuadraticBezierTangent } from './geometry/bezier';
 import { SceneManager, GRID_SUB } from './rendering/scene.svelte';
 import { NodeRenderer, type NodeTone } from './rendering/node-renderer';
-import { RoadRenderer } from './rendering/road-renderer';
-import { BlockRenderer } from './rendering/block-renderer';
+import { LabRenderer } from './rendering/lab-renderer';
+import { COLOURS } from './lab/scene';
 import { SelectionRenderer } from './rendering/selection-renderer';
-import { SetbackRenderer, type SetbackHandle } from './rendering/setback-renderer';
+import { HandleRenderer } from './rendering/handle-renderer';
+import { offsetHandle, type OffsetHandle } from './modes/offset';
 import { ConnectionRenderer } from './rendering/connection-renderer';
+import { hitsHandle } from './rendering/handle-shapes';
+import {
+	CROSSING_HANDLE,
+	HANDLE_HIT_SLACK_PX,
+	LANE_DOT_PX,
+	OFFSET_HANDLE,
+	TAPER_HANDLE
+} from './rendering/editor-palette';
 
-// A draggable per-arm setback handle on a selected junction.
-export interface SetbackHandleInfo {
+// A taper handle on a selected node where two roads meet: it sits where the
+// transition ends on one of them.
+export interface TaperHandleInfo {
+	nodeId: string;
 	segmentId: string;
 	atStart: boolean;
 	node: Point;
 	handle: Point;
-	// Full (untrimmed) centerline, oriented node-side first, for projecting
-	// the drag to an arc-length setback.
-	centerline: CenterlineSample[];
-	// A straddling transition has a handle on each side at half the taper
-	// length; they are linked (drag one, both move) and the stored setback is
-	// twice the handle distance (the full taper spans both sides of the node).
-	straddle?: { link: { segmentId: string; atStart: boolean } };
+	// Along the road at the handle, away from the node.
+	dir: Point;
+	// The road's line from the node out, for reading the drag as a distance
+	// along it.
+	centerline: Point[];
 }
 import type { ModeHandlers, Mode } from './modes/types';
 import { setupDrawMode } from './modes/draw';
@@ -59,25 +67,49 @@ import { setupSplitMode } from './modes/split';
 import { setupConnectorMode } from './modes/connector';
 import { setupPlaceMode } from './modes/place';
 
-// Setback handles seat at least this far out from the node along their arm, so
-// the two stops of a straight through-road don't land on the node together.
-const SETBACK_HANDLE_MIN_OFFSET = 5;
+// A new crosswalk lands this far beyond the end of its road's taper.
+const NEW_CROSSING_BEYOND = 3;
+// Lane dots of two road ends that nearly meet sit at least this far apart.
+const CONNECTOR_SPREAD = 10;
+// Taper handles sit at least this far from their node, so the node itself
+// can always be grabbed.
+const TAPER_HANDLE_REACH = 4;
 
-function pointAtArcLength(points: Point[], target: number): Point {
-	let acc = 0;
+// The point a distance along a polyline.
+function pointAlong(points: Point[], distance: number): Point {
+	let run = 0;
 	for (let i = 1; i < points.length; i++) {
-		const seg = Math.hypot(points[i].x - points[i - 1].x, points[i].y - points[i - 1].y);
-		if (acc + seg >= target) {
-			const t = seg > 0 ? (target - acc) / seg : 0;
+		const l = Math.hypot(points[i].x - points[i - 1].x, points[i].y - points[i - 1].y);
+		if (run + l >= distance) {
+			const f = l > 0 ? (distance - run) / l : 0;
 			return {
-				x: points[i - 1].x + (points[i].x - points[i - 1].x) * t,
-				y: points[i - 1].y + (points[i].y - points[i - 1].y) * t
+				x: points[i - 1].x + (points[i].x - points[i - 1].x) * f,
+				y: points[i - 1].y + (points[i].y - points[i - 1].y) * f
 			};
 		}
-		acc += seg;
+		run += l;
 	}
 	const last = points[points.length - 1];
 	return { x: last.x, y: last.y };
+}
+
+// The unit direction a polyline runs at a distance along it.
+function directionAlong(points: Point[], distance: number): Point {
+	const a = pointAlong(points, Math.max(0, distance - 0.5));
+	const b = pointAlong(points, distance + 0.5);
+	const l = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+	return { x: (b.x - a.x) / l, y: (b.y - a.y) / l };
+}
+
+// A lane end in the lane connector: travel lanes are entered (`in`) or left
+// (`out`); medians, grass and sidewalks connect either way (`both`).
+export interface ConnectorEndpoint {
+	ref: LaneRef;
+	lane: ModelLaneRef;
+	kind: string;
+	point: Point;
+	dir: Point;
+	flow: 'in' | 'out' | 'both';
 }
 
 const EDITOR_CONTEXT_KEY = Symbol('editor');
@@ -86,8 +118,8 @@ export interface ClipboardNodeSnapshot {
 	id: string;
 	x: number;
 	y: number;
-	disabledConnections?: LaneConnectionRef[];
-	enabledConnections?: LaneConnectionRef[];
+	// The node's junction edits, naming the copied roads by their old ids.
+	junction?: JunctionData;
 }
 
 export interface ClipboardSegmentSnapshot {
@@ -96,6 +128,7 @@ export interface ClipboardSegmentSnapshot {
 	endNodeId: string;
 	controlX?: number;
 	controlY?: number;
+	offset: number;
 	lanes: Lane[];
 }
 
@@ -105,68 +138,63 @@ export interface SegmentClipboard {
 	segments: ClipboardSegmentSnapshot[];
 }
 
-interface RelativeLaneRef {
-	armIndex: number;
-	laneIndex: number;
-}
-
-interface RelativeConnectionRef {
-	from: RelativeLaneRef;
-	to: RelativeLaneRef;
-}
-
+// A node's junction edits with its roads named by their order round the
+// node (`arm0`, `arm1`, …) and lanes by their place on the road, to paste
+// onto another node with as many roads.
 interface NodeClipboard {
 	kind: 'node';
-	armCount: number;
-	disabledConnections?: RelativeConnectionRef[];
-	enabledConnections?: RelativeConnectionRef[];
+	arms: number;
+	junction: JunctionData;
 }
 
 type EditorClipboard = SegmentClipboard | NodeClipboard;
 
-function cloneConnectionRef(connection: LaneConnectionRef): LaneConnectionRef {
-	return {
-		from: { ...connection.from },
-		to: { ...connection.to }
-	};
-}
-
-function cloneConnectionRefs(connections: LaneConnectionRef[] | undefined) {
-	if (!connections || connections.length === 0) return undefined;
-	return connections.map(cloneConnectionRef);
-}
-
 export class Editor {
 	graph = new Graph();
-	private cityStore: CityStore = createCityStore();
+	private cityStore = new CityStore();
 	// Reactive city-library state for the toolbar.
 	cities = $state<CitySummary[]>([]);
 	currentCityId = $state('');
 	currentCityName = $state('');
-	private pendingCamera: CameraState | null = null;
+	// Set while an example is open. Saving it asks for a name (saveAsOpen) and
+	// creates a city of your own; the example file never changes.
+	currentExampleId = $state<string | null>(null);
+	saveAsOpen = $state(false);
+	// Edits live in memory until Save; dirty means the graph differs from what
+	// was last saved or opened.
+	dirty = $state(false);
+	private savedState = '';
+	// The open city's own view. ?topdown and screenshot cameras are fixed for
+	// tests and never replace it in what gets saved.
+	private cityCamera: CameraState | null = null;
 	// Map-wide snapping grid (toggled from the toolbar). Drawing snaps to gridSize.
 	gridEnabled = $state(false);
 	readonly gridSize = GRID_SUB;
 	sceneManager!: SceneManager;
 	nodeRenderer!: NodeRenderer;
-	roadRenderer!: RoadRenderer;
-	blockRenderer!: BlockRenderer;
+	// Roads and junctions, drawn from the road model (src/lib/lab).
+	roadRenderer!: LabRenderer;
+	// The connection overlay: every junction's lane-to-lane connections.
+	showConnections = $state(false);
 	selectionRenderer!: SelectionRenderer;
-	setbackRenderer!: SetbackRenderer;
+	taperRenderer!: HandleRenderer;
+	// The selected road's lateral offset handle.
+	offsetRenderer!: HandleRenderer;
+	// In the connector, a handle on each crosswalk to slide it along its road.
+	crossingRenderer!: HandleRenderer;
+	currentOffsetHandle: OffsetHandle | null = null;
 	connectionRenderer!: ConnectionRenderer;
-	private currentSetbackHandles: SetbackHandleInfo[] = [];
+	private currentTaperHandles: TaperHandleInfo[] = [];
 	// The junction being edited in connector mode, and its current lane
 	// connectivity overlay (dots + movement arcs).
 	connectorNodeId: string | null = null;
 	private currentConnectors: {
-		endpoints: LaneEndpoint[];
+		endpoints: ConnectorEndpoint[];
 		connections: LaneConnection[];
-		barriers: Barrier[];
-	} = {
-		endpoints: [],
-		connections: [],
-		barriers: []
-	};
+	} = { endpoints: [], connections: [] };
+	// In the connector, each approach's control (stop, yield, signal or
+	// none) where it is shown, to click through.
+	controlBadges = $state<{ key: string; control: Control; x: number; y: number }[]>([]);
 
 	mode = $state<Mode>('select');
 	hotbar = $state<(Brush | null)[]>(defaultHotbar());
@@ -204,15 +232,16 @@ export class Editor {
 	private modeHandlers: ModeHandlers | null = null;
 	private boundKeyDown: ((e: KeyboardEvent) => void) | null = null;
 	private boundHistoryKeyDown: ((e: KeyboardEvent) => void) | null = null;
+	private boundMouseUp: ((e: MouseEvent) => void) | null = null;
 	private boundClipboardKeyDown: ((e: KeyboardEvent) => void) | null = null;
 	private hoveredNodeId: string | null = null;
 	private hoveredSegmentId: string | null = null;
 	private clipboard: EditorClipboard | null = null;
 
-	// Undo history as whole-graph snapshots, captured at the save boundary:
+	// Undo history as whole-graph snapshots, captured at the commit boundary:
 	// every operation (a draw click, a finished drag, a lane tweak, a
-	// delete, a fixture load) ends in graph.save(), so one save equals one
-	// undo step with no per-command bookkeeping.
+	// delete) ends in graph.save(), so one commit equals one undo step with no
+	// per-command bookkeeping. Nothing reaches storage until the user saves.
 	private undoStack: string[] = [];
 	private redoStack: string[] = [];
 	private presentState = '';
@@ -229,7 +258,7 @@ export class Editor {
 
 	private initialized = false;
 
-	// loadCurrent is false when the page is about to deep-link a ?fixture=, so we
+	// loadCurrent is false when the page is about to deep-link an ?example=, so we
 	// don't create/touch an "untitled" city just to throw it away.
 	async init(container: HTMLElement, loadCurrent = true) {
 		if (this.initialized) return;
@@ -239,24 +268,25 @@ export class Editor {
 			this.fps = fps;
 		});
 		this.nodeRenderer = new NodeRenderer(this.sceneManager.scene);
-		this.roadRenderer = new RoadRenderer(this.sceneManager.scene);
-		this.blockRenderer = new BlockRenderer(this.sceneManager.scene);
-		this.selectionRenderer = new SelectionRenderer(this.sceneManager.scene);
-		this.setbackRenderer = new SetbackRenderer(this.sceneManager.scene);
-		this.connectionRenderer = new ConnectionRenderer(this.sceneManager.scene);
+		this.roadRenderer = new LabRenderer(this.sceneManager.scene);
+		this.sceneManager.scene.background = new THREE.Color(COLOURS.ground);
+		const { scene, screenSized } = this.sceneManager;
+		this.selectionRenderer = new SelectionRenderer(scene, screenSized);
+		this.taperRenderer = new HandleRenderer(scene, screenSized, 'taper');
+		this.offsetRenderer = new HandleRenderer(scene, screenSized, 'offset');
+		this.crossingRenderer = new HandleRenderer(scene, screenSized, 'crossing');
+		this.connectionRenderer = new ConnectionRenderer(scene, screenSized);
 
-		if (loadCurrent) await this.loadSavedData();
-		this.presentState = JSON.stringify(this.graph.toJSON());
-		this.graph.onSaved = (serialized) => {
-			this.recordHistory(serialized);
-			this.saveCurrentCity();
-		};
+		if (loadCurrent) this.loadSavedData();
+		this.presentState = this.savedState = JSON.stringify(this.graph.toJSON());
+		this.graph.onSaved = (serialized) => this.recordHistory(serialized);
 		this.sceneManager.onCameraPersist = () => this.saveCameraToCache();
 		this.gridEnabled = localStorage.getItem('citynista:grid') === '1';
 		this.sceneManager.setGridVisible(this.gridEnabled);
 		this.setupCanvasEvents();
 		this.setupHistoryKeys();
 		this.setupClipboardKeys();
+		window.addEventListener('beforeunload', this.warnUnsaved);
 		// The mode effect already ran before init; install the default mode now.
 		this.setupMode(this.mode);
 	}
@@ -269,6 +299,19 @@ export class Editor {
 		this.presentState = serialized;
 		this.canUndo = true;
 		this.canRedo = false;
+		this.dirty = this.presentState !== this.savedState;
+	}
+
+	private warnUnsaved = (event: BeforeUnloadEvent) => {
+		if (!this.dirty) return;
+		event.preventDefault();
+		event.returnValue = '';
+	};
+
+	// True when it's fine to leave the current graph: nothing unsaved, or the
+	// user agreed to discard it.
+	confirmDiscard() {
+		return !this.dirty || window.confirm('Discard unsaved changes?');
 	}
 
 	undo() {
@@ -278,11 +321,23 @@ export class Editor {
 		this.restoreState(previous);
 	}
 
+	// Takes back the last edit with no trace in redo (a draw cancelled after
+	// its first click cut a road).
+	discardLastEdit() {
+		const previous = this.undoStack.pop();
+		if (previous !== undefined) this.restoreState(previous);
+	}
+
 	redo() {
 		const next = this.redoStack.pop();
 		if (next === undefined) return;
 		this.undoStack.push(this.presentState);
 		this.restoreState(next);
+	}
+
+	toggleConnections() {
+		this.showConnections = !this.showConnections;
+		this.roadRenderer.setShowConnections(this.showConnections);
 	}
 
 	toggleGrid() {
@@ -363,18 +418,26 @@ export class Editor {
 		// Mode-local state (a pending segment, a drag) may reference graph
 		// objects that no longer exist; reinstalling the mode resets it.
 		this.setupMode(this.mode);
-		this.replaceGraph(JSON.parse(serialized));
+		this.replaceGraph(JSON.parse(serialized), true, true);
 		// setupMode rebuilt the connector overlay against the pre-undo graph;
 		// refresh it now that the restored graph is in place.
 		if (this.mode === 'connector') this.refreshConnectors();
 		this.restoringHistory = false;
 		this.canUndo = this.undoStack.length > 0;
 		this.canRedo = this.redoStack.length > 0;
+		this.dirty = this.presentState !== this.savedState;
 	}
 
 	private setupHistoryKeys() {
 		this.boundHistoryKeyDown = (e: KeyboardEvent) => {
-			if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== 'z') return;
+			if (!(e.metaKey || e.ctrlKey)) return;
+			// ⌘S saves from anywhere, panel inputs included.
+			if (e.key.toLowerCase() === 's') {
+				e.preventDefault();
+				this.save();
+				return;
+			}
+			if (e.key.toLowerCase() !== 'z') return;
 			const target = e.target;
 			if (target instanceof HTMLElement && target.tagName !== 'BODY') return;
 			e.preventDefault();
@@ -441,8 +504,7 @@ export class Editor {
 					id: node.id,
 					x: node.x,
 					y: node.y,
-					disabledConnections: cloneConnectionRefs(node.disabledConnections),
-					enabledConnections: cloneConnectionRefs(node.enabledConnections)
+					junction: node.junction ? $state.snapshot(node.junction) : undefined
 				});
 			}
 
@@ -452,6 +514,7 @@ export class Editor {
 				endNodeId: segment.endNodeId,
 				controlX: segment.controlX,
 				controlY: segment.controlY,
+				offset: segment.offset,
 				lanes: cloneLanes(segment.lanes)
 			});
 		}
@@ -507,46 +570,22 @@ export class Editor {
 			.map(({ segmentId, laneCount }) => ({ segmentId, laneCount }));
 	}
 
-	private relativeLaneRef(ref: LaneRef, armIndices: SvelteMap<string, number>) {
-		const armIndex = armIndices.get(ref.segmentId);
-		return armIndex === undefined ? null : { armIndex, laneIndex: ref.laneIndex };
-	}
-
-	private relativeConnectionRef(
-		connection: LaneConnectionRef,
-		armIndices: SvelteMap<string, number>
-	) {
-		const from = this.relativeLaneRef(connection.from, armIndices);
-		const to = this.relativeLaneRef(connection.to, armIndices);
-		return from && to ? { from, to } : null;
-	}
-
-	private relativeConnectionRefs(
-		connections: LaneConnectionRef[] | undefined,
-		armIndices: SvelteMap<string, number>
-	) {
-		if (!connections || connections.length === 0) return undefined;
-		const relative = connections
-			.map((connection) => this.relativeConnectionRef(connection, armIndices))
-			.filter((connection) => connection !== null);
-		return relative.length > 0 ? relative : undefined;
-	}
-
 	private copySelectedNodeConnections() {
-		const nodeId = [...this.selectedNodes][0];
-		const node = this.graph.nodes.get(nodeId);
-		if (!node) return;
-
-		const armIndices = new SvelteMap<string, number>();
+		const node = this.graph.nodes.get([...this.selectedNodes][0]);
+		if (!node?.junction) return;
 		const arms = this.sortedNodeArms(node.id);
-		arms.forEach((arm, index) => armIndices.set(arm.segmentId, index));
-
-		this.clipboard = {
-			kind: 'node',
-			armCount: arms.length,
-			disabledConnections: this.relativeConnectionRefs(node.disabledConnections, armIndices),
-			enabledConnections: this.relativeConnectionRefs(node.enabledConnections, armIndices)
-		};
+		const junction = mapJunction(
+			node.junction,
+			(road, end) => {
+				const index = arms.findIndex((a) => a.segmentId === road);
+				return index < 0 ? null : { road: `arm${index}`, end };
+			},
+			(road, lane) => {
+				const index = this.graph.segments.get(road)?.lanes.findIndex((l) => l.id === lane) ?? -1;
+				return index < 0 ? null : String(index);
+			}
+		);
+		if (junction) this.clipboard = { kind: 'node', arms: arms.length, junction };
 	}
 
 	private paste() {
@@ -562,8 +601,8 @@ export class Editor {
 
 		// Lane paste only when the selection includes a segment OTHER than the one
 		// just copied — pasting onto (only) the source means "make a floating copy".
-		const copiedIds = new Set(clipboard.segments.map((segment) => segment.id));
-		const ontoOtherSegments = [...this.selectedSegments].some((id) => !copiedIds.has(id));
+		const copiedIds = clipboard.segments.map((segment) => segment.id);
+		const ontoOtherSegments = [...this.selectedSegments].some((id) => !copiedIds.includes(id));
 		if (ontoOtherSegments) {
 			this.pasteLanesToSelectedSegments(clipboard);
 			return;
@@ -596,74 +635,34 @@ export class Editor {
 		this.graph.save();
 	}
 
-	private mappedLaneRef(ref: RelativeLaneRef, arms: { segmentId: string; laneCount: number }[]) {
-		const arm = arms[ref.armIndex];
-		if (!arm || ref.laneIndex < 0 || ref.laneIndex >= arm.laneCount) return null;
-		return { segmentId: arm.segmentId, laneIndex: ref.laneIndex };
-	}
-
-	private mappedConnectionRef(
-		connection: RelativeConnectionRef,
-		arms: { segmentId: string; laneCount: number }[]
-	) {
-		const from = this.mappedLaneRef(connection.from, arms);
-		const to = this.mappedLaneRef(connection.to, arms);
-		return from && to ? { from, to } : null;
-	}
-
-	private mappedConnectionRefs(
-		connections: RelativeConnectionRef[] | undefined,
-		arms: { segmentId: string; laneCount: number }[]
-	) {
-		if (!connections || connections.length === 0) return undefined;
-		const mapped = connections
-			.map((connection) => this.mappedConnectionRef(connection, arms))
-			.filter((connection) => connection !== null);
-		return mapped.length > 0 ? mapped : undefined;
-	}
-
 	private pasteNodeConnections(clipboard: NodeClipboard) {
 		const nodeId = [...this.selectedNodes][0];
 		const node = this.graph.nodes.get(nodeId);
 		if (!node) return;
 
 		const arms = this.sortedNodeArms(node.id);
-		if (arms.length !== clipboard.armCount) return;
-
-		node.disabledConnections = this.mappedConnectionRefs(clipboard.disabledConnections, arms);
-		node.enabledConnections = this.mappedConnectionRefs(clipboard.enabledConnections, arms);
+		if (arms.length !== clipboard.arms) return;
+		const segmentOf = (road: string) =>
+			this.graph.segments.get(arms[Number(road.slice(3))]?.segmentId ?? '');
+		node.junction = mapJunction(
+			clipboard.junction,
+			(road) => {
+				const segment = segmentOf(road);
+				if (!segment) return null;
+				return { road: segment.id, end: segment.startNodeId === node.id ? 'start' : 'end' };
+			},
+			(road, lane) => segmentOf(road)?.lanes[Number(lane)]?.id ?? null
+		);
 		this.rebuildRoads();
 		this.graph.save();
 	}
 
-	private remapLaneRef(ref: LaneRef, segmentIds: SvelteMap<string, string>) {
-		const segmentId = segmentIds.get(ref.segmentId);
-		return segmentId ? { segmentId, laneIndex: ref.laneIndex } : null;
-	}
-
-	private remapConnectionRef(connection: LaneConnectionRef, segmentIds: SvelteMap<string, string>) {
-		const from = this.remapLaneRef(connection.from, segmentIds);
-		const to = this.remapLaneRef(connection.to, segmentIds);
-		return from && to ? { from, to } : null;
-	}
-
-	remapConnectionRefs(
-		connections: LaneConnectionRef[] | undefined,
-		segmentIds: SvelteMap<string, string>
-	) {
-		if (!connections || connections.length === 0) return undefined;
-		const remapped = connections
-			.map((connection) => this.remapConnectionRef(connection, segmentIds))
-			.filter((connection) => connection !== null);
-		return remapped.length > 0 ? remapped : undefined;
-	}
-
-	private async loadSavedData() {
-		const city = await this.cityStore.ensureCurrent();
+	private loadSavedData() {
+		const city = this.cityStore.ensureCurrent();
 		this.currentCityId = city.id;
 		this.currentCityName = city.name;
-		this.pendingCamera = this.readCameraCache(city.id) ?? city.camera;
-		this.cities = await this.cityStore.list();
+		this.cityCamera = this.readCameraCache(city.id) ?? city.camera;
+		this.cities = this.cityStore.list();
 		this.graph.fromJSON(this.workingGraph(city));
 		for (const node of this.graph.nodes.values()) {
 			this.nodeRenderer.createNode(node);
@@ -671,8 +670,8 @@ export class Editor {
 		this.rebuildRoads();
 	}
 
-	// The live working graph is the legacy single-graph slot (kept in sync on every
-	// save); the current city's snapshot is the fallback. Reading the legacy slot
+	// The saved graph is the legacy single-graph slot (written on every save and
+	// city switch); the current city's snapshot is the fallback. Reading the legacy slot
 	// first lets external writers (and the e2e harness) seed a graph before boot.
 	private workingGraph(city: CityRecord): GraphData {
 		try {
@@ -685,31 +684,61 @@ export class Editor {
 	}
 
 	// Apply the saved camera for the current city. The page calls this only on the
-	// normal path; ?fixture= and ?topdown manage the camera themselves, so a
+	// normal path; ?example= and ?topdown manage the camera themselves, so a
 	// city's view never leaks into a deterministic test render.
 	restoreCityCamera() {
-		if (this.pendingCamera) this.sceneManager.setCameraState(this.pendingCamera);
+		if (this.cityCamera) this.sceneManager.setCameraState(this.cityCamera);
 	}
 
-	private saveCurrentCity() {
+	// Save the current graph: over your own city, or, for an example, into a
+	// new city named in the save-as dialog.
+	save() {
+		if (this.currentExampleId) {
+			this.saveAsOpen = true;
+			return;
+		}
 		if (!this.currentCityId) return;
 		const graph = this.graph.toJSON();
-		void this.cityStore.save({
+		this.cityStore.save({
 			id: this.currentCityId,
 			name: this.currentCityName,
 			graph,
-			camera: this.sceneManager?.getCameraState() ?? null
+			camera: this.cameraForSave()
 		});
-		this.writeMirror(graph);
-		this.saveCameraToCache();
+		this.markSaved(graph);
 	}
 
-	// Camera-only changes (panning, zooming) persist to a localStorage cache, NOT
-	// the city's file/store. That keeps the view across reloads without rewriting
-	// a committed fixture's JSON every time you pan over it; the file's camera is
-	// only refreshed when the graph itself is saved.
+	saveAs(name: string) {
+		this.saveAsOpen = false;
+		const graph = this.graph.toJSON();
+		const city = this.cityStore.create(name, graph, this.cameraForSave());
+		this.cityStore.setCurrentId(city.id);
+		this.currentExampleId = null;
+		this.currentCityId = city.id;
+		this.currentCityName = city.name;
+		this.cities = this.cityStore.list();
+		this.markSaved(graph);
+	}
+
+	private markSaved(graph: GraphData) {
+		this.writeMirror(graph);
+		this.saveCameraToCache();
+		this.savedState = this.presentState;
+		this.dirty = false;
+	}
+
+	// Camera-only changes (panning, zooming) persist to a localStorage cache, not
+	// the city record, which only refreshes its camera when the graph is saved.
+	private cameraForSave() {
+		if (this.sceneManager && !this.sceneManager.isDeterministicCamera()) {
+			this.cityCamera = this.sceneManager.getCameraState();
+		}
+		return this.cityCamera;
+	}
+
 	private saveCameraToCache() {
 		if (!this.currentCityId || !this.sceneManager) return;
+		if (this.sceneManager.isDeterministicCamera()) return;
 		try {
 			localStorage.setItem(
 				`citynista:cam:${this.currentCityId}`,
@@ -729,8 +758,8 @@ export class Editor {
 		}
 	}
 
-	// Back-compat mirror of the current working graph — the single-graph slot the
-	// e2e suite, any legacy reader, and boot's workingGraph() still read.
+	// Back-compat mirror of the current city's saved graph — the single-graph
+	// slot the e2e suite, any legacy reader, and boot's workingGraph() still read.
 	private writeMirror(graph: GraphData) {
 		try {
 			localStorage.setItem('citynista-graph-v2', JSON.stringify(graph));
@@ -742,68 +771,137 @@ export class Editor {
 	private clearHistory() {
 		this.undoStack.length = 0;
 		this.redoStack.length = 0;
-		this.presentState = JSON.stringify(this.graph.toJSON());
+		this.presentState = this.savedState = JSON.stringify(this.graph.toJSON());
 		this.canUndo = false;
 		this.canRedo = false;
+		this.dirty = false;
 	}
 
-	// Load a city into view. `persistToStore` writes it back — true only when
-	// materializing a static fixture that isn't in the store yet (prod ?fixture=);
-	// switching to a city that already exists must not rewrite its own file.
-	private async openCity(city: CityRecord, persistToStore: boolean) {
+	// Load a city into view without writing anything back.
+	private openCity(city: CityRecord) {
 		this.cityStore.setCurrentId(city.id);
+		this.currentExampleId = null;
 		this.currentCityId = city.id;
 		this.currentCityName = city.name;
+		this.showCity(city, this.readCameraCache(city.id) ?? city.camera);
+		this.writeMirror(city.graph);
+	}
+
+	private showCity(city: CityRecord, camera: CameraState | null) {
+		this.cityCamera = camera;
 		// In ?topdown / screenshot mode the camera is fixed deterministically — don't
 		// clobber it with the city's saved view (or the e2e screen coords drift).
 		if (!this.sceneManager.isDeterministicCamera()) {
-			const camera = this.readCameraCache(city.id) ?? city.camera;
 			if (camera) this.sceneManager.setCameraState(camera);
 			else this.sceneManager.resetCamera();
 		}
 		this.replaceGraph(city.graph, false);
-		this.writeMirror(city.graph);
-		if (persistToStore) void this.cityStore.save(city);
 		this.clearHistory();
-		this.cities = await this.cityStore.list();
+		this.cities = this.cityStore.list();
 	}
 
-	async newCity(name: string) {
-		// create() already persisted the empty city to the store.
-		await this.openCity(await this.cityStore.create(name), false);
+	// Always the original file, and nothing is stored until Save. The current-city
+	// pointer stays on your last own city, so a reload lands there.
+	async openExample(id: string) {
+		const example = await loadExample(id);
+		if (!example) return;
+		this.currentExampleId = id;
+		this.currentCityId = '';
+		this.currentCityName = example.name;
+		this.showCity(example, example.camera);
 	}
 
-	async loadCityById(id: string) {
+	newCity(name: string) {
+		this.openCity(this.cityStore.create(name));
+	}
+
+	loadCityById(id: string) {
 		if (id === this.currentCityId) return;
-		const stored = await this.cityStore.load(id);
-		if (stored) {
-			await this.openCity(stored, false);
-			return;
-		}
-		const fixture = await loadStaticCity(id);
-		if (fixture) await this.openCity(fixture, true);
+		const stored = this.cityStore.load(id);
+		if (stored) this.openCity(stored);
 	}
 
-	async deleteCurrentCity() {
+	deleteCurrentCity() {
 		if (!this.currentCityId) return;
-		await this.cityStore.remove(this.currentCityId);
-		const remaining = await this.cityStore.list();
-		if (remaining.length > 0) {
-			const city = await this.cityStore.load(remaining[0].id);
-			if (city) {
-				await this.openCity(city, false);
-				return;
-			}
+		this.cityStore.remove(this.currentCityId);
+		const remaining = this.cityStore.list();
+		const next = remaining.length > 0 ? this.cityStore.load(remaining[0].id) : null;
+		if (next) this.openCity(next);
+		else this.newCity('untitled');
+	}
+
+	// One drag frame for profiling (?stats): the busiest junction nudged half
+	// a metre (back again on the next call), or (`unchanged`) a rebuild with
+	// nothing changed.
+	private perfStep = 0.5;
+	perfMove(what: string) {
+		const busiest = [...this.graph.nodes.values()].reduce((a, b) =>
+			b.connectedSegments.length > a.connectedSegments.length ? b : a
+		);
+		if (what !== 'unchanged') {
+			busiest.x += this.perfStep;
+			this.perfStep = -this.perfStep;
 		}
-		await this.newCity('untitled');
+		this.rebuildRoads();
+	}
+
+	// Render costs for perf runs (?stats): scene size, draw calls, CPU time per
+	// frame submission, and the time of a full road rebuild and of an update
+	// where nothing changed.
+	renderStats() {
+		const { scene, camera, renderer } = this.sceneManager;
+		let meshes = 0;
+		let triangles = 0;
+		scene.traverse((object) => {
+			if (!(object instanceof THREE.Mesh) || !object.visible) return;
+			meshes++;
+			const index = object.geometry.index;
+			triangles +=
+				(index ? index.count : (object.geometry.getAttribute('position')?.count ?? 0)) / 3;
+		});
+		let t = performance.now();
+		for (let i = 0; i < 20; i++) renderer.render(scene, camera);
+		const renderMs = (performance.now() - t) / 20;
+		const calls = renderer.info.render.calls;
+		t = performance.now();
+		this.rebuildRoads();
+		const unchangedUpdateMs = performance.now() - t;
+		// One junction nudged half a metre: what a drag frame costs.
+		const busiest = [...this.graph.nodes.values()].reduce((a, b) =>
+			b.connectedSegments.length > a.connectedSegments.length ? b : a
+		);
+		busiest.x += 0.5;
+		t = performance.now();
+		this.rebuildRoads();
+		const oneNodeMovedMs = performance.now() - t;
+		busiest.x -= 0.5;
+		this.rebuildRoads();
+		t = performance.now();
+		this.roadRenderer.update(this.graph);
+		const roadsOnlyUpdateMs = performance.now() - t;
+		this.roadRenderer.clear();
+		t = performance.now();
+		this.rebuildRoads();
+		const fullRebuildMs = performance.now() - t;
+		return {
+			meshes,
+			triangles: Math.round(triangles),
+			calls,
+			renderMs,
+			unchangedUpdateMs,
+			roadsOnlyUpdateMs,
+			oneNodeMovedMs,
+			fullRebuildMs
+		};
 	}
 
 	rebuildRoads() {
-		const trims = computeIntersectionTrims(this.graph);
-		this.roadRenderer.update(this.graph, trims);
-		this.blockRenderer.update(this.graph, trims);
+		this.roadRenderer.update(this.graph);
+		this.refreshTaperHandles();
+		this.refreshOffsetHandle();
 		for (const node of this.graph.nodes.values()) {
 			this.nodeRenderer.setRadius(node.id, this.nodeRingRadius(node));
+			this.nodeRenderer.setPosition(node.id, nodePoint(this.graph, node));
 		}
 	}
 
@@ -839,15 +937,25 @@ export class Editor {
 
 		// SceneManager's own listeners run first; while it pans the camera
 		// (space/alt/middle drag) the modes must not see the same gestures.
+		// A press that starts on the canvas ends wherever the button comes up:
+		// over the toolbar, or over the lane panel that the press itself opened.
+		// Listening on the window keeps the mode from being left mid-drag.
+		let pressedOnCanvas = false;
 		canvas.addEventListener('mousedown', (e) => {
 			if (this.sceneManager.isCameraPanning()) return;
+			pressedOnCanvas = true;
 			this.modeHandlers?.onMouseDown?.(e);
 		});
 		canvas.addEventListener('mousemove', (e) => {
 			if (this.sceneManager.isCameraPanning()) return;
 			this.modeHandlers?.onMouseMove?.(e);
 		});
-		canvas.addEventListener('mouseup', (e) => this.modeHandlers?.onMouseUp?.(e));
+		this.boundMouseUp = (e: MouseEvent) => {
+			if (!pressedOnCanvas) return;
+			pressedOnCanvas = false;
+			this.modeHandlers?.onMouseUp?.(e);
+		};
+		window.addEventListener('mouseup', this.boundMouseUp);
 		canvas.addEventListener('dblclick', (e) => {
 			if (this.sceneManager.isCameraPanning()) return;
 			this.modeHandlers?.onDoubleClick?.(e);
@@ -903,106 +1011,65 @@ export class Editor {
 		this.selectedNodes.add(nodeId);
 		this.nodeRenderer.setSelected(nodeId, true);
 		this.refreshRevealedNodes();
-		this.refreshSetbackHandles();
+		this.refreshTaperHandles();
 	}
 
 	deselectNode(nodeId: string) {
 		this.selectedNodes.delete(nodeId);
 		this.nodeRenderer.setSelected(nodeId, false);
 		this.refreshRevealedNodes();
-		this.refreshSetbackHandles();
+		this.refreshTaperHandles();
 	}
 
-	// Per-arm setback handles for a single selected junction (3+ arms): a dot
-	// on each arm's stop line. Bends get no handle (the stop sits on the node).
-	refreshSetbackHandles() {
+	// Taper handles on a single selected node where only two roads meet: a dot
+	// on each road where the transition between them ends. Dragging either
+	// sets the transition's length.
+	refreshTaperHandles() {
 		const nodeId = this.selectedNodes.size === 1 ? [...this.selectedNodes][0] : null;
 		const node = nodeId ? this.graph.nodes.get(nodeId) : undefined;
-		if (!node) {
-			this.currentSetbackHandles = [];
-			this.setbackRenderer.clear();
+		if (!node || node.connectedSegments.length !== 2 || !this.roadRenderer?.derived) {
+			this.currentTaperHandles = [];
+			this.taperRenderer?.clear();
 			return;
 		}
-		// Junctions (3+ arms) get a handle per arm at its stop line. A straight
-		// width-transition straddles its node, so it gets a linked handle on each
-		// side at half the taper length; a bent transition keeps one handle on
-		// the wide side.
-		const isJunction = node.connectedSegments.length >= 3;
-		const taper = isJunction ? null : transitionTaper(this.graph, node);
-		const straddle = isJunction ? null : transitionStraddle(this.graph, node);
-		if (!isJunction && !taper) {
-			this.currentSetbackHandles = [];
-			this.setbackRenderer.clear();
-			return;
-		}
-
-		const trims = computeIntersectionTrims(this.graph);
-		const rich: SetbackHandleInfo[] = [];
-		const display: SetbackHandle[] = [];
+		const rich: TaperHandleInfo[] = [];
 		for (const segmentId of node.connectedSegments) {
-			// A bent transition only handles the wide (morphing) segment; a
-			// straddle handles both sides; a junction handles every arm.
-			if (taper && !straddle && segmentId !== taper.segmentId) continue;
 			const segment = this.graph.segments.get(segmentId);
-			if (!segment) continue;
-			const startNode = this.graph.nodes.get(segment.startNodeId);
-			const endNode = this.graph.nodes.get(segment.endNodeId);
-			if (!startNode || !endNode) continue;
-
+			const span = this.roadRenderer.derived?.spans.get(segmentId);
+			if (!segment || !span) continue;
 			const atStart = segment.startNodeId === node.id;
-			const trim = trims.get(segmentId) ?? { start: 0, end: 0 };
-			const trimmed = sampleTrimmedCenterline(segment, startNode, endNode, trim.start, trim.end);
-			if (trimmed.length < 2) continue;
-			let centerline = sampleTrimmedCenterline(segment, startNode, endNode, 0, 0);
+			// Along the road as it shows (offset and all), from the node out.
+			let centerline: Point[] = roadLine(this.graph, segment);
 			if (!atStart) centerline = [...centerline].reverse();
-
-			// Seat the handle at its stop line — a straddle at half the taper
-			// length (the taper end on this side), a bent transition at the taper
-			// start, a junction at its trim — never closer than the minimum so a
-			// through-road's two stops don't stack on the node.
-			const trimDist = straddle
-				? straddle.half
-				: taper
-					? taper.length
-					: atStart
-						? trim.start
-						: trim.end;
-			const nodePoint = { x: node.x, y: node.y };
-			const handlePoint = pointAtArcLength(
-				centerline,
-				Math.max(trimDist, SETBACK_HANDLE_MIN_OFFSET)
-			);
-			let straddleInfo: SetbackHandleInfo['straddle'];
-			if (straddle) {
-				const otherId = node.connectedSegments.find((id) => id !== segmentId);
-				const otherSeg = otherId ? this.graph.segments.get(otherId) : undefined;
-				if (otherId && otherSeg) {
-					straddleInfo = {
-						link: { segmentId: otherId, atStart: otherSeg.startNodeId === node.id }
-					};
-				}
-			}
+			const trim = atStart ? span.d0 : span.total - span.d0 - span.length;
+			// Where the taper ends, but never on the node itself.
+			const reach = Math.max(trim, TAPER_HANDLE_REACH);
 			rich.push({
+				nodeId: node.id,
 				segmentId,
 				atStart,
-				node: nodePoint,
-				handle: handlePoint,
-				centerline,
-				straddle: straddleInfo
+				node: centerline[0],
+				handle: pointAlong(centerline, reach),
+				dir: directionAlong(centerline, reach),
+				centerline
 			});
-			display.push({ node: nodePoint, handle: handlePoint });
 		}
-
-		this.currentSetbackHandles = rich;
-		this.setbackRenderer.show(display);
+		this.currentTaperHandles = rich;
+		this.taperRenderer.show(
+			rich.map((h) => ({ at: h.handle, dir: h.dir, stem: [h.node, h.handle] }))
+		);
 	}
 
-	setbackHandleAt(worldX: number, worldZ: number): SetbackHandleInfo | null {
-		const threshold = Math.max(2, this.sceneManager.worldPerPixel() * 10);
-		let best: SetbackHandleInfo | null = null;
-		let bestDistance = threshold;
-		for (const handle of this.currentSetbackHandles) {
+	taperHandleAt(worldX: number, worldZ: number): TaperHandleInfo | null {
+		const scale = this.sceneManager.worldPerPixel();
+		let best: TaperHandleInfo | null = null;
+		let bestDistance = Infinity;
+		for (const handle of this.currentTaperHandles) {
+			if (!hitsHandle(TAPER_HANDLE, handle.handle, handle.dir, worldX, worldZ, scale)) continue;
 			const distance = Math.hypot(handle.handle.x - worldX, handle.handle.y - worldZ);
+			// Nearer the node than the handle: that's the node.
+			const toNode = Math.hypot(handle.node.x - worldX, handle.node.y - worldZ);
+			if (toNode < distance) continue;
 			if (distance < bestDistance) {
 				bestDistance = distance;
 				best = handle;
@@ -1011,9 +1078,9 @@ export class Editor {
 		return best;
 	}
 
-	// Live update while dragging a setback handle: project the cursor onto the
-	// arm's centerline and use the arc length from the node as the setback.
-	setSetbackFromDrag(handle: SetbackHandleInfo, worldX: number, worldZ: number) {
+	// While dragging a taper handle: the transition reaches as far along the
+	// road from the node as the pointer, on both sides.
+	setTaperFromDrag(handle: TaperHandleInfo, worldX: number, worldZ: number) {
 		const points = handle.centerline;
 		let accumulated = 0;
 		let bestArc = 0;
@@ -1028,77 +1095,146 @@ export class Editor {
 				lengthSq > 0
 					? Math.max(0, Math.min(1, ((worldX - ax) * dx + (worldZ - ay) * dy) / lengthSq))
 					: 0;
-			const px = ax + dx * t;
-			const py = ay + dy * t;
-			const distance = Math.hypot(px - worldX, py - worldZ);
+			const distance = Math.hypot(ax + dx * t - worldX, ay + dy * t - worldZ);
 			if (distance < bestDistance) {
 				bestDistance = distance;
 				bestArc = accumulated + t * Math.sqrt(lengthSq);
 			}
 			accumulated += Math.sqrt(lengthSq);
 		}
-
-		const segment = this.graph.segments.get(handle.segmentId);
-		if (!segment) return;
-		// A straddle handle sits at half the taper, so the stored setback (the
-		// full taper length) is twice the drag distance, and the linked segment
-		// on the other side gets the same value.
-		const value = bestArc < 1 ? undefined : handle.straddle ? bestArc * 2 : bestArc;
-		if (handle.atStart) segment.setbackStart = value;
-		else segment.setbackEnd = value;
-
-		if (handle.straddle) {
-			const linked = this.graph.segments.get(handle.straddle.link.segmentId);
-			if (linked) {
-				if (handle.straddle.link.atStart) linked.setbackStart = value;
-				else linked.setbackEnd = value;
-			}
-		}
-
+		const node = this.graph.nodes.get(handle.nodeId);
+		if (!node) return;
+		// Within the taper's limits: no steeper than the lanes' shift allows,
+		// and never into the far node's setback.
+		const limits = this.roadRenderer.taperLimits(node.id);
+		const taper = Math.min(limits?.max ?? Infinity, Math.max(limits?.min ?? 0, bestArc * 2));
+		node.junction = { ...(node.junction ?? { connections: [] }), taper };
 		this.rebuildRoads();
-		this.refreshSetbackHandles();
+		this.refreshTaperHandles();
 	}
 
-	finishSetback() {
+	finishTaper() {
 		this.graph.save();
 	}
 
 	// Connector mode edits which movements a junction allows. Entry is a
 	// double-click on a junction (3+ arms): the overlay shows a dot at each
-	// lane mouth (cyan incoming, white outgoing) and an arc per movement;
+	// lane mouth (a disc incoming, a ring outgoing) and an arc per movement;
 	// toggling a movement recarves the junction pavement and persists.
 	enterConnectorMode(nodeId: string) {
 		const node = this.graph.nodes.get(nodeId);
 		if (!node || node.connectedSegments.length < 2) return;
 		this.clearSelection();
+		// The node's taper, and with it every lane dot, holds still while its
+		// connections are edited; it settles when the connector closes.
+		this.roadRenderer.holdTaper(nodeId);
 		this.connectorNodeId = nodeId;
 		this.mode = 'connector';
 	}
 
 	exitConnectorMode() {
 		this.connectorNodeId = null;
+		this.controlBadges = [];
+		this.crossingRenderer.clear();
+		this.roadRenderer.holdTaper(null);
+		this.rebuildRoads();
 		this.mode = 'select';
 	}
 
+	// The road ends at the connector's node, as the drawing reads them.
+	private connectorEnds(): EndInfo[] {
+		const id = this.connectorNodeId;
+		const junction = id ? this.roadRenderer.derived?.junctions.get(id) : undefined;
+		const scene = this.roadRenderer.scene;
+		return junction && scene ? endsOf(junction, scene.geos) : [];
+	}
+
+	// Lane dots and the connections between them. Where only two roads meet,
+	// every lane shows; at a junction of more, the travel lanes (its sidewalks
+	// are its corners and crosswalks).
 	refreshConnectors() {
-		const node = this.connectorNodeId ? this.graph.nodes.get(this.connectorNodeId) : null;
-		if (!node) {
-			this.currentConnectors = { endpoints: [], connections: [], barriers: [] };
+		const id = this.connectorNodeId;
+		const junction = id ? this.roadRenderer.derived?.junctions.get(id) : undefined;
+		const ends = this.connectorEnds();
+		const draw = id ? this.roadRenderer.scene?.junctionDraw(id) : undefined;
+		this.controlBadges = (draw?.badges ?? []).map((b) => ({
+			key: b.key,
+			control: b.control,
+			x: b.p.x,
+			y: b.p.y
+		}));
+		if (!junction || ends.length === 0) {
+			this.currentConnectors = { endpoints: [], connections: [] };
 			this.connectionRenderer.clear();
+			this.crossingRenderer.clear();
 			return;
 		}
-		this.currentConnectors = nodeConnectivity(this.graph, node);
-		this.connectionRenderer.show(
-			this.currentConnectors.connections,
-			this.currentConnectors.endpoints
+		const link = ends.length === 2;
+		// Where two road ends nearly meet, their dots spread apart along the
+		// roads so every lane's dot can be told apart and aimed at.
+		const gap = link
+			? Math.hypot(ends[0].frame.p.x - ends[1].frame.p.x, ends[0].frame.p.y - ends[1].frame.p.y)
+			: Infinity;
+		const spread = Math.max(0, (CONNECTOR_SPREAD - gap) / 2);
+		const endpoints: ConnectorEndpoint[] = [];
+		for (const end of ends) {
+			const segment = this.graph.segments.get(end.ref.road);
+			if (!segment) continue;
+			for (const l of end.lanes) {
+				const travel = isTravel(l.lane);
+				if (!travel && !link) continue;
+				if (!travel && l.lane.kind !== 'walk' && l.lane.kind !== 'buffer') continue;
+				const laneIndex = segment.lanes.findIndex((x) => x.id === l.ref.lane);
+				if (laneIndex < 0) continue;
+				endpoints.push({
+					ref: { segmentId: end.ref.road, laneIndex },
+					lane: l.ref,
+					kind: kindOf(l.lane),
+					point: {
+						x: l.point.x + end.frame.out.x * spread,
+						y: l.point.y + end.frame.out.y * spread
+					},
+					dir: { x: -end.frame.out.x, y: -end.frame.out.y },
+					flow: !travel ? 'both' : l.flow === 'in' ? 'in' : 'out'
+				});
+			}
+		}
+		const find = (r: ModelLaneRef) =>
+			endpoints.find((e) => endKey(e.lane) === endKey(r) && e.lane.lane === r.lane);
+		const connections: LaneConnection[] = [];
+		for (const c of junction.connections) {
+			const from = find(c.from);
+			const to = find(c.to);
+			if (!from || !to) continue;
+			connections.push({
+				from: from.ref,
+				to: to.ref,
+				fromPoint: from.point,
+				toPoint: to.point,
+				fromDir: from.dir,
+				toDir: { x: -to.dir.x, y: -to.dir.y },
+				active: true
+			});
+		}
+		this.currentConnectors = { endpoints, connections };
+		this.connectionRenderer.show(connections, endpoints);
+		// Each crossing: its handle across the road, on a straight line from
+		// sidewalk to sidewalk while it is on.
+		this.crossingRenderer.show(
+			this.connectorCrossings().map((c) => ({
+				at: c.mid,
+				dir: c.dir,
+				stem: c.crossing.on ? ([c.from, c.to] as [Point, Point]) : undefined,
+				hollow: !c.crossing.on
+			}))
 		);
 	}
 
 	// The lane dot nearest the cursor, either flow — used for hover feedback and
 	// for picking both ends of a connector drag (direction-agnostic).
-	connectorEndpointNear(worldX: number, worldZ: number): LaneEndpoint | null {
-		const threshold = Math.max(2, this.sceneManager.worldPerPixel() * 12);
-		let best: LaneEndpoint | null = null;
+	connectorEndpointNear(worldX: number, worldZ: number): ConnectorEndpoint | null {
+		const threshold = (LANE_DOT_PX + HANDLE_HIT_SLACK_PX) * this.sceneManager.worldPerPixel();
+		let best: ConnectorEndpoint | null = null;
 		let bestDistance = threshold;
 		for (const endpoint of this.currentConnectors.endpoints) {
 			const distance = Math.hypot(endpoint.point.x - worldX, endpoint.point.y - worldZ);
@@ -1110,59 +1246,207 @@ export class Editor {
 		return best;
 	}
 
-	// Flip one movement's allowed/blocked state on the node, without persisting —
-	// callers batch the save/rebuild so toggling many movements is one undo step.
-	private applyConnectionToggle(
-		node: NonNullable<ReturnType<Graph['nodes']['get']>>,
-		from: LaneRef,
-		to: LaneRef
-	) {
-		const ref = { from, to };
-		// A default movement is toggled by adding/removing it from the disabled
-		// set; a non-default one (U-turn, median break) by adding/removing it from
-		// the enabled set.
-		const toggle = (list: typeof node.disabledConnections) => {
-			const next = [...(list ?? [])];
-			const existing = next.findIndex((d) => sameConnectionRef(d, ref));
-			if (existing >= 0) next.splice(existing, 1);
-			else next.push(ref);
-			return next.length > 0 ? next : undefined;
-		};
-		if (
-			isDefaultMovement(this.currentConnectors.endpoints, this.currentConnectors.barriers, from, to)
-		) {
-			node.disabledConnections = toggle(node.disabledConnections);
-		} else {
-			node.enabledConnections = toggle(node.enabledConnections);
-		}
+	// Whether a drag from one lane dot to another makes (or unmakes) a
+	// connection: same kind, different road ends, and for travel lanes from
+	// where traffic comes in to where it leaves.
+	canConnect(from: ConnectorEndpoint, to: ConnectorEndpoint) {
+		// Two sidewalks of one road end: a crosswalk across that road.
+		if (this.crossingPair(from, to)) return true;
+		if (from.kind !== to.kind || endKey(from.lane) === endKey(to.lane)) return false;
+		if (from.flow === 'both' || to.flow === 'both') return from.flow === to.flow;
+		return from.flow === 'in' && to.flow === 'out';
 	}
 
-	toggleConnection(from: LaneRef, to: LaneRef) {
+	// Adds the connection between two lane dots, or removes it if it is there.
+	// The node keeps the edit (an addition or a removal against the defaults)
+	// for as long as both lanes exist.
+	toggleConnection(from: ConnectorEndpoint, to: ConnectorEndpoint) {
+		if (!this.canConnect(from, to)) return;
+		if (this.crossingPair(from, to)) {
+			this.toggleCrossing(from, to);
+			return;
+		}
+		this.editConnections([{ from: from.lane, to: to.lane }]);
+	}
+
+	// Two different sidewalks at the same road end.
+	private crossingPair(a: ConnectorEndpoint, b: ConnectorEndpoint) {
+		return (
+			a.kind === 'walk' &&
+			b.kind === 'walk' &&
+			endKey(a.lane) === endKey(b.lane) &&
+			a.lane.lane !== b.lane.lane
+		);
+	}
+
+	// A crossing between two sidewalks of one road end: switched off if it is
+	// on, on if it is off; one that isn't there yet is added a little way
+	// past the node.
+	private toggleCrossing(a: ConnectorEndpoint, b: ConnectorEndpoint) {
+		const lanes: [string, string] = [a.lane.lane, b.lane.lane];
+		const existing = this.connectorCrossings().find(
+			(c) =>
+				c.crossing.road === a.lane.road &&
+				c.crossing.end === a.lane.end &&
+				c.crossing.lanes.every((l) => lanes.includes(l))
+		);
+		if (existing) {
+			this.switchCrossing(existing.index);
+			return;
+		}
+		const span = this.roadRenderer.derived?.spans.get(a.lane.road);
+		if (!span) return;
+		const place = a.lane.end === 'start' ? NEW_CROSSING_BEYOND : span.length - NEW_CROSSING_BEYOND;
+		this.storeCrossing(
+			{ road: a.lane.road, end: a.lane.end, lanes },
+			{ at: crossingAt(a.lane.end, place, span), on: true }
+		);
+		this.graph.save();
+	}
+
+	// Writes a crossing's stored edit on the connector's node: a default one
+	// moved or switched, or one added by hand.
+	private storeCrossing(c: JunctionCrossing, patch: Partial<JunctionCrossing>) {
 		const node = this.connectorNodeId ? this.graph.nodes.get(this.connectorNodeId) : null;
 		if (!node) return;
-		this.applyConnectionToggle(node, from, to);
-		this.graph.save();
+		const stored = node.junction?.crossings ?? [];
+		const same = (x: JunctionCrossing) =>
+			x.road === c.road && x.end === c.end && x.lanes.every((l) => c.lanes.includes(l));
+		const next = stored.some(same)
+			? stored.map((x) => (same(x) ? { ...x, ...patch } : x))
+			: [...stored, { road: c.road, end: c.end, lanes: c.lanes, ...patch }];
+		node.junction = { ...(node.junction ?? { connections: [] }), crossings: next };
 		this.rebuildRoads();
 		this.refreshConnectors();
 	}
 
-	// Double-clicking a lane dot: if any of its movements are on, turn them all
-	// off (a dead-end); if all are off, turn them back on. Covers every movement
-	// that starts or ends at this dot.
-	toggleAllConnections(endpoint: LaneEndpoint) {
-		const node = this.connectorNodeId ? this.graph.nodes.get(this.connectorNodeId) : null;
-		if (!node) return;
-		const involved = this.currentConnectors.connections.filter(
-			(c) => sameLaneRef(c.from, endpoint.ref) || sameLaneRef(c.to, endpoint.ref)
+	// The connector node's crossings, on and off, each straight across its
+	// road with a handle in the middle to slide it along the road.
+	private connectorCrossings() {
+		const id = this.connectorNodeId;
+		const list = id ? this.roadRenderer.derived?.crossings.get(id) : undefined;
+		const geos = this.roadRenderer.scene?.geos;
+		if (!list || !geos) return [];
+		return list.flatMap((c, index) => {
+			const geo = geos.get(c.road);
+			if (!geo || c.place === undefined) return [];
+			const f = frameAt(geo.path, c.place);
+			const spans = crossSection(geo.road, c.place);
+			const sides = c.lanes.map((lane) => spans.find((sp) => sp.lane.id === lane));
+			if (!sides[0] || !sides[1]) return [];
+			const [p, q] = sides.map((sp) => offsetPoint(f.p, f.n, (sp!.left + sp!.right) / 2));
+			const mid = { x: (p.x + q.x) / 2, y: (p.y + q.y) / 2 };
+			const l = Math.hypot(q.x - p.x, q.y - p.y) || 1;
+			const dir = { x: (q.x - p.x) / l, y: (q.y - p.y) / l };
+			return [{ index, crossing: c, from: p, to: q, mid, dir }];
+		});
+	}
+
+	crossingHandleAt(worldX: number, worldZ: number) {
+		const scale = this.sceneManager.worldPerPixel();
+		return (
+			this.connectorCrossings().find((c) =>
+				hitsHandle(CROSSING_HANDLE, c.mid, c.dir, worldX, worldZ, scale)
+			) ?? null
 		);
-		if (involved.length === 0) return;
-		const anyActive = involved.some((c) => c.active);
-		for (const c of involved) {
-			// Flip only the ones currently in the state we're toggling away from.
-			if (c.active === anyActive) this.applyConnectionToggle(node, c.from, c.to);
+	}
+
+	// Slides a crossing along its road to where the pointer is: never past
+	// either end of the road, nor onto another crossing on it.
+	moveCrossing(index: number, worldX: number, worldZ: number) {
+		const c = this.connectorCrossings().find((x) => x.index === index)?.crossing;
+		const geo = c && this.roadRenderer.scene?.geos.get(c.road);
+		const span = c && this.roadRenderer.derived?.spans.get(c.road);
+		if (!c || !geo || !span || c.place === undefined) return;
+		const lo = CROSSING_FROM_END;
+		const hi = span.length - CROSSING_FROM_END;
+		let place = Math.max(lo, Math.min(hi, project(geo.path, { x: worldX, y: worldZ }).s));
+		// Other crossings on the road block the way from where it is now.
+		const gap = CROSSING_DEPTH + 1;
+		for (const other of geo.road.crossings ?? []) {
+			if (Math.abs(other.at - c.place) < 1e-6) continue;
+			if (other.at > c.place) place = Math.min(place, other.at - gap);
+			else place = Math.max(place, other.at + gap);
 		}
+		this.storeCrossing(c, { at: crossingAt(c.end, place, span) });
+	}
+
+	// Switches a crossing off, or back on; one added by hand goes when
+	// switched off.
+	switchCrossing(index: number) {
+		const node = this.connectorNodeId ? this.graph.nodes.get(this.connectorNodeId) : null;
+		const c = this.connectorCrossings().find((x) => x.index === index)?.crossing;
+		if (!node || !c) return;
+		if (!c.auto && c.on) {
+			const same = (x: JunctionCrossing) =>
+				x.road === c.road && x.end === c.end && x.lanes.every((l) => c.lanes.includes(l));
+			const crossings = (node.junction?.crossings ?? []).filter((x) => !same(x));
+			node.junction = { ...(node.junction ?? { connections: [] }), crossings };
+			this.rebuildRoads();
+			this.refreshConnectors();
+		} else this.storeCrossing(c, { on: !c.on });
 		this.graph.save();
+	}
+
+	// Steps an approach's control on: none, stop, yield, signal, and round.
+	cycleControl(key: string) {
+		const node = this.connectorNodeId ? this.graph.nodes.get(this.connectorNodeId) : null;
+		const current = this.controlBadges.find((b) => b.key === key)?.control;
+		if (!node || !current) return;
+		const order: Control[] = ['none', 'stop', 'yield', 'signal'];
+		const next = order[(order.indexOf(current) + 1) % order.length];
+		node.junction = {
+			...(node.junction ?? { connections: [] }),
+			control: { ...(node.junction?.control ?? {}), [key]: next }
+		};
 		this.rebuildRoads();
+		this.graph.save();
+		this.refreshConnectors();
+	}
+
+	// Double-clicking a lane dot removes every connection it has.
+	toggleAllConnections(endpoint: ConnectorEndpoint) {
+		const junction = this.connectorNodeId
+			? this.roadRenderer.derived?.junctions.get(this.connectorNodeId)
+			: undefined;
+		const hit = (r: ModelLaneRef) =>
+			endKey(r) === endKey(endpoint.lane) && r.lane === endpoint.lane.lane;
+		const mine = (junction?.connections ?? []).filter((c) => hit(c.from) || hit(c.to));
+		if (mine.length) this.editConnections(mine);
+	}
+
+	private editConnections(toggles: { from: ModelLaneRef; to: ModelLaneRef }[]) {
+		const node = this.connectorNodeId ? this.graph.nodes.get(this.connectorNodeId) : null;
+		const junction = node ? this.roadRenderer.derived?.junctions.get(node.id) : undefined;
+		if (!node || !junction) return;
+		const key = (r: ModelLaneRef) => `${endKey(r)}/${r.lane}`;
+		const same = (
+			x: { from: ModelLaneRef; to: ModelLaneRef },
+			y: { from: ModelLaneRef; to: ModelLaneRef }
+		) =>
+			(key(x.from) === key(y.from) && key(x.to) === key(y.to)) ||
+			(key(x.from) === key(y.to) && key(x.to) === key(y.from));
+		const copy = (c: { from: ModelLaneRef; to: ModelLaneRef }) => ({
+			from: { ...c.from },
+			to: { ...c.to }
+		});
+		let added = (node.junction?.added ?? []).map(copy);
+		let removed = (node.junction?.removed ?? []).map(copy);
+		for (const t of toggles) {
+			const present = junction.connections.some((c) => same(c, t));
+			if (present) {
+				if (added.some((c) => same(c, t))) added = added.filter((c) => !same(c, t));
+				else removed.push(copy(t));
+			} else if (removed.some((c) => same(c, t))) removed = removed.filter((c) => !same(c, t));
+			else added.push(copy(t));
+		}
+		node.junction = {
+			...(node.junction ?? { connections: [] }),
+			added,
+			removed
+		};
+		this.rebuildRoads();
+		this.graph.save();
 		this.refreshConnectors();
 	}
 
@@ -1176,6 +1460,7 @@ export class Editor {
 		this.selectedSegments.delete(segmentId);
 		this.selectionRenderer.hideSegment(segmentId);
 		this.refreshRevealedNodes();
+		this.refreshOffsetHandle();
 	}
 
 	clearSelection() {
@@ -1184,8 +1469,10 @@ export class Editor {
 		this.selectedNodes.clear();
 		this.selectedSegments.clear();
 		this.refreshRevealedNodes();
-		this.currentSetbackHandles = [];
-		this.setbackRenderer.clear();
+		this.currentTaperHandles = [];
+		this.taperRenderer.clear();
+		this.currentOffsetHandle = null;
+		this.offsetRenderer?.clear();
 	}
 
 	setHoveredNode(nodeId: string | null) {
@@ -1206,12 +1493,13 @@ export class Editor {
 				: undefined;
 		const startNode = segment && this.graph.nodes.get(segment.startNodeId);
 		const endNode = segment && this.graph.nodes.get(segment.endNodeId);
+		const ends = segment && segmentEnds(this.graph, segment);
 
-		if (segment && startNode && endNode) {
+		if (segment && startNode && endNode && ends) {
 			this.selectionRenderer.showHover(
 				segment,
-				startNode,
-				endNode,
+				ends.a,
+				ends.b,
 				this.nodeRingRadius(startNode),
 				this.nodeRingRadius(endNode),
 				this.mode === 'bulldoze'
@@ -1251,19 +1539,34 @@ export class Editor {
 		this.nodeRenderer.setRevealed(revealed);
 	}
 
+	refreshOffsetHandle() {
+		this.currentOffsetHandle = this.sceneManager ? offsetHandle(this) : null;
+		const h = this.currentOffsetHandle;
+		if (h) this.offsetRenderer?.show([{ at: h.point, dir: h.normal, stem: [h.base, h.point] }]);
+		else this.offsetRenderer?.clear();
+	}
+
+	offsetHandleAt(worldX: number, worldZ: number) {
+		const h = this.currentOffsetHandle;
+		const scale = this.sceneManager.worldPerPixel();
+		return h && hitsHandle(OFFSET_HANDLE, h.point, h.normal, worldX, worldZ, scale) ? h : null;
+	}
+
 	refreshSelectionVisuals() {
+		this.refreshOffsetHandle();
 		for (const segmentId of this.selectedSegments) {
 			const segment = this.graph.segments.get(segmentId);
 			if (!segment) continue;
 
 			const startNode = this.graph.nodes.get(segment.startNodeId);
 			const endNode = this.graph.nodes.get(segment.endNodeId);
-			if (!startNode || !endNode) continue;
+			const ends = segmentEnds(this.graph, segment);
+			if (!startNode || !endNode || !ends) continue;
 
 			this.selectionRenderer.showSegment(
 				segment,
-				startNode,
-				endNode,
+				ends.a,
+				ends.b,
 				this.nodeRingRadius(startNode),
 				this.nodeRingRadius(endNode)
 			);
@@ -1271,7 +1574,7 @@ export class Editor {
 	}
 
 	// Joinable when the node bridges exactly two segments whose cross-sections
-	// match once read in the same flow direction through it.
+	// and offsets match once read in the same flow direction through it.
 	canJoinNode(nodeId: string) {
 		const node = this.graph.nodes.get(nodeId);
 		if (!node || node.connectedSegments.length !== 2) return false;
@@ -1283,7 +1586,9 @@ export class Editor {
 		if (farA === farB) return false;
 		const flowA = segA.endNodeId === nodeId ? segA.lanes : reverseLanes(segA.lanes);
 		const flowB = segB.startNodeId === nodeId ? segB.lanes : reverseLanes(segB.lanes);
-		return serializeLanes(flowA) === serializeLanes(flowB);
+		const offsetA = segA.endNodeId === nodeId ? segA.offset : -segA.offset;
+		const offsetB = segB.startNodeId === nodeId ? segB.offset : -segB.offset;
+		return serializeLanes(flowA) === serializeLanes(flowB) && Math.abs(offsetA - offsetB) < 1e-6;
 	}
 
 	joinNode(nodeId: string) {
@@ -1298,11 +1603,12 @@ export class Editor {
 		const farB = this.graph.nodes.get(farBId);
 		if (!farA || !farB || farAId === farBId) return;
 
+		if (!this.canJoinNode(nodeId)) return;
 		const flowA = segA.endNodeId === nodeId ? segA.lanes : reverseLanes(segA.lanes);
 		const flowB = segB.startNodeId === nodeId ? segB.lanes : reverseLanes(segB.lanes);
-		if (serializeLanes(flowA) !== serializeLanes(flowB)) return;
 
 		const merged = this.graph.createSegment(farAId, farBId, cloneLanes(flowA));
+		merged.offset = segA.endNodeId === nodeId ? segA.offset : -segA.offset;
 		// Keep the shape: bow the merged road through where the node sat unless the
 		// three points were already collinear, in which case it stays straight.
 		const ax = farB.x - farA.x;
@@ -1315,6 +1621,45 @@ export class Editor {
 				2 * node.y - (farA.y + farB.y) / 2
 			);
 		}
+
+		// The far nodes' junction edits move onto the merged road: A's end at
+		// its far node is the merged start, B's the merged end, and B's lanes
+		// are the merged lanes in the same order.
+		const laneOfB: Record<string, string | undefined> = Object.fromEntries(
+			flowB.map((l, i) => [l.id ?? '', merged.lanes[i]?.id])
+		);
+		const onMerged = (road: string, end: 'start' | 'end') => {
+			if (road === segA.id)
+				return end === (segA.startNodeId === nodeId ? 'end' : 'start')
+					? { road: merged.id, end: 'start' as const }
+					: null;
+			if (road === segB.id)
+				return end === (segB.startNodeId === nodeId ? 'end' : 'start')
+					? { road: merged.id, end: 'end' as const }
+					: null;
+			return { road, end };
+		};
+		const laneOnMerged = (road: string, lane: string) =>
+			road === segB.id ? (laneOfB[lane] ?? null) : lane;
+		for (const far of [farA, farB]) {
+			if (far.junction) far.junction = mapJunction(far.junction, onMerged, laneOnMerged);
+		}
+		// Crossings kept on the joined node move to the merged road's start,
+		// measured from there.
+		const lengthA = Math.hypot(node.x - farA.x, node.y - farA.y);
+		const moved = (node.junction?.crossings ?? []).flatMap((c) => {
+			const onA = c.road === segA.id;
+			const at = c.at === undefined ? undefined : onA ? lengthA - c.at : lengthA + c.at;
+			const lanes = c.lanes.map((l) => (onA ? l : laneOfB[l])) as [string, string];
+			return lanes[0] && lanes[1]
+				? [{ ...c, road: merged.id, end: 'start' as const, at, lanes }]
+				: [];
+		});
+		if (moved.length)
+			farA.junction = {
+				...(farA.junction ?? { connections: [] }),
+				crossings: [...(farA.junction?.crossings ?? []), ...moved]
+			};
 
 		this.graph.deleteSegment(segA.id);
 		this.graph.deleteSegment(segB.id);
@@ -1380,7 +1725,7 @@ export class Editor {
 		this.graph.save();
 	}
 
-	// Drop the connector overlay when its node no longer exists (reset, fixture
+	// Drop the connector overlay when its node no longer exists (reset, city
 	// load) — but keep it across an undo that preserves the node.
 	private dropStaleConnector() {
 		if (this.connectorNodeId && this.graph.nodes.has(this.connectorNodeId)) return;
@@ -1393,28 +1738,28 @@ export class Editor {
 		this.clearSelection();
 		this.nodeRenderer.clear();
 		this.roadRenderer.clear();
-		this.blockRenderer.clear();
 		this.graph.clear();
 		this.dropStaleConnector();
 		this.graph.save();
 	}
 
-	// Swap the whole working graph (fixture loads). Persists like any edit.
-	replaceGraph(data: GraphData, persist = true) {
+	// Swap the whole working graph. Persists like any edit unless told not to.
+	// An undo or redo keeps the drawing's caches: the graph it restores is
+	// mostly the one on screen, and only the roads and junctions whose content
+	// differs are drawn again.
+	replaceGraph(data: GraphData, persist = true, keepDrawing = false) {
 		this.clearSelection();
 		this.setHoveredNode(null);
 		this.setHoveredSegment(null);
 		this.nodeRenderer.clear();
-		this.roadRenderer.clear();
-		this.blockRenderer.clear();
+		if (!keepDrawing) this.roadRenderer.clear();
 		this.graph.fromJSON(data);
 		this.dropStaleConnector();
 		for (const node of this.graph.nodes.values()) {
 			this.nodeRenderer.createNode(node);
 		}
 		this.rebuildRoads();
-		// persist=false just loads a city into view (switching, opening a fixture)
-		// without writing it back over its own file.
+		// persist=false just loads a city or example into view without saving it.
 		if (persist) this.graph.save();
 	}
 
@@ -1425,14 +1770,20 @@ export class Editor {
 		if (this.boundKeyDown) {
 			window.removeEventListener('keydown', this.boundKeyDown);
 		}
+		window.removeEventListener('beforeunload', this.warnUnsaved);
+		if (this.boundMouseUp) window.removeEventListener('mouseup', this.boundMouseUp);
 		if (this.boundHistoryKeyDown) {
 			window.removeEventListener('keydown', this.boundHistoryKeyDown);
 		}
 		if (this.boundClipboardKeyDown) {
 			window.removeEventListener('keydown', this.boundClipboardKeyDown);
 		}
-		this.setbackRenderer?.dispose();
+		this.selectionRenderer?.dispose();
+		this.taperRenderer?.dispose();
+		this.offsetRenderer?.dispose();
+		this.crossingRenderer?.dispose();
 		this.connectionRenderer?.dispose();
+		this.roadRenderer?.destroy();
 		this.sceneManager?.dispose();
 	}
 }

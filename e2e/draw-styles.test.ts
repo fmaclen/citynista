@@ -1,4 +1,6 @@
 import { expect, test } from '@playwright/test';
+import { saveCity } from './save';
+import { expectSelectMode } from './mode';
 
 const STORAGE_KEY = 'citynista-graph-v2';
 
@@ -12,35 +14,17 @@ test.describe('Draw styles', () => {
 		await expect(page.locator('canvas')).toBeVisible();
 	});
 
-	const savedGraph = (page: import('@playwright/test').Page) =>
-		page.evaluate((key) => {
+	const savedGraph = async (page: import('@playwright/test').Page) => {
+		await saveCity(page);
+		return page.evaluate((key) => {
 			const data = localStorage.getItem(key);
 			return data ? JSON.parse(data) : null;
 		}, STORAGE_KEY);
+	};
 
-	test('curved style places the apex click as the control point', async ({ page }) => {
+	test('chained segments continue tangentially', async ({ page }) => {
 		const canvas = page.locator('canvas');
 		await page.getByRole('button', { name: 'Street' }).click();
-		await page.getByTitle('Curved (start, apex, end) (Tab cycles)').click();
-
-		// Start, apex, end — three clicks, one curved segment.
-		await canvas.click({ position: { x: 300, y: 400 }, force: true });
-		await canvas.click({ position: { x: 450, y: 250 }, force: true });
-		await canvas.click({ position: { x: 600, y: 400 }, force: true });
-		await page.keyboard.press('Escape');
-
-		const data = await savedGraph(page);
-		expect(data.segments.length).toBe(1);
-		expect(data.segments[0].controlX).toBeDefined();
-		// The apex was above the chord, so the control sits above it too
-		// (negative world y is up on screen).
-		expect(data.segments[0].controlY).toBeLessThan(0);
-	});
-
-	test('smooth style chains tangent-continuous segments', async ({ page }) => {
-		const canvas = page.locator('canvas');
-		await page.getByRole('button', { name: 'Street' }).click();
-		await page.getByTitle('Smooth (tangent-continuous)').click();
 
 		// First segment has nothing to continue: straight. The second bends
 		// to leave the first without a kink.
@@ -90,7 +74,7 @@ test.describe('Draw styles', () => {
 		await canvas.click({ position: { x: 500, y: 250 }, force: true });
 		await page.keyboard.press('Escape');
 		await page.keyboard.press('Escape');
-		await expect(page.getByTitle('Select')).toHaveAttribute('aria-pressed', 'true');
+		await expectSelectMode(page);
 
 		// Select the corner node, then shift+drag it.
 		await canvas.click({ position: { x: 500, y: 400 }, force: true });
@@ -126,7 +110,7 @@ test.describe('Zoom-adaptive hit areas', () => {
 		await canvas.click({ position: { x: 435, y: 300 }, force: true });
 		await page.keyboard.press('Escape');
 		await page.keyboard.press('Escape');
-		await expect(page.getByTitle('Select')).toHaveAttribute('aria-pressed', 'true');
+		await expectSelectMode(page);
 
 		// Zoom in hard; zoom anchors at the viewport center, so the segment
 		// (world midpoint -154.5, -41.7) lands at a computable screen spot
@@ -155,11 +139,13 @@ test.describe('Shift-drag collinear snapping', () => {
 		await expect(page.locator('canvas')).toBeVisible();
 	});
 
-	const savedGraph = (page: import('@playwright/test').Page) =>
-		page.evaluate(() => {
+	const savedGraph = async (page: import('@playwright/test').Page) => {
+		await saveCity(page);
+		return page.evaluate(() => {
 			const data = localStorage.getItem('citynista-graph-v2');
 			return data ? JSON.parse(data) : null;
 		});
+	};
 
 	test('a middle node snaps onto the line between far endpoints', async ({ page }) => {
 		const canvas = page.locator('canvas');
@@ -169,7 +155,7 @@ test.describe('Shift-drag collinear snapping', () => {
 		await canvas.click({ position: { x: 600, y: 300 }, force: true });
 		await page.keyboard.press('Escape');
 		await page.keyboard.press('Escape');
-		await expect(page.getByTitle('Select')).toHaveAttribute('aria-pressed', 'true');
+		await expectSelectMode(page);
 
 		// Select the bent middle node and shift-drag it near the line
 		// between the two far endpoints.
@@ -196,7 +182,7 @@ test.describe('Shift-drag collinear snapping', () => {
 		await canvas.click({ position: { x: 620, y: 360 }, force: true });
 		await page.keyboard.press('Escape');
 		await page.keyboard.press('Escape');
-		await expect(page.getByTitle('Select')).toHaveAttribute('aria-pressed', 'true');
+		await expectSelectMode(page);
 
 		// Select the dangling end and shift-drag near the horizontal
 		// extension of the first segment.

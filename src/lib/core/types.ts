@@ -4,13 +4,14 @@ export type LegacyLaneSurface = 'asphalt' | 'concrete' | 'grass' | 'curb' | 'pai
 export type LaneDirection = 'forward' | 'backward' | 'bidirectional';
 
 export interface Lane {
+	// Stable within its road, so junction connections can name it across
+	// edits (assigned by the segment when missing).
+	id?: string;
 	role: LaneRole;
 	material: LaneMaterial;
 	width: number;
 	// Direction of travel; only meaningful for vehicle lanes (others are bidirectional).
 	direction: LaneDirection;
-	// Omitted (and defaulted true) unless this lane's markings are disabled.
-	markings?: boolean;
 }
 
 export interface Brush {
@@ -32,6 +33,7 @@ export type LegacyLaneType =
 	| 'median';
 
 export interface StoredLane {
+	id?: string;
 	type?: LegacyLaneType;
 	turn?: 'left' | 'right';
 	role?: LaneRole;
@@ -39,7 +41,6 @@ export interface StoredLane {
 	material?: LaneMaterial;
 	width: number;
 	direction: LaneDirection;
-	markings?: boolean;
 }
 
 export interface LaneTemplate {
@@ -54,10 +55,53 @@ export interface LaneRef {
 	laneIndex: number;
 }
 
-// A movement through a node: an incoming lane routed to an outgoing lane.
-export interface LaneConnectionRef {
-	from: LaneRef;
-	to: LaneRef;
+// A lane end at a junction: `road` is the id of the segment it belongs to.
+export interface JunctionLaneRef {
+	road: string;
+	end: 'start' | 'end';
+	lane: string;
+}
+
+// A crossing across one of a node's roads, between two of its sidewalks.
+// `at` is how far from the node along that road it lies; absent, it sits at
+// its default place just past the junction's corners. `on: false` switches a
+// default crossing off.
+export interface JunctionCrossing {
+	road: string;
+	end: 'start' | 'end';
+	lanes: [string, string];
+	at?: number;
+	on?: boolean;
+	crossing?: 'painted';
+}
+
+export interface JunctionConnection {
+	from: JunctionLaneRef;
+	to: JunctionLaneRef;
+}
+
+// What a node stores about the junction its segment ends form: every lane
+// connection across it, of every kind, as the drawing uses them. They are
+// the default ones plus the user's edits: connections `added` by hand and
+// default ones `removed` by hand, each kept for as long as its lanes exist,
+// so the defaults keep following the roads everywhere else.
+export interface JunctionData {
+	connections: JunctionConnection[];
+	added?: JunctionConnection[];
+	removed?: JunctionConnection[];
+	// Where only two roads meet: the length the lanes take to find their way
+	// across, set by hand (otherwise it follows how far they shift).
+	taper?: number;
+	// Crossings added by hand, and default ones moved or switched off.
+	crossings?: JunctionCrossing[];
+	// Each approach's control set by hand (keyed by road end), over the
+	// default.
+	control?: Record<string, 'none' | 'stop' | 'yield' | 'signal'>;
+	// Roads attached at the edge of the others here (by segment id), and which
+	// way they sit off them, looking out of the node along the attached road
+	// (see core/attach.ts).
+	sides?: Record<string, 'left' | 'right'>;
+	islands?: { shape: { x: number; y: number }[]; surface: 'grass' | 'concrete' | 'pavement' }[];
 }
 
 export interface NodeData {
@@ -66,11 +110,7 @@ export interface NodeData {
 	y: number;
 	// Optional debug annotation, drawn by the dev-only node label overlay.
 	label?: string;
-	// Movements turned OFF at this junction. Empty/omitted = every default
-	// (permissive) movement is allowed.
-	disabledConnections?: LaneConnectionRef[];
-	// Movements turned ON beyond the default set (U-turns, median breaks).
-	enabledConnections?: LaneConnectionRef[];
+	junction?: JunctionData;
 }
 
 export interface SegmentData {
@@ -80,9 +120,8 @@ export interface SegmentData {
 	controlX?: number;
 	controlY?: number;
 	lanes?: StoredLane[];
-	// Manual per-end setback overrides (distance pulled back from each node).
-	setbackStart?: number;
-	setbackEnd?: number;
+	// Metres the cross-section sits to the right of the drawn line.
+	offset?: number;
 	// Legacy saves referenced a shared template instead of owning lanes.
 	laneTemplateId?: string;
 }
@@ -100,9 +139,8 @@ export interface CameraState {
 	polar: number;
 }
 
-// A saved city: its road graph plus the camera you were looking through. Stored
-// in localStorage in production and as a JSON file on disk in dev, so a session
-// reopens exactly where it was left. The id doubles as the kebab-case filename.
+// A saved city: its road graph plus the camera you were looking through, stored
+// in localStorage so a session reopens exactly where it was left.
 export interface CityRecord {
 	id: string;
 	name: string;

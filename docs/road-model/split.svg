@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 200" font-family="sans-serif" font-size="11">
+<rect width="720" height="200" fill="#6aa86f"/>
+<rect x="20" y="60" width="285" height="80" fill="#3d3d3d"/><rect x="20" y="94" width="285" height="12" fill="#4f9a55"/>
+<rect x="325" y="60" width="375" height="34" fill="#3d3d3d"/><rect x="325" y="106" width="375" height="34" fill="#3d3d3d"/>
+<rect x="305" y="60" width="20" height="34" fill="#3d3d3d"/><rect x="305" y="106" width="20" height="34" fill="#3d3d3d"/>
+<rect x="303" y="55" width="24" height="90" fill="none" stroke="#ff4fa3" stroke-width="2" stroke-dasharray="6 4"/>
+<g stroke="#fff" stroke-width="1.5" stroke-dasharray="8 8"><line x1="20" y1="77" x2="700" y2="77"/><line x1="20" y1="123" x2="700" y2="123"/></g>
+<text x="20" y="40" fill="#fff">avenue</text><text x="420" y="40" fill="#fff">two one-way roads, each on its own carriageway's line</text>
+<text x="360" y="170" fill="#fff" text-anchor="middle">Lanes connect straight across. The median carries on as the gap. Nothing bends.</text>
+</svg>

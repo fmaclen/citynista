@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { saveCity } from './save';
 
 const STORAGE_KEY = 'citynista-graph-v2';
 
@@ -61,6 +62,7 @@ test.describe('Marquee Selection', () => {
 
 		// Delete removes the whole marquee selection.
 		await page.locator('body').press('Delete');
+		await saveCity(page);
 		const saved = await page.evaluate((key) => {
 			const data = localStorage.getItem(key);
 			return data ? JSON.parse(data) : null;

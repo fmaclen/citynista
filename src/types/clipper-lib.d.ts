@@ -13,6 +13,9 @@ declare module 'clipper-lib' {
 
 	export class Clipper {
 		static Orientation(path: Path): boolean;
+		// 0 outside, 1 inside, -1 on the boundary.
+		static Area(path: Path): number;
+		static PointInPolygon(point: IntPoint, path: Path): number;
 		AddPaths(paths: Paths, polyType: number, closed: boolean): boolean;
 		Execute(
 			clipType: number,
@@ -25,6 +28,7 @@ declare module 'clipper-lib' {
 	export class ClipperOffset {
 		constructor(miterLimit?: number, arcTolerance?: number);
 		AddPaths(paths: Paths, joinType: number, endType: number): void;
+		AddPath(path: Path, joinType: number, endType: number): void;
 		Execute(solution: Paths, delta: number): void;
 	}
 
@@ -37,7 +41,7 @@ declare module 'clipper-lib' {
 		PolyType: { ptSubject: number; ptClip: number };
 		PolyFillType: { pftNonZero: number };
 		JoinType: { jtRound: number };
-		EndType: { etClosedPolygon: number };
+		EndType: { etClosedPolygon: number; etOpenButt: number };
 	};
 
 	export default ClipperLib;

@@ -5,15 +5,7 @@
 	import * as Select from '$lib/components/ui/select';
 	import { Button } from '$lib/components/ui/button';
 	import { Input } from '$lib/components/ui/input';
-	import {
-		ArrowLeft,
-		ArrowRight,
-		Equal,
-		GripVertical,
-		Plus,
-		Trash2,
-		X
-	} from '@lucide/svelte';
+	import { ArrowLeft, ArrowRight, GripVertical, Plus, Trash2, X } from '@lucide/svelte';
 
 	const editor = getEditorContext();
 
@@ -118,7 +110,9 @@
 		editor.rebuildRoads();
 	}
 
-	function endDrag() {
+	function endDrag(event: DragEvent) {
+		const target = event.currentTarget;
+		if (target instanceof HTMLElement) target.blur();
 		if (dragIndex === null) return;
 		dragIndex = null;
 		commit();
@@ -132,23 +126,41 @@
 		commit();
 	}
 
+	// A new travel lane goes on the roadway against its right-hand kerb: just
+	// after the last vehicle lane (inside any sidewalk or verge beyond it),
+	// travelling the way that lane does. With no vehicle lane it goes last.
 	function addLane() {
 		for (const segment of segments) {
-			segment.lanes.push({ role: 'vehicle', material: 'asphalt', width: 3, direction: 'forward' });
+			const last = segment.lanes.findLastIndex((l) => l.role === 'vehicle');
+			const beside = segment.lanes[last];
+			segment.lanes.splice(last === -1 ? segment.lanes.length : last + 1, 0, {
+				role: 'vehicle',
+				material: 'asphalt',
+				width: 3.5,
+				direction: beside?.direction ?? 'forward'
+			});
+			segment.ensureLaneIds();
 		}
 		commit();
+	}
+
+	// Panel buttons hand focus back to the page after acting: shortcuts only
+	// fire on events targeted at <body>. Width fields keep focus while typed in.
+	function press(action: () => void) {
+		return (event: MouseEvent) => {
+			action();
+			const target = event.currentTarget;
+			if (target instanceof HTMLElement) target.blur();
+		};
+	}
+
+	// The same for a dropdown once its menu has closed.
+	function menuClosed(open: boolean) {
+		const focused = document.activeElement;
+		if (!open && focused instanceof HTMLElement) focused.blur();
 	}
 
 	const totalWidth = $derived(uniform ? getTotalWidth(lanes) : 0);
-
-	function toggleLaneMarkings(index: number) {
-		const next = lanes[index]?.markings === false ? undefined : false;
-		for (const segment of segments) {
-			if (next === undefined) delete segment.lanes[index].markings;
-			else segment.lanes[index].markings = next;
-		}
-		commit();
-	}
 </script>
 
 {#if segments.length > 0}
@@ -219,7 +231,12 @@
 							style="background-color: {laneSwatchColor(lane)};"
 						></div>
 
-						<Select.Root type="single" value={lane.role} onValueChange={(v) => setRole(i, v)}>
+						<Select.Root
+							type="single"
+							value={lane.role}
+							onValueChange={(v) => setRole(i, v)}
+							onOpenChangeComplete={menuClosed}
+						>
 							<Select.Trigger class="w-full" size="sm">
 								{ROLE_OPTIONS.find((o) => o.value === lane.role)?.label}
 							</Select.Trigger>
@@ -234,6 +251,7 @@
 							type="single"
 							value={lane.material}
 							onValueChange={(v) => setMaterial(i, v)}
+							onOpenChangeComplete={menuClosed}
 						>
 							<Select.Trigger class="w-full" size="sm">
 								{MATERIAL_OPTIONS.find((o) => o.value === lane.material)?.label}
@@ -260,7 +278,7 @@
 								variant="ghost"
 								size="icon"
 								class="h-7 w-7 shrink-0"
-								onclick={() => flipDirection(i)}
+								onclick={press(() => flipDirection(i))}
 								title="Direction of travel (relative to drawing direction)"
 							>
 								{#if lane.direction === 'forward'}
@@ -273,26 +291,12 @@
 							<div class="h-7 w-7 shrink-0"></div>
 						{/if}
 
-						{#if lane.role === 'vehicle'}
-							<Button
-								variant="ghost"
-								size="icon"
-								class="h-7 w-7 shrink-0 {lane.markings === false ? 'text-muted-foreground/40' : ''}"
-								onclick={() => toggleLaneMarkings(i)}
-								title="Lane markings"
-							>
-								<Equal class="h-4 w-4" />
-							</Button>
-						{:else}
-							<div class="h-7 w-7 shrink-0"></div>
-						{/if}
-
 						<Button
 							variant="ghost"
 							size="icon"
 							class="h-7 w-7 shrink-0"
 							disabled={lanes.length <= 1}
-							onclick={() => removeLane(i)}
+							onclick={press(() => removeLane(i))}
 							title="Remove lane"
 						>
 							<Trash2 class="h-4 w-4" />
@@ -302,7 +306,7 @@
 			</div>
 
 			<div class="flex items-center justify-between gap-2">
-				<Button variant="outline" size="sm" onclick={addLane}>
+				<Button variant="outline" size="sm" onclick={press(addLane)}>
 					<Plus class="h-4 w-4" />
 					Add lane
 				</Button>

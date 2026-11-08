@@ -5,7 +5,7 @@
 	import FpsCounter from '$lib/components/FpsCounter.svelte';
 	import LaneEditor from '$lib/components/LaneEditor.svelte';
 	import NodeLabels from '$lib/components/NodeLabels.svelte';
-	import { dumpLaneCorrespondence } from '$lib/dev/lane-harness';
+	import ControlBadges from '$lib/components/ControlBadges.svelte';
 	import { untrack } from 'svelte';
 
 	let containerElement: HTMLDivElement;
@@ -17,26 +17,36 @@
 		untrack(() => {
 			const params = new URLSearchParams(window.location.search);
 			const topdown = params.has('topdown');
-			const fixture = params.get('fixture');
-			const harness = params.get('harness');
+			const example = params.get('example');
 			const cam = params.get('cam');
 
 			void (async () => {
-				// Skip loading the default city when a fixture is deep-linked.
-				await editor.init(containerElement, !fixture);
+				// Skip loading the default city when an example is deep-linked.
+				await editor.init(containerElement, !example);
 				if (topdown) editor.sceneManager.setTopDown();
 
-				if (fixture) {
-					// ?fixture=<name> opens that city from disk (works in the prod
-					// preview too, so the e2e harness renders the same graph).
-					await editor.loadCityById(fixture);
+				if (example) {
+					// ?example=<id> opens a read-only example, untouched.
+					await editor.openExample(example);
 				} else if (!topdown) {
 					editor.restoreCityCamera();
 				}
 
-				if (harness === 'lane') {
-					(window as Window & { __laneHarness?: () => unknown }).__laneHarness = () =>
-						dumpLaneCorrespondence(editor.graph);
+				// ?stats exposes render costs for headless/headed perf runs.
+				if (params.has('stats')) {
+					const w = window as Window & {
+						__renderStats?: () => unknown;
+						__perfMove?: (what: string) => void;
+					};
+					w.__renderStats = () => editor.renderStats();
+					w.__perfMove = (what) => editor.perfMove(what);
+				}
+
+				// ?model exposes the road model the drawing runs on, for scripts.
+				if (params.has('model')) {
+					const w = window as Window & { __roadModel?: () => unknown; __graph?: () => unknown };
+					w.__roadModel = () => editor.roadRenderer.derived?.place;
+					w.__graph = () => editor.graph.toJSON();
 				}
 
 				// ?cam=x,z,zoom is a headless-screenshot override (top-down, no persist).
@@ -64,6 +74,7 @@
 	<FpsCounter />
 	<LaneEditor />
 	<CityBar />
+	<ControlBadges />
 	{#if import.meta.env.DEV}
 		<NodeLabels />
 	{/if}

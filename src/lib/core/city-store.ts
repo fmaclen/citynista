@@ -1,7 +1,6 @@
-import { dev } from '$app/environment';
 import type { CameraState, CityRecord, CitySummary, GraphData } from './types';
 
-// Where the "which city am I in" pointer and (in prod) the cities themselves live.
+// The user's own cities live in localStorage, in dev exactly as in production.
 const INDEX_KEY = 'citynista:cities';
 const CURRENT_KEY = 'citynista:current-city';
 const cityKey = (id: string) => `citynista:city:${id}`;
@@ -10,7 +9,11 @@ const LEGACY_GRAPH_KEY = 'citynista-graph-v2';
 
 const EMPTY_GRAPH: GraphData = { nodes: [], segments: [] };
 
-// City ids double as kebab-case filenames in dev, so every name is slugged.
+// Examples are read-only files under static/examples/<id>.json, built by
+// scripts/examples/. Opening one never writes; the first edit forks it into a
+// city of your own.
+export const EXAMPLES: CitySummary[] = [{ id: 'neighbourhood', name: 'Neighbourhood' }];
+
 export function slugify(name: string) {
 	const slug = name
 		.toLowerCase()
@@ -20,22 +23,44 @@ export function slugify(name: string) {
 	return slug || 'untitled';
 }
 
-export interface CityStore {
-	list(): Promise<CitySummary[]>;
-	load(id: string): Promise<CityRecord | null>;
-	save(city: CityRecord): Promise<void>;
-	remove(id: string): Promise<void>;
-	create(name: string, graph?: GraphData): Promise<CityRecord>;
-	ensureCurrent(): Promise<CityRecord>;
-	currentId(): string | null;
-	setCurrentId(id: string): void;
-}
+export class CityStore {
+	list(): CitySummary[] {
+		try {
+			const raw = localStorage.getItem(INDEX_KEY);
+			return raw ? (JSON.parse(raw) as CitySummary[]) : [];
+		} catch {
+			return [];
+		}
+	}
 
-abstract class BaseCityStore implements CityStore {
-	abstract list(): Promise<CitySummary[]>;
-	abstract load(id: string): Promise<CityRecord | null>;
-	abstract save(city: CityRecord): Promise<void>;
-	abstract remove(id: string): Promise<void>;
+	load(id: string): CityRecord | null {
+		try {
+			const raw = localStorage.getItem(cityKey(id));
+			return raw ? (JSON.parse(raw) as CityRecord) : null;
+		} catch {
+			return null;
+		}
+	}
+
+	save(city: CityRecord) {
+		try {
+			localStorage.setItem(cityKey(city.id), JSON.stringify(city));
+		} catch {
+			// Quota exceeded: keep the index untouched rather than point at nothing.
+			return;
+		}
+		const index = this.list();
+		const at = index.findIndex((c) => c.id === city.id);
+		if (at >= 0) index[at] = { id: city.id, name: city.name };
+		else index.push({ id: city.id, name: city.name });
+		localStorage.setItem(INDEX_KEY, JSON.stringify(index));
+	}
+
+	remove(id: string) {
+		localStorage.removeItem(cityKey(id));
+		const index = this.list().filter((c) => c.id !== id);
+		localStorage.setItem(INDEX_KEY, JSON.stringify(index));
+	}
 
 	currentId() {
 		return localStorage.getItem(CURRENT_KEY);
@@ -45,23 +70,23 @@ abstract class BaseCityStore implements CityStore {
 		localStorage.setItem(CURRENT_KEY, id);
 	}
 
-	async create(name: string, graph: GraphData = EMPTY_GRAPH) {
-		const taken = new Set((await this.list()).map((c) => c.id));
+	create(name: string, graph: GraphData = EMPTY_GRAPH, camera: CameraState | null = null) {
+		const taken = new Set(this.list().map((c) => c.id));
 		const base = slugify(name);
 		let id = base;
 		let n = 2;
 		while (taken.has(id)) id = `${base}-${n++}`;
-		const city: CityRecord = { id, name: id, graph, camera: null };
-		await this.save(city);
+		const city: CityRecord = { id, name: id, graph, camera };
+		this.save(city);
 		return city;
 	}
 
 	// The working city on boot: the current one, else a fresh city seeded from the
 	// legacy single-graph slot (a one-time migration of pre-city saves).
-	async ensureCurrent() {
+	ensureCurrent() {
 		const id = this.currentId();
 		if (id) {
-			const current = await this.load(id);
+			const current = this.load(id);
 			if (current) return current;
 		}
 		let graph = EMPTY_GRAPH;
@@ -71,134 +96,28 @@ abstract class BaseCityStore implements CityStore {
 		} catch {
 			graph = EMPTY_GRAPH;
 		}
-		const city = await this.create('untitled', graph);
+		const city = this.create('untitled', graph);
 		this.setCurrentId(city.id);
 		return city;
 	}
 }
 
-// Production: cities live entirely in localStorage.
-class LocalCityStore extends BaseCityStore {
-	async list() {
-		try {
-			const raw = localStorage.getItem(INDEX_KEY);
-			return raw ? (JSON.parse(raw) as CitySummary[]) : [];
-		} catch {
-			return [];
-		}
-	}
-
-	async load(id: string) {
-		try {
-			const raw = localStorage.getItem(cityKey(id));
-			return raw ? (JSON.parse(raw) as CityRecord) : null;
-		} catch {
-			return null;
-		}
-	}
-
-	async save(city: CityRecord) {
-		localStorage.setItem(cityKey(city.id), JSON.stringify(city));
-		const index = await this.list();
-		const at = index.findIndex((c) => c.id === city.id);
-		if (at >= 0) index[at] = { id: city.id, name: city.name };
-		else index.push({ id: city.id, name: city.name });
-		localStorage.setItem(INDEX_KEY, JSON.stringify(index));
-	}
-
-	async remove(id: string) {
-		localStorage.removeItem(cityKey(id));
-		const index = (await this.list()).filter((c) => c.id !== id);
-		localStorage.setItem(INDEX_KEY, JSON.stringify(index));
-	}
+export function getExample(id: string) {
+	return EXAMPLES.find((example) => example.id === id) ?? null;
 }
 
-// Dev: cities ARE the JSON files under static/fixtures, so they're shared with
-// the e2e harness, the headless screenshots, and `?fixture=<name>`. Writes are
-// debounced (and flushed on a switch) so a drag/pan doesn't hammer the disk.
-class FileCityStore extends BaseCityStore {
-	private pending: { id: string; body: string } | null = null;
-	private timer: ReturnType<typeof setTimeout> | null = null;
-
-	async list() {
-		try {
-			const response = await fetch('/api/fixtures');
-			if (!response.ok) return [];
-			const names: string[] = await response.json();
-			return names.filter((name) => !name.startsWith('_')).map((name) => ({ id: name, name }));
-		} catch {
-			return [];
-		}
-	}
-
-	async load(id: string) {
-		try {
-			const response = await fetch(`/fixtures/${id}.json`);
-			if (!response.ok) return null;
-			const data = await response.json();
-			const graph: GraphData = data?.graph ?? data;
-			const camera: CameraState | null = data?.camera ?? null;
-			if (!Array.isArray(graph?.nodes) || !Array.isArray(graph?.segments)) return null;
-			return { id, name: id, graph, camera };
-		} catch {
-			return null;
-		}
-	}
-
-	async save(city: CityRecord) {
-		// kebab-only filenames; protected (underscore) fixtures are never rewritten.
-		if (!/^[a-z0-9][a-z0-9-]*$/.test(city.id)) return;
-		const body = JSON.stringify({ graph: city.graph, camera: city.camera });
-		if (this.pending && this.pending.id !== city.id) await this.flush();
-		this.pending = { id: city.id, body };
-		if (this.timer) clearTimeout(this.timer);
-		this.timer = setTimeout(() => void this.flush(), 600);
-	}
-
-	private async flush() {
-		if (this.timer) {
-			clearTimeout(this.timer);
-			this.timer = null;
-		}
-		const pending = this.pending;
-		this.pending = null;
-		if (!pending) return;
-		try {
-			await fetch(`/api/fixtures/${pending.id}`, {
-				method: 'PUT',
-				headers: { 'content-type': 'application/json' },
-				body: pending.body
-			});
-		} catch {
-			// best-effort; the next save retries
-		}
-	}
-
-	async remove(id: string) {
-		if (this.pending?.id === id) this.pending = null;
-		try {
-			await fetch(`/api/fixtures/${id}`, { method: 'DELETE' });
-		} catch {
-			// best-effort
-		}
-	}
-}
-
-export function createCityStore(): CityStore {
-	return dev ? new FileCityStore() : new LocalCityStore();
-}
-
-// Load a static fixture file directly, independent of the active backend. Used by
-// the ?fixture= deep-link so it works in the production preview (e2e) too.
-export async function loadStaticCity(id: string): Promise<CityRecord | null> {
+// Fetch an example's original graph and camera. Never cached or written back.
+export async function loadExample(id: string): Promise<CityRecord | null> {
+	const example = getExample(id);
+	if (!example) return null;
 	try {
-		const response = await fetch(`/fixtures/${id}.json`);
+		const response = await fetch(`/examples/${id}.json`);
 		if (!response.ok) return null;
 		const data = await response.json();
-		const graph: GraphData = data?.graph ?? data;
+		const graph: GraphData = data?.graph;
 		const camera: CameraState | null = data?.camera ?? null;
 		if (!Array.isArray(graph?.nodes) || !Array.isArray(graph?.segments)) return null;
-		return { id, name: id, graph, camera };
+		return { id, name: example.name, graph, camera };
 	} catch {
 		return null;
 	}

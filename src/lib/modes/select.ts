@@ -1,16 +1,18 @@
 import type { ModeHandlers } from './types';
-import type { Editor, SetbackHandleInfo } from '../editor.svelte';
+import type { Editor, TaperHandleInfo } from '../editor.svelte';
+import { offsetFromPointer, type OffsetHandle } from './offset';
+import { segmentEnds } from '../core/attach';
+import { controlHandle } from '../rendering/selection-renderer';
 import type { Segment } from '../core/segment.svelte';
 import type { Node } from '../core/node.svelte';
 import { getQuadraticBezierTangent } from '../geometry/bezier';
-import { CONTROL_SIZE } from '../rendering/selection-renderer';
-import { HOVER_COLOR, RING_THICKNESS } from '../rendering/editor-palette';
+import { CURVE_HANDLE, HOVER_COLOR, RING_THICKNESS } from '../rendering/editor-palette';
+import { hitsHandle } from '../rendering/handle-shapes';
 import { nodeHitAt, segmentHitAt } from './picking';
 import { createMarquee } from './marquee';
 
 // Snap radii are sized in screen pixels and converted to world units at
 // the current zoom; hit areas live in modes/picking.
-const CONTROL_POINT_HIT_PX = 17;
 const STRAIGHT_SNAP_PX = 14;
 const MARQUEE_COLOR = HOVER_COLOR;
 
@@ -28,8 +30,10 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 	// Shift+click on a selected node means "deselect" only if no drag
 	// follows — a shift+drag instead smooths the node's tangent live.
 	let pendingShiftToggle: string | null = null;
-	// Dragging a setback handle of the selected junction pulls that arm back.
-	let setbackDrag: SetbackHandleInfo | null = null;
+	// Dragging a taper handle of the selected node sets its taper.
+	let taperDrag: TaperHandleInfo | null = null;
+	// Dragging the selected road's lateral offset handle.
+	let offsetDrag: OffsetHandle | null = null;
 	let dragDistance = 0;
 
 	const marquee = createMarquee(editor, MARQUEE_COLOR, 0.4, RING_THICKNESS);
@@ -107,13 +111,12 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 			const endNode = editor.graph.nodes.get(segment.endNodeId);
 			if (!startNode || !endNode) continue;
 
-			const cx = segment.controlX ?? (startNode.x + endNode.x) / 2;
-			const cy = segment.controlY ?? (startNode.y + endNode.y) / 2;
+			const ends = segmentEnds(editor.graph, segment);
+			if (!ends) continue;
+			const handle = controlHandle(segment, ends.a, ends.b);
 
-			// The diamond is drawn in world units; its hit area covers the
-			// visible shape with the pixel size only as a floor.
-			const radius = Math.max(CONTROL_SIZE * 0.8, CONTROL_POINT_HIT_PX * worldPerPixel());
-			if (Math.hypot(worldX - cx, worldZ - cy) < radius) {
+			// The square is drawn on screen, axis-aligned to the world.
+			if (hitsHandle(CURVE_HANDLE, handle, { x: 1, y: 0 }, worldX, worldZ, worldPerPixel())) {
 				return segment;
 			}
 		}
@@ -124,12 +127,12 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 		const segment = editor.graph.segments.get(segmentId);
 		if (!segment) return;
 
-		const startNode = editor.graph.nodes.get(segment.startNodeId);
-		const endNode = editor.graph.nodes.get(segment.endNodeId);
-		if (!startNode || !endNode) return;
+		// A straight road's handle starts half way between its ends as drawn.
+		const ends = segmentEnds(editor.graph, segment);
+		if (!ends) return;
 
-		const cx = segment.controlX ?? (startNode.x + endNode.x) / 2;
-		const cy = segment.controlY ?? (startNode.y + endNode.y) / 2;
+		const cx = segment.controlX ?? (ends.a.x + ends.b.x) / 2;
+		const cy = segment.controlY ?? (ends.a.y + ends.b.y) / 2;
 		segment.setControlPoint(cx + dx * factor, cy + dz * factor);
 	};
 
@@ -184,10 +187,14 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 
 		const startNode = editor.graph.nodes.get(segment.startNodeId);
 		const endNode = editor.graph.nodes.get(segment.endNodeId);
-		if (!startNode || !endNode) return;
+		const ends = segmentEnds(editor.graph, segment);
+		if (!startNode || !endNode || !ends) return;
+		// The curve is spanned between the ends as drawn.
+		const start = ends.a;
+		const end = ends.b;
 
-		const chordX = endNode.x - startNode.x;
-		const chordY = endNode.y - startNode.y;
+		const chordX = end.x - start.x;
+		const chordY = end.y - start.y;
 		const chordLength = Math.hypot(chordX, chordY);
 		if (chordLength < 0.0001) return;
 
@@ -196,12 +203,11 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 			0,
 			Math.min(
 				1,
-				((worldX - startNode.x) * chordX + (worldZ - startNode.y) * chordY) /
-					(chordLength * chordLength)
+				((worldX - start.x) * chordX + (worldZ - start.y) * chordY) / (chordLength * chordLength)
 			)
 		);
-		const nearestX = startNode.x + chordX * t;
-		const nearestY = startNode.y + chordY * t;
+		const nearestX = start.x + chordX * t;
+		const nearestY = start.y + chordY * t;
 		if (Math.hypot(worldX - nearestX, worldZ - nearestY) < STRAIGHT_SNAP_PX * worldPerPixel()) {
 			segment.clearControlPoint();
 			return;
@@ -220,15 +226,15 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 				const b = (chordX * fromStart.y - chordY * fromStart.x) / denominator;
 				if (a > 0.01 && b > 0.01 && a < reach && b < reach) {
 					candidates.push({
-						x: startNode.x + fromStart.x * a,
-						y: startNode.y + fromStart.y * a
+						x: start.x + fromStart.x * a,
+						y: start.y + fromStart.y * a
 					});
 				}
 			}
 		}
 		for (const [origin, directions] of [
-			[startNode, fromStarts],
-			[endNode, fromEnds]
+			[start, fromStarts],
+			[end, fromEnds]
 		] as const) {
 			for (const direction of directions) {
 				const along = Math.max(
@@ -256,8 +262,8 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 		// No neighbors at all: symmetric curve via the perpendicular bisector.
 		const perpX = -chordY / chordLength;
 		const perpY = chordX / chordLength;
-		const midX = (startNode.x + endNode.x) / 2;
-		const midY = (startNode.y + endNode.y) / 2;
+		const midX = (start.x + end.x) / 2;
+		const midY = (start.y + end.y) / 2;
 		const offset = (worldX - midX) * perpX + (worldZ - midY) * perpY;
 		segment.setControlPoint(midX + perpX * offset, midY + perpY * offset);
 	};
@@ -415,14 +421,20 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 		// take over from here.
 		editor.setHoveredSegment(null);
 
-		// Dragging a setback handle of the selected junction. The handles sit
-		// out on the stop lines, so node dragging still works at the centre.
+		// Dragging a taper handle of the selected node. The handles sit out
+		// where the taper ends, so node dragging still works at the centre.
 		if (editor.selectedNodes.size === 1) {
-			const handle = editor.setbackHandleAt(worldPos.x, worldPos.z);
+			const handle = editor.taperHandleAt(worldPos.x, worldPos.z);
 			if (handle) {
-				setbackDrag = handle;
+				taperDrag = handle;
 				return;
 			}
+		}
+
+		const offset = editor.offsetHandleAt(worldPos.x, worldPos.z);
+		if (offset) {
+			offsetDrag = offset;
+			return;
 		}
 
 		const controlPointSegment = findControlPointAt(worldPos.x, worldPos.z);
@@ -479,8 +491,23 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 	const onMouseMove = (event: MouseEvent) => {
 		const worldPos = editor.sceneManager.screenToWorld(event.clientX, event.clientY);
 
-		if (setbackDrag) {
-			editor.setSetbackFromDrag(setbackDrag, worldPos.x, worldPos.z);
+		if (taperDrag) {
+			editor.setTaperFromDrag(taperDrag, worldPos.x, worldPos.z);
+			return;
+		}
+
+		if (offsetDrag) {
+			const segment = editor.graph.segments.get(offsetDrag.segmentId);
+			if (segment) {
+				segment.offset = offsetFromPointer(
+					editor,
+					offsetDrag,
+					worldPos.x,
+					worldPos.z,
+					event.shiftKey
+				);
+				scheduleApply();
+			}
 			return;
 		}
 
@@ -526,8 +553,8 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 				}
 			}
 			scheduleApply();
-			// Setback handles ride along with a moving junction.
-			editor.refreshSetbackHandles();
+			// Taper handles ride along with a moving node.
+			editor.refreshTaperHandles();
 		} else if (dragTarget.type === 'controlPoint') {
 			if (event.shiftKey) {
 				snapControlPoint(dragTarget.segmentId, worldPos.x, worldPos.z);
@@ -566,9 +593,16 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 	};
 
 	const onMouseUp = (event: MouseEvent) => {
-		if (setbackDrag) {
-			editor.finishSetback();
-			setbackDrag = null;
+		if (taperDrag) {
+			editor.finishTaper();
+			taperDrag = null;
+			return;
+		}
+
+		if (offsetDrag) {
+			offsetDrag = null;
+			flushApply();
+			editor.graph.save();
 			return;
 		}
 
@@ -635,7 +669,8 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 		}
 		isDragging = false;
 		dragTarget = null;
-		setbackDrag = null;
+		taperDrag = null;
+		offsetDrag = null;
 		controlFrames.clear();
 		editor.setHoveredNode(null);
 		editor.setHoveredSegment(null);

@@ -1,0 +1,144 @@
+{
+	"nodes": [
+		{ "id": "n", "x": 0, "y": -200 },
+		{ "id": "m", "x": 0, "y": 0, "junction": { "connections": [], "sides": { "ramp": "left" } } },
+		{ "id": "s", "x": 0, "y": 200 },
+		{ "id": "r", "x": -60, "y": -150 }
+	],
+	"segments": [
+		{
+			"id": "north",
+			"startNodeId": "n",
+			"endNodeId": "m",
+			"lanes": [
+				{
+					"role": "vehicle",
+					"material": "asphalt",
+					"width": 3.5,
+					"direction": "backward",
+					"id": "l0"
+				},
+				{
+					"role": "vehicle",
+					"material": "asphalt",
+					"width": 3.5,
+					"direction": "backward",
+					"id": "l1"
+				},
+				{
+					"role": "vehicle",
+					"material": "asphalt",
+					"width": 3.5,
+					"direction": "backward",
+					"id": "l2"
+				},
+				{
+					"role": "buffer",
+					"material": "concrete",
+					"width": 3,
+					"direction": "bidirectional",
+					"id": "l3"
+				},
+				{
+					"role": "vehicle",
+					"material": "asphalt",
+					"width": 3.5,
+					"direction": "forward",
+					"id": "l4"
+				},
+				{
+					"role": "vehicle",
+					"material": "asphalt",
+					"width": 3.5,
+					"direction": "forward",
+					"id": "l5"
+				},
+				{
+					"role": "vehicle",
+					"material": "asphalt",
+					"width": 3.5,
+					"direction": "forward",
+					"id": "l6"
+				}
+			]
+		},
+		{
+			"id": "south",
+			"startNodeId": "m",
+			"endNodeId": "s",
+			"lanes": [
+				{
+					"role": "vehicle",
+					"material": "asphalt",
+					"width": 3.5,
+					"direction": "backward",
+					"id": "l0"
+				},
+				{
+					"role": "vehicle",
+					"material": "asphalt",
+					"width": 3.5,
+					"direction": "backward",
+					"id": "l1"
+				},
+				{
+					"role": "vehicle",
+					"material": "asphalt",
+					"width": 3.5,
+					"direction": "backward",
+					"id": "l2"
+				},
+				{
+					"role": "buffer",
+					"material": "concrete",
+					"width": 3,
+					"direction": "bidirectional",
+					"id": "l3"
+				},
+				{
+					"role": "vehicle",
+					"material": "asphalt",
+					"width": 3.5,
+					"direction": "forward",
+					"id": "l4"
+				},
+				{
+					"role": "vehicle",
+					"material": "asphalt",
+					"width": 3.5,
+					"direction": "forward",
+					"id": "l5"
+				},
+				{
+					"role": "vehicle",
+					"material": "asphalt",
+					"width": 3.5,
+					"direction": "forward",
+					"id": "l6"
+				},
+				{
+					"role": "vehicle",
+					"material": "asphalt",
+					"width": 3.5,
+					"direction": "forward",
+					"id": "l7"
+				}
+			],
+			"offset": 1.75
+		},
+		{
+			"id": "ramp",
+			"startNodeId": "r",
+			"endNodeId": "m",
+			"lanes": [
+				{
+					"id": "l0",
+					"role": "vehicle",
+					"material": "asphalt",
+					"width": 3.5,
+					"direction": "forward"
+				}
+			]
+		}
+	]
+}

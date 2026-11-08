@@ -3,7 +3,7 @@
 	import { getTotalWidth, laneSwatchColor } from '$lib/core/lane-template';
 	import { MATERIAL_COLOR } from '$lib/core/lane-types';
 	import { Button } from '$lib/components/ui/button';
-	import { Combine, Grid3x3, Plus, Redo2, Scissors, Undo2, Tractor } from '@lucide/svelte';
+	import { Combine, Grid3x3, Plus, Redo2, Route, Scissors, Undo2, Tractor } from '@lucide/svelte';
 
 	const editor = getEditorContext();
 
@@ -81,7 +81,7 @@
 				{#if brush}
 					<div
 						class="absolute inset-y-0 left-1/2 flex -translate-x-1/2"
-						style="width: {(getTotalWidth(brush.lanes) / maxBrushWidth) * 100}%;"
+						style="width: {Math.max(40, (getTotalWidth(brush.lanes) / maxBrushWidth) * 100)}%;"
 					>
 						{#each brush.lanes as lane, j (j)}
 							<div
@@ -131,6 +131,16 @@
 			aria-pressed={editor.gridEnabled}
 		>
 			<Grid3x3 class="h-4 w-4" />
+		</Button>
+
+		<Button
+			variant={editor.showConnections ? 'default' : 'ghost'}
+			size="icon"
+			onclick={press(() => editor.toggleConnections())}
+			title="Show lane connections"
+			aria-pressed={editor.showConnections}
+		>
+			<Route class="h-4 w-4" />
 		</Button>
 
 		<Button

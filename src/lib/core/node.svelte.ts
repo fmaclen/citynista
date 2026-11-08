@@ -1,15 +1,13 @@
-import type { LaneConnectionRef, NodeData } from './types';
+import type { JunctionData, NodeData } from './types';
 
 export class Node {
 	id: string;
 	x = $state(0);
 	y = $state(0);
 	connectedSegments: string[] = [];
-	// Movements turned off here; undefined = all default movements allowed.
-	disabledConnections = $state<LaneConnectionRef[] | undefined>(undefined);
-	// Movements turned ON that are not in the default set — a U-turn or a break
-	// across a median the default treats as a barrier.
-	enabledConnections = $state<LaneConnectionRef[] | undefined>(undefined);
+	// The junction this node's segment ends form: stored connections and
+	// placed islands (see JunctionData).
+	junction = $state<JunctionData | undefined>(undefined);
 	// Optional debug annotation, drawn by the dev-only node label overlay.
 	label: string | undefined;
 
@@ -38,35 +36,19 @@ export class Node {
 			x: this.x,
 			y: this.y
 		};
-		if (this.disabledConnections && this.disabledConnections.length > 0) {
-			data.disabledConnections = this.disabledConnections.map((c) => ({
-				from: { ...c.from },
-				to: { ...c.to }
-			}));
-		}
-		if (this.enabledConnections && this.enabledConnections.length > 0) {
-			data.enabledConnections = this.enabledConnections.map((c) => ({
-				from: { ...c.from },
-				to: { ...c.to }
-			}));
-		}
 		if (this.label) {
 			data.label = this.label;
 		}
+		if (this.junction) data.junction = $state.snapshot(this.junction);
 		return data;
 	}
 
 	static fromJSON(data: NodeData) {
 		const node = new Node(data.id, data.x, data.y);
-		if (data.disabledConnections && data.disabledConnections.length > 0) {
-			node.disabledConnections = data.disabledConnections;
-		}
-		if (data.enabledConnections && data.enabledConnections.length > 0) {
-			node.enabledConnections = data.enabledConnections;
-		}
 		if (data.label) {
 			node.label = data.label;
 		}
+		if (data.junction) node.junction = data.junction;
 		return node;
 	}
 }

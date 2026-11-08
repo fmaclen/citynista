@@ -4,7 +4,7 @@ import type { Segment } from '../core/segment.svelte';
 import type { ModeHandlers } from './types';
 import { segmentHitAt } from './picking';
 import { splitSegment } from '../core/crossings';
-import { closestPointOnQuadraticBezier } from '../geometry/bezier';
+import { closestOnRoad, roadAt } from '../core/road-line';
 import { NODE_Y_OFFSET } from '../rendering/node-renderer';
 
 const MARKER_COLOR = 0xfacc15;
@@ -46,32 +46,25 @@ export function setupSplitMode(editor: Editor): ModeHandlers {
 		const endNode = editor.graph.nodes.get(segment.endNodeId);
 		if (!startNode || !endNode) return;
 
-		const cx = segment.controlX ?? (startNode.x + endNode.x) / 2;
-		const cy = segment.controlY ?? (startNode.y + endNode.y) / 2;
-		const closest = closestPointOnQuadraticBezier(
-			worldX,
-			worldZ,
-			startNode.x,
-			startNode.y,
-			cx,
-			cy,
-			endNode.x,
-			endNode.y
-		);
+		// Where along the road the pointer is (the road as drawn, offset and
+		// all); the cut itself lands on the segment's line, where nodes live.
+		const closest = closestOnRoad(editor.graph, segment, worldX, worldZ);
+		const on = roadAt(editor.graph, segment, closest.t);
+		if (!on) return;
 		if (closest.t < 0.02 || closest.t > 0.98) return;
 
 		// Too close to an endpoint would stack nodes — also stops a second click
 		// landing right beside a node just placed (it is now an endpoint here).
 		const radius = editor.nodeRingRadius({ connectedSegments: [segment.id] });
-		const nearStart = Math.hypot(closest.x - startNode.x, closest.y - startNode.y);
-		const nearEnd = Math.hypot(closest.x - endNode.x, closest.y - endNode.y);
+		const nearStart = Math.hypot(on.line.x - startNode.x, on.line.y - startNode.y);
+		const nearEnd = Math.hypot(on.line.x - endNode.x, on.line.y - endNode.y);
 		if (Math.min(nearStart, nearEnd) < radius * 1.5) return;
 
 		editor.setHoveredSegment(segment.id);
 		setMarkerRadius(radius);
-		marker.position.set(closest.x, MARKER_Y, closest.y);
+		marker.position.set(on.point.x, MARKER_Y, on.point.y);
 		marker.visible = true;
-		target = { segment, x: closest.x, y: closest.y, t: closest.t };
+		target = { segment, x: on.line.x, y: on.line.y, t: closest.t };
 	};
 
 	const onMouseMove = (event: MouseEvent) => {

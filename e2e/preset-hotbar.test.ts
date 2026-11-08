@@ -1,4 +1,6 @@
 import { expect, test } from '@playwright/test';
+import { saveCity } from './save';
+import { expectSelectMode } from './mode';
 
 const STORAGE_KEY = 'citynista-graph-v2';
 
@@ -8,19 +10,17 @@ test.describe('Preset Hotbar', () => {
 		await expect(page.locator('canvas')).toBeVisible();
 		await expect(page.locator('nav')).toBeVisible();
 
-		const select = page.getByTitle('Select');
 		const street = page.getByRole('button', { name: 'Street' });
 		const avenue = page.getByRole('button', { name: 'Avenue' });
 		const highway = page.getByRole('button', { name: 'Highway' });
 
 		// Select is the default tool; no preset is active yet.
-		await expect(select).toHaveAttribute('aria-pressed', 'true');
+		await expectSelectMode(page);
 		await expect(street).toHaveAttribute('aria-pressed', 'false');
 
 		// Clicking a preset activates it and switches to draw mode.
 		await avenue.click();
 		await expect(avenue).toHaveAttribute('aria-pressed', 'true');
-		await expect(select).toHaveAttribute('aria-pressed', 'false');
 
 		await page.locator('body').press('3');
 		await expect(highway).toHaveAttribute('aria-pressed', 'true');
@@ -30,6 +30,7 @@ test.describe('Preset Hotbar', () => {
 		await page.locator('canvas').click({ position: { x: 450, y: 300 } });
 		await page.locator('canvas').click({ position: { x: 800, y: 420 } });
 
+		await saveCity(page);
 		const segments = await page.evaluate((key) => {
 			const data = localStorage.getItem(key);
 			return data ? JSON.parse(data).segments : null;
@@ -47,13 +48,14 @@ test.describe('Preset Hotbar', () => {
 			'asphalt',
 			'asphalt'
 		]);
-		expect(segments[0].lanes[3].raised).toBe(true);
+		// A concrete buffer lane is what renders as a raised median.
+		expect(segments[0].lanes[3].role).toBe('buffer');
 
 		// Escape once cancels the pending segment, twice leaves draw mode.
 		await page.locator('body').press('Escape');
 		await expect(highway).toHaveAttribute('aria-pressed', 'true');
 		await page.locator('body').press('Escape');
-		await expect(select).toHaveAttribute('aria-pressed', 'true');
+		await expectSelectMode(page);
 		await expect(highway).toHaveAttribute('aria-pressed', 'false');
 	});
 });

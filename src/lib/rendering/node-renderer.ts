@@ -59,6 +59,13 @@ export class NodeRenderer {
 		}
 	}
 
+	// Where the ring shows (see nodePoint).
+	setPosition(nodeId: string, p: { x: number; y: number }) {
+		const mesh = this.meshes.get(nodeId);
+		if (mesh && (mesh.position.x !== p.x || mesh.position.z !== p.y))
+			mesh.position.set(p.x, NODE_Y_OFFSET, p.y);
+	}
+
 	setRadius(nodeId: string, radius: number) {
 		const mesh = this.meshes.get(nodeId);
 		if (!mesh || this.radii.get(nodeId) === radius) return;
@@ -117,9 +124,7 @@ export class NodeRenderer {
 		const tone = this.revealed.get(nodeId);
 		const selected = this.selectedNodes.has(nodeId) || tone === 'selected';
 		const material = mesh.material as THREE.MeshBasicMaterial;
-		material.color.setHex(
-			selected ? SELECT_COLOR : tone === 'danger' ? DANGER_COLOR : HOVER_COLOR
-		);
+		material.color.setHex(selected ? SELECT_COLOR : tone === 'danger' ? DANGER_COLOR : HOVER_COLOR);
 	}
 
 	// Nodes are hidden by default; only revealed ones render — selection

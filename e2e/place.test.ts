@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { saveCity } from './save';
 
 const STORAGE_KEY = 'citynista-graph-v2';
 const SCALE = 720 / 500;
@@ -24,11 +25,13 @@ interface SavedGraph {
 	segments: { id: string; startNodeId: string; endNodeId: string }[];
 }
 
-const savedGraph = (page: import('@playwright/test').Page) =>
-	page.evaluate((key) => {
+const savedGraph = async (page: import('@playwright/test').Page) => {
+	await saveCity(page);
+	return page.evaluate((key) => {
 		const data = localStorage.getItem(key);
 		return data ? (JSON.parse(data) as SavedGraph) : null;
 	}, STORAGE_KEY);
+};
 
 async function copySegment(page: import('@playwright/test').Page) {
 	await page.locator('canvas').click({ position: toScreen(-50, 0) });

@@ -1,4 +1,6 @@
 import { expect, test } from '@playwright/test';
+import { saveCity } from './save';
+import { expectSelectMode } from './mode';
 
 const STORAGE_KEY = 'citynista-graph-v2';
 
@@ -10,11 +12,13 @@ test.describe('Undo/redo', () => {
 		await expect(page.locator('canvas')).toBeVisible();
 	});
 
-	const savedGraph = (page: import('@playwright/test').Page) =>
-		page.evaluate((key) => {
+	const savedGraph = async (page: import('@playwright/test').Page) => {
+		await saveCity(page);
+		return page.evaluate((key) => {
 			const data = localStorage.getItem(key);
 			return data ? JSON.parse(data) : null;
 		}, STORAGE_KEY);
+	};
 
 	test('undo and redo step through drawn segments', async ({ page }) => {
 		const canvas = page.locator('canvas');
@@ -45,7 +49,7 @@ test.describe('Undo/redo', () => {
 		await canvas.click({ position: { x: 500, y: 300 }, force: true });
 		await page.keyboard.press('Escape');
 		await page.keyboard.press('Escape');
-		await expect(page.getByTitle('Select')).toHaveAttribute('aria-pressed', 'true');
+		await expectSelectMode(page);
 
 		const before = await savedGraph(page);
 
@@ -95,11 +99,13 @@ test.describe('Bulldoze', () => {
 		await expect(page.locator('canvas')).toBeVisible();
 	});
 
-	const savedGraph = (page: import('@playwright/test').Page) =>
-		page.evaluate((key) => {
+	const savedGraph = async (page: import('@playwright/test').Page) => {
+		await saveCity(page);
+		return page.evaluate((key) => {
 			const data = localStorage.getItem(key);
 			return data ? JSON.parse(data) : null;
 		}, STORAGE_KEY);
+	};
 
 	test('click demolishes a segment, marquee demolishes an area, undo restores', async ({
 		page
@@ -137,6 +143,6 @@ test.describe('Bulldoze', () => {
 		// Escape leaves bulldoze mode even right after clicking the toolbar
 		// button (which must not keep focus).
 		await page.keyboard.press('Escape');
-		await expect(page.getByTitle('Select')).toHaveAttribute('aria-pressed', 'true');
+		await expectSelectMode(page);
 	});
 });

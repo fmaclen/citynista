@@ -1,11 +1,11 @@
 import * as THREE from 'three';
 
-// The shared look of every "editor line" — connector movement arcs, setback
+// The shared look of every "editor line" — connector movement arcs, handle
 // stems, bezier curvature guides: a row of small rounded beads, drawn above
 // everything so it reads as editor UI and never as road paint. This is the ONE
-// place to change how those lines look (bead size, spacing, colour, opacity);
-// every editor line is built from `editorLineGeometry` + `createEditorLineMaterial`.
-export const EDITOR_LINE_COLOR = 0xfacc15;
+// place to change how those lines look (bead size, spacing, opacity); each
+// takes the colour of the handle it belongs to (editor-palette.ts). Every
+// editor line is built from `editorLineGeometry` + `createEditorLineMaterial`.
 export const EDITOR_LINE_OPACITY = 0.95;
 
 const BEAD_DIAMETER = 0.5;
@@ -53,10 +53,7 @@ export function editorLineGeometry(
 	return geometry;
 }
 
-export function createEditorLineMaterial(
-	color: number = EDITOR_LINE_COLOR,
-	opacity: number = EDITOR_LINE_OPACITY
-): THREE.MeshBasicMaterial {
+export function createEditorLineMaterial(color: number, opacity = EDITOR_LINE_OPACITY) {
 	return new THREE.MeshBasicMaterial({
 		color,
 		transparent: true,

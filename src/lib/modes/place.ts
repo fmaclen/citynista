@@ -4,9 +4,9 @@ import type { ClipboardNodeSnapshot, Editor } from '../editor.svelte';
 import type { SegmentClipboard } from '../editor.svelte';
 import { cloneLanes } from '../core/lane-template';
 import { Graph } from '../core/graph.svelte';
-import { buildRoadLayers } from '../core/road-geometry';
 import { findCrossingsBetweenSegments } from '../core/crossings';
-import { RoadRenderer } from '../rendering/road-renderer';
+import { LabRenderer } from '../rendering/lab-renderer';
+import { mapJunction } from '../core/junction-data';
 import { NODE_Y_OFFSET } from '../rendering/node-renderer';
 import { SELECT_COLOR, RING_THICKNESS } from '../rendering/editor-palette';
 
@@ -37,9 +37,9 @@ export function setupPlaceMode(editor: Editor) {
 	if (!clipboard) return {};
 
 	const centroid = clipboardCentroid(clipboard);
-	const ghostRenderer = new RoadRenderer(editor.sceneManager.scene, {
+	const ghostRenderer = new LabRenderer(editor.sceneManager.scene, {
 		opacity: GHOST_OPACITY,
-		elevation: GHOST_ELEVATION
+		lift: GHOST_ELEVATION
 	});
 	const previewGraph = new Graph();
 	const markerMaterial = new THREE.MeshBasicMaterial({
@@ -119,7 +119,10 @@ export function setupPlaceMode(editor: Editor) {
 		);
 
 		for (const crossing of crossings) {
-			const radius = Math.max(4, editor.nodeRingRadius({ connectedSegments: [crossing.segmentB.id] }));
+			const radius = Math.max(
+				4,
+				editor.nodeRingRadius({ connectedSegments: [crossing.segmentB.id] })
+			);
 			const marker = new THREE.Mesh(
 				new THREE.RingGeometry(radius - MARKER_THICKNESS, radius, 48),
 				markerMaterial
@@ -146,7 +149,12 @@ export function setupPlaceMode(editor: Editor) {
 			const endNodeId = nodeIds.get(snapshot.endNodeId);
 			if (!startNodeId || !endNodeId) continue;
 
-			const segment = previewGraph.createSegment(startNodeId, endNodeId, cloneLanes(snapshot.lanes));
+			const segment = previewGraph.createSegment(
+				startNodeId,
+				endNodeId,
+				cloneLanes(snapshot.lanes)
+			);
+			segment.offset = snapshot.offset;
 			if (snapshot.controlX !== undefined && snapshot.controlY !== undefined) {
 				segment.setControlPoint(
 					snapshot.controlX + placement.translation.dx,
@@ -155,7 +163,7 @@ export function setupPlaceMode(editor: Editor) {
 			}
 		}
 
-		ghostRenderer.render(buildRoadLayers(previewGraph));
+		ghostRenderer.update(previewGraph);
 		showCrossingMarkers();
 	};
 
@@ -189,8 +197,13 @@ export function setupPlaceMode(editor: Editor) {
 			const endNodeId = nodeIds.get(snapshot.endNodeId);
 			if (!startNodeId || !endNodeId || startNodeId === endNodeId) continue;
 
-			const segment = editor.graph.createSegment(startNodeId, endNodeId, cloneLanes(snapshot.lanes));
+			const segment = editor.graph.createSegment(
+				startNodeId,
+				endNodeId,
+				cloneLanes(snapshot.lanes)
+			);
 			segmentIds.set(snapshot.id, segment.id);
+			segment.offset = snapshot.offset;
 			if (snapshot.controlX !== undefined && snapshot.controlY !== undefined) {
 				segment.setControlPoint(
 					snapshot.controlX + placement.translation.dx,
@@ -199,13 +212,16 @@ export function setupPlaceMode(editor: Editor) {
 			}
 		}
 
+		// Each new node keeps its junction edits on the copied roads.
 		for (const snapshot of clipboard.nodes) {
 			const nodeId = nodeIds.get(snapshot.id);
-			if (!nodeId || !newNodeIds.has(nodeId)) continue;
+			if (!nodeId || !newNodeIds.has(nodeId) || !snapshot.junction) continue;
 			const node = editor.graph.nodes.get(nodeId);
 			if (!node) continue;
-			node.disabledConnections = editor.remapConnectionRefs(snapshot.disabledConnections, segmentIds);
-			node.enabledConnections = editor.remapConnectionRefs(snapshot.enabledConnections, segmentIds);
+			node.junction = mapJunction(snapshot.junction, (road, end) => {
+				const id = segmentIds.get(road);
+				return id ? { road: id, end } : null;
+			});
 		}
 
 		editor.resolveSegmentCrossings();
@@ -242,7 +258,7 @@ export function setupPlaceMode(editor: Editor) {
 
 	const cleanup = () => {
 		editor.setHoveredNode(null);
-		ghostRenderer.dispose();
+		ghostRenderer.destroy();
 		clearCrossingMarkers();
 		markerMaterial.dispose();
 	};

@@ -8,10 +8,9 @@ export class Segment {
 	controlX = $state<number | undefined>(undefined);
 	controlY = $state<number | undefined>(undefined);
 	lanes = $state<Lane[]>([]);
-	// Manual setback overrides — how far this end pulls back from its node,
-	// at least as far as the auto-computed trim. Undefined = use the auto value.
-	setbackStart = $state<number | undefined>(undefined);
-	setbackEnd = $state<number | undefined>(undefined);
+	// Metres the cross-section sits to the right of the drawn line, looking
+	// from the start node to the end node (0 = centred on the line).
+	offset = $state(0);
 
 	lanesKey = $derived(serializeLanes(this.lanes));
 	totalWidth = $derived(getTotalWidth(this.lanes));
@@ -21,6 +20,19 @@ export class Segment {
 		this.startNodeId = startNodeId;
 		this.endNodeId = endNodeId;
 		this.lanes = lanes;
+		this.ensureLaneIds();
+	}
+
+	// Gives every lane without one an id unused anywhere on the segment.
+	ensureLaneIds() {
+		const used = this.lanes.flatMap((l) => (l.id ? [l.id] : []));
+		let n = 0;
+		for (const lane of this.lanes) {
+			if (lane.id && this.lanes.filter((l) => l.id === lane.id).length === 1) continue;
+			while (used.includes(`l${n}`)) n++;
+			lane.id = `l${n}`;
+			used.push(lane.id);
+		}
 	}
 
 	get hasControlPoint() {
@@ -50,8 +62,7 @@ export class Segment {
 			controlY: this.controlY,
 			lanes: this.cloneLanes()
 		};
-		if (this.setbackStart !== undefined) data.setbackStart = this.setbackStart;
-		if (this.setbackEnd !== undefined) data.setbackEnd = this.setbackEnd;
+		if (this.offset) data.offset = this.offset;
 		return data;
 	}
 
@@ -64,8 +75,7 @@ export class Segment {
 		if (data.controlX !== undefined && data.controlY !== undefined) {
 			segment.setControlPoint(data.controlX, data.controlY);
 		}
-		segment.setbackStart = data.setbackStart;
-		segment.setbackEnd = data.setbackEnd;
+		segment.offset = data.offset ?? 0;
 		return segment;
 	}
 }

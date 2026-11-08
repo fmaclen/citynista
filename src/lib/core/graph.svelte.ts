@@ -110,9 +110,9 @@ export class Graph {
 		}
 	}
 
-	// Called after every operation that ends a user action. The editor hooks both
-	// its undo history and the persistence of the current map here, since a save
-	// marks the end of an operation.
+	// Called after every operation that ends a user action. The editor hooks its
+	// undo history and unsaved-changes tracking here; storage only happens when
+	// the user saves the city.
 	onSaved?: (serialized: string) => void;
 
 	save() {

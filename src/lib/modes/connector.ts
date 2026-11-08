@@ -1,15 +1,17 @@
 import type { ModeHandlers } from './types';
-import type { Editor } from '../editor.svelte';
-import type { LaneEndpoint } from '../core/lane-connections';
-import { sameLaneRef } from '../core/lane-connections';
+import type { ConnectorEndpoint, Editor } from '../editor.svelte';
 import { nodeHitAt, segmentHitAt } from './picking';
 
-// The lane connector: a transient mode scoped to one junction (entered by
-// double-clicking it). Each travel lane shows a dot at its mouth — a filled
-// disc where traffic enters the node, a hollow ring where it leaves. Only the
-// incoming discs are interactive: drag from one to an outgoing ring on another
-// arm to toggle that movement; the junction pavement recarves when a corner's
-// movements are all gone.
+// The lane connector: a transient mode scoped to one node (entered by
+// double-clicking it). Each lane shows a dot at its mouth: a filled disc where
+// traffic enters the node, a hollow ring where it leaves, and a filled disc on
+// lanes that connect either way (medians, grass, sidewalks). Drag from a disc
+// to a dot of the same kind on another road to add that connection, or to
+// remove it if it is there; the drawing follows the connections. Every
+// crossing at the node shows as a line straight across its road with a
+// handle: drag the handle to slide it along the road, double-click it to
+// switch the crossing off (a hollow handle) or on again. Dragging between
+// the two sidewalk dots of one road adds a crossing there.
 //
 // The mode is modal: while it's open nothing else hovers or selects. Clicking a
 // road or node is ignored (so you can't accidentally grab the road next door);
@@ -18,7 +20,9 @@ export function setupConnectorMode(editor: Editor): ModeHandlers {
 	editor.refreshConnectors();
 	const canvas = editor.sceneManager.getCanvas();
 
-	let dragStart: LaneEndpoint | null = null;
+	let dragStart: ConnectorEndpoint | null = null;
+	// A crosswalk being slid along its road (by its index on the node).
+	let crossingDrag: number | null = null;
 	// A mousedown on empty ground becomes an exit on mouseup, unless it turned
 	// into a drag.
 	let pendingExit = false;
@@ -31,10 +35,18 @@ export function setupConnectorMode(editor: Editor): ModeHandlers {
 		if (event.button !== 0) return;
 		const world = editor.sceneManager.screenToWorld(event.clientX, event.clientY);
 
+		const crossing = editor.crossingHandleAt(world.x, world.z);
+		if (crossing) {
+			crossingDrag = crossing.index;
+			pendingExit = false;
+			setCursor('grabbing');
+			return;
+		}
+
 		const near = editor.connectorEndpointNear(world.x, world.z);
 		if (near) {
-			// Only incoming dots are grabbable; an outgoing ring is a passive target.
-			dragStart = near.flow === 'in' ? near : null;
+			// Only discs are grabbable; an outgoing ring is a passive target.
+			dragStart = near.flow !== 'out' ? near : null;
 			pendingExit = false;
 			if (dragStart) setCursor('grabbing');
 			return;
@@ -50,15 +62,17 @@ export function setupConnectorMode(editor: Editor): ModeHandlers {
 	const onMouseMove = (event: MouseEvent) => {
 		const world = editor.sceneManager.screenToWorld(event.clientX, event.clientY);
 
+		if (crossingDrag !== null) {
+			editor.moveCrossing(crossingDrag, world.x, world.z);
+			return;
+		}
+
 		if (dragStart) {
-			// Feedback: green over a valid exit (an outgoing ring on another arm),
-			// red over anything else under the cursor.
+			// Feedback: green over a lane it can connect to, red over anything
+			// else under the cursor.
 			const near = editor.connectorEndpointNear(world.x, world.z);
-			const over = near && !sameLaneRef(near.ref, dragStart.ref) ? near : null;
-			// Any outgoing dot is a valid drop — a different arm (a turn/through),
-			// or the same arm (a U-turn). Cross-median moves and U-turns are added
-			// as explicit extras.
-			const valid = !!over && over.flow === 'out';
+			const over = near && near !== dragStart ? near : null;
+			const valid = !!over && editor.canConnect(dragStart, over);
 			editor.connectionRenderer.setDragFeedback(dragStart.ref, over ? over.ref : null, valid);
 			editor.connectionRenderer.showRubberBand(
 				dragStart.point,
@@ -72,18 +86,23 @@ export function setupConnectorMode(editor: Editor): ModeHandlers {
 		// that starts or ends there; only incoming dots are grabbable for a drag.
 		const near = editor.connectorEndpointNear(world.x, world.z);
 		editor.connectionRenderer.setHovered(near ? near.ref : null);
-		setCursor(near ? (near.flow === 'in' ? 'grab' : 'pointer') : 'default');
+		setCursor(near ? (near.flow !== 'out' ? 'grab' : 'pointer') : 'default');
 	};
 
 	const onMouseUp = (event: MouseEvent) => {
 		editor.connectionRenderer.hideRubberBand();
 
+		if (crossingDrag !== null) {
+			crossingDrag = null;
+			setCursor('default');
+			editor.graph.save();
+			return;
+		}
+
 		if (dragStart) {
 			const world = editor.sceneManager.screenToWorld(event.clientX, event.clientY);
 			const near = editor.connectorEndpointNear(world.x, world.z);
-			if (near && near.flow === 'out' && !sameLaneRef(near.ref, dragStart.ref)) {
-				editor.toggleConnection(dragStart.ref, near.ref);
-			}
+			if (near && near !== dragStart) editor.toggleConnection(dragStart, near);
 			dragStart = null;
 			setCursor('default');
 			return;
@@ -95,11 +114,16 @@ export function setupConnectorMode(editor: Editor): ModeHandlers {
 		}
 	};
 
-	// Double-clicking a lane dot toggles all of its movements off (a dead-end) or,
-	// if they're already all off, back on.
+	// Double-clicking a lane dot drops all of its connections; double-clicking
+	// a crossing's handle switches the crossing off or back on.
 	const onDoubleClick = (event: MouseEvent) => {
 		if (event.button !== 0) return;
 		const world = editor.sceneManager.screenToWorld(event.clientX, event.clientY);
+		const crossing = editor.crossingHandleAt(world.x, world.z);
+		if (crossing) {
+			editor.switchCrossing(crossing.index);
+			return;
+		}
 		const near = editor.connectorEndpointNear(world.x, world.z);
 		if (near) editor.toggleAllConnections(near);
 	};
@@ -113,6 +137,7 @@ export function setupConnectorMode(editor: Editor): ModeHandlers {
 
 	const cleanup = () => {
 		dragStart = null;
+		crossingDrag = null;
 		setCursor('default');
 		editor.connectionRenderer.clear();
 	};
