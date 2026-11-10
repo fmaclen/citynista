@@ -58,4 +58,31 @@ test.describe('Preset Hotbar', () => {
 		await expectSelectMode(page);
 		await expect(highway).toHaveAttribute('aria-pressed', 'false');
 	});
+
+	test('Delete empties the armed slot; slot changes survive a reload', async ({ page }) => {
+		await page.goto('/?topdown');
+		await expect(page.locator('nav')).toBeVisible();
+		const nav = page.locator('nav');
+
+		await nav.getByRole('button', { name: 'Path' }).click();
+		await page.locator('body').press('Delete');
+		await expect(nav.getByRole('button', { name: 'Empty slot 4' })).toBeVisible();
+		await expectSelectMode(page);
+
+		// Draw a street, select it, and drop its lanes into an empty slot.
+		await nav.getByRole('button', { name: 'Street' }).click();
+		await page.locator('canvas').click({ position: { x: 450, y: 360 } });
+		await page.locator('canvas').click({ position: { x: 800, y: 360 } });
+		await page.locator('body').press('Escape');
+		await page.locator('body').press('Escape');
+		await page.locator('canvas').click({ position: { x: 600, y: 360 } });
+		await expect(page.locator('aside')).toBeVisible();
+		await nav.getByRole('button', { name: 'Empty slot 6' }).click();
+		await expect(nav.getByRole('button', { name: 'Custom road' })).toBeVisible();
+
+		await saveCity(page);
+		await page.reload();
+		await expect(nav.getByRole('button', { name: 'Empty slot 4' })).toBeVisible();
+		await expect(nav.getByRole('button', { name: 'Custom road' })).toBeVisible();
+	});
 });
