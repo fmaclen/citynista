@@ -19,6 +19,7 @@ type Layer =
 	| 'pavement'
 	| 'trail'
 	| 'asphalt'
+	| 'dirt'
 	| 'grass'
 	| 'concrete'
 	| 'bars'
@@ -32,6 +33,7 @@ const ORDER: Layer[] = [
 	'pavement',
 	'trail',
 	'asphalt',
+	'dirt',
 	'grass',
 	'concrete',
 	'bars',
@@ -46,6 +48,7 @@ const SURFACES = new Set<Layer>([
 	'pavement',
 	'trail',
 	'asphalt',
+	'dirt',
 	'grass',
 	'concrete',
 	'island',
@@ -63,7 +66,7 @@ interface Part {
 }
 
 function roadParts(draw: RoadDraw): Part[] {
-	const fill = (key: 'pavement' | 'trail' | 'asphalt' | 'grass' | 'concrete'): Part => ({
+	const fill = (key: 'pavement' | 'trail' | 'dirt' | 'asphalt' | 'grass' | 'concrete'): Part => ({
 		layer: key,
 		colour: COLOURS[key],
 		paths: draw.fills.get(key) ?? []
@@ -72,6 +75,7 @@ function roadParts(draw: RoadDraw): Part[] {
 		fill('pavement'),
 		fill('trail'),
 		fill('asphalt'),
+		fill('dirt'),
 		fill('grass'),
 		fill('concrete'),
 		...draw.crossings.flatMap((c): Part[] => [
@@ -84,12 +88,13 @@ function roadParts(draw: RoadDraw): Part[] {
 }
 
 function junctionParts(draw: JunctionDraw): Part[] {
-	const carried = (surface: 'grass' | 'concrete' | 'hatch') =>
+	const carried = (surface: 'grass' | 'concrete' | 'dirt' | 'hatch') =>
 		draw.carried.filter((c) => c.surface === surface).flatMap((c) => c.paths);
 	const parts: Part[] = [
 		{ layer: 'pavement', colour: COLOURS.pavement, paths: draw.pavement },
 		{ layer: 'trail', colour: COLOURS.trail, paths: draw.trail },
 		{ layer: 'asphalt', colour: COLOURS.asphalt, paths: [...draw.asphalt, ...carried('hatch')] },
+		{ layer: 'dirt', colour: COLOURS.dirt, paths: carried('dirt') },
 		{ layer: 'grass', colour: COLOURS.grass, paths: [...carried('grass'), ...draw.verges] },
 		{ layer: 'concrete', colour: COLOURS.concrete, paths: carried('concrete') }
 	];

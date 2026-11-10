@@ -39,7 +39,7 @@ const verge = (width: number, material: Lane['material'] = 'grass'): Lane => ({
 });
 const walk = (width: number): Lane => ({
 	role: 'pedestrian',
-	material: 'pavement',
+	material: 'concrete',
 	width,
 	direction: 'bidirectional'
 });

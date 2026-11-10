@@ -21,17 +21,17 @@ export const LANE_TEMPLATES: LaneTemplate[] = [
 		id: 'street',
 		name: 'Street',
 		lanes: [
-			{ role: 'pedestrian', material: 'pavement', width: 2, direction: 'bidirectional' },
+			{ role: 'pedestrian', material: 'concrete', width: 2, direction: 'bidirectional' },
 			{ role: 'vehicle', material: 'asphalt', width: 3.5, direction: 'backward' },
 			{ role: 'vehicle', material: 'asphalt', width: 3.5, direction: 'forward' },
-			{ role: 'pedestrian', material: 'pavement', width: 2, direction: 'bidirectional' }
+			{ role: 'pedestrian', material: 'concrete', width: 2, direction: 'bidirectional' }
 		]
 	},
 	{
 		id: 'avenue',
 		name: 'Avenue',
 		lanes: [
-			{ role: 'pedestrian', material: 'pavement', width: 3, direction: 'bidirectional' },
+			{ role: 'pedestrian', material: 'concrete', width: 3, direction: 'bidirectional' },
 			{ role: 'buffer', material: 'grass', width: 1, direction: 'bidirectional' },
 			{ role: 'vehicle', material: 'asphalt', width: 3.5, direction: 'backward' },
 			{ role: 'vehicle', material: 'asphalt', width: 3.5, direction: 'backward' },
@@ -44,7 +44,7 @@ export const LANE_TEMPLATES: LaneTemplate[] = [
 			{ role: 'vehicle', material: 'asphalt', width: 3.5, direction: 'forward' },
 			{ role: 'vehicle', material: 'asphalt', width: 3.5, direction: 'forward' },
 			{ role: 'buffer', material: 'grass', width: 1, direction: 'bidirectional' },
-			{ role: 'pedestrian', material: 'pavement', width: 3, direction: 'bidirectional' }
+			{ role: 'pedestrian', material: 'concrete', width: 3, direction: 'bidirectional' }
 		]
 	},
 	{
@@ -68,7 +68,7 @@ export const LANE_TEMPLATES: LaneTemplate[] = [
 	{
 		id: 'path',
 		name: 'Path',
-		lanes: [{ role: 'pedestrian', material: 'pavement', width: 2, direction: 'bidirectional' }]
+		lanes: [{ role: 'pedestrian', material: 'concrete', width: 2, direction: 'bidirectional' }]
 	},
 	{
 		id: 'driveway',
@@ -124,7 +124,7 @@ const LEGACY_TYPE_MAP: Record<LegacyLaneType, { role: LaneRole; material: LaneMa
 	parking: { role: 'vehicle', material: 'asphalt' },
 	transit: { role: 'vehicle', material: 'asphalt' },
 	turn: { role: 'vehicle', material: 'asphalt' },
-	sidewalk: { role: 'pedestrian', material: 'pavement' },
+	sidewalk: { role: 'pedestrian', material: 'concrete' },
 	grass: { role: 'buffer', material: 'grass' },
 	median: { role: 'buffer', material: 'concrete' }
 };
@@ -158,7 +158,7 @@ export function migrateLane(stored: StoredLane): Lane {
 
 	if (!stored.material && stored.surface) {
 		const legacy = legacySurfaceMaterial(stored.surface);
-		material = base.role === 'pedestrian' ? 'pavement' : legacy.material;
+		material = base.role === 'pedestrian' ? 'concrete' : legacy.material;
 	}
 
 	if (stored.material) {
