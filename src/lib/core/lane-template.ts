@@ -71,12 +71,9 @@ export const LANE_TEMPLATES: LaneTemplate[] = [
 		lanes: [{ role: 'pedestrian', material: 'concrete', width: 2, direction: 'bidirectional' }]
 	},
 	{
-		id: 'driveway',
-		name: 'Driveway',
-		lanes: [
-			{ role: 'vehicle', material: 'asphalt', width: 3.5, direction: 'backward' },
-			{ role: 'vehicle', material: 'asphalt', width: 3.5, direction: 'forward' }
-		]
+		id: 'lane',
+		name: 'One-way lane',
+		lanes: [{ role: 'vehicle', material: 'asphalt', width: 3.5, direction: 'forward' }]
 	}
 ];
 

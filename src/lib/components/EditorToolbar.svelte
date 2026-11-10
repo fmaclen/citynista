@@ -32,6 +32,17 @@
 			return;
 		}
 
+		// While drawing, Delete empties the armed slot.
+		if (
+			(event.key === 'Delete' || event.key === 'Backspace') &&
+			editor.mode === 'draw' &&
+			!editor.continuationBrush
+		) {
+			event.preventDefault();
+			editor.clearSlot(editor.activeSlot);
+			return;
+		}
+
 		const index = parseInt(event.key, 10) - 1;
 		if (isNaN(index)) return;
 

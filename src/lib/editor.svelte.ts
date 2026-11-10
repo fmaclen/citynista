@@ -14,7 +14,13 @@ import type {
 	Lane,
 	LaneRef
 } from './core/types';
-import { cloneLanes, defaultHotbar, serializeLanes, reverseLanes } from './core/lane-template';
+import {
+	cloneLanes,
+	defaultHotbar,
+	HOTBAR_SIZE,
+	serializeLanes,
+	reverseLanes
+} from './core/lane-template';
 import { resolveCrossings } from './core/crossings';
 import type { Pt as Point } from './lab/model';
 import type { LaneConnection } from './core/lane-connections';
@@ -149,6 +155,23 @@ interface NodeClipboard {
 
 type EditorClipboard = SegmentClipboard | NodeClipboard;
 
+// The hotbar belongs to the browser, not to a city: it survives reloads and
+// switching cities. Read once when the editor is made; unreadable or missing
+// data keeps the defaults.
+const HOTBAR_KEY = 'citynista:hotbar';
+
+function storedHotbar() {
+	try {
+		const raw = localStorage.getItem(HOTBAR_KEY);
+		const stored: unknown = raw ? JSON.parse(raw) : null;
+		return Array.isArray(stored) && stored.length === HOTBAR_SIZE
+			? (stored as (Brush | null)[])
+			: null;
+	} catch {
+		return null;
+	}
+}
+
 export class Editor {
 	graph = new Graph();
 	private cityStore = new CityStore();
@@ -197,7 +220,7 @@ export class Editor {
 	controlBadges = $state<{ key: string; control: Control; x: number; y: number }[]>([]);
 
 	mode = $state<Mode>('select');
-	hotbar = $state<(Brush | null)[]>(defaultHotbar());
+	hotbar = $state<(Brush | null)[]>(storedHotbar() ?? defaultHotbar());
 	activeSlot = $state(0);
 	// A one-off brush from continuing an existing road's endpoint — overrides the
 	// active hotbar slot until you leave draw mode or pick another brush.
@@ -399,6 +422,7 @@ export class Editor {
 		const lanes = this.pickableLanes;
 		if (!lanes) return;
 		this.hotbar[index] = { name: 'Custom road', lanes: cloneLanes(lanes) };
+		this.saveHotbar();
 		this.continuationBrush = null;
 		this.clearSelection();
 		this.activeSlot = index;
@@ -409,7 +433,16 @@ export class Editor {
 	clearSlot(index: number) {
 		if (!this.hotbar[index]) return;
 		this.hotbar[index] = null;
+		this.saveHotbar();
 		if (this.activeSlot === index) this.mode = 'select';
+	}
+
+	private saveHotbar() {
+		try {
+			localStorage.setItem(HOTBAR_KEY, JSON.stringify(this.hotbar));
+		} catch {
+			// best-effort
+		}
 	}
 
 	private restoreState(serialized: string) {
