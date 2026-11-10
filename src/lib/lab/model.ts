@@ -11,7 +11,7 @@ export interface Pt {
 
 // What a lane carries. Connections only ever join lanes of the same kind.
 export type LaneKind = 'drive' | 'bus' | 'walk' | 'trail' | 'buffer';
-export type Surface = 'asphalt' | 'concrete' | 'grass' | 'pavement' | 'hatch';
+export type Surface = 'asphalt' | 'concrete' | 'grass' | 'pavement' | 'hatch' | 'dirt';
 // Travel relative to the road's drawing direction.
 export type Dir = 'fwd' | 'back' | 'both' | 'none';
 

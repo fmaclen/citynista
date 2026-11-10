@@ -49,6 +49,26 @@ async function selectSegment(page: import('@playwright/test').Page) {
 	await expect(page.locator('aside')).toBeVisible();
 }
 
+// Mean brightness (0-255) of the 3x3 screen pixels around a point.
+async function brightnessAt(page: import('@playwright/test').Page, x: number, y: number) {
+	const png = await page.screenshot({ clip: { x: x - 1.5, y: y - 1.5, width: 3, height: 3 } });
+	return page.evaluate(async (data) => {
+		const img = new Image();
+		img.src = `data:image/png;base64,${data}`;
+		await img.decode();
+		const canvas = document.createElement('canvas');
+		canvas.width = img.width;
+		canvas.height = img.height;
+		const ctx = canvas.getContext('2d');
+		if (!ctx) return -1;
+		ctx.drawImage(img, 0, 0);
+		const px = ctx.getImageData(0, 0, img.width, img.height).data;
+		let sum = 0;
+		for (let i = 0; i < px.length; i += 4) sum += (px[i] + px[i + 1] + px[i + 2]) / 3;
+		return sum / (px.length / 4);
+	}, png.toString('base64'));
+}
+
 test.describe('Lane Editor', () => {
 	test('panel opens on selection, edits widths, migrates legacy saves', async ({ page }) => {
 		await seedGraph(page);
@@ -77,7 +97,7 @@ test.describe('Lane Editor', () => {
 		expect(edited.lanes[0]).toEqual({
 			id: 'l0',
 			role: 'pedestrian',
-			material: 'pavement',
+			material: 'concrete',
 			width: 5,
 			direction: 'bidirectional'
 		});
@@ -117,9 +137,9 @@ test.describe('Lane Editor', () => {
 		const edited = segments.find((s: { id: string }) => s.id === 'segment-0');
 		expect(edited.lanes.map((lane: { material: string }) => lane.material)).toEqual([
 			'asphalt',
-			'pavement',
+			'concrete',
 			'asphalt',
-			'pavement'
+			'concrete'
 		]);
 	});
 
@@ -156,7 +176,7 @@ test.describe('Lane Editor', () => {
 			expect(segment.lanes[0]).toEqual({
 				id: 'l0',
 				role: 'pedestrian',
-				material: 'pavement',
+				material: 'concrete',
 				width: 6,
 				direction: 'bidirectional'
 			});
@@ -250,7 +270,7 @@ test.describe('Lane Editor', () => {
 		await panel.getByTitle('Direction of travel', { exact: false }).first().click();
 		await expect(page.locator('body')).toBeFocused();
 
-		await panel.getByText('Pavement').first().click();
+		await panel.getByText('Concrete').first().click();
 		await page.getByRole('option', { name: 'Grass' }).click();
 		await expect(panel.getByText('Grass')).toBeVisible();
 		await expect(page.locator('body')).toBeFocused();
@@ -259,5 +279,24 @@ test.describe('Lane Editor', () => {
 		await widthInputs.first().fill('5');
 		await widthInputs.first().press('Enter');
 		await expect(widthInputs.first()).toBeFocused();
+	});
+
+	test('a vehicle lane set to concrete draws light grey', async ({ page }) => {
+		await seedGraph(page);
+		const panel = page.locator('aside');
+		// The street's two car lanes sit either side of its centre line.
+		const lanes = [toScreen(-100, -1.75), toScreen(-100, 1.75)];
+		for (const p of lanes) expect(await brightnessAt(page, p.x, p.y)).toBeLessThan(90);
+
+		await selectSegment(page);
+		for (const row of [1, 2]) {
+			await panel.getByRole('listitem').nth(row).getByText('Asphalt').click();
+			await expect(page.getByRole('option')).toHaveText(['Asphalt', 'Concrete', 'Grass', 'Dirt']);
+			await page.getByRole('option', { name: 'Concrete' }).click();
+		}
+		// Deselect so the selection tint doesn't colour the road.
+		await panel.getByTitle('Close').click();
+		for (const p of lanes)
+			await expect.poll(() => brightnessAt(page, p.x, p.y)).toBeGreaterThan(130);
 	});
 });

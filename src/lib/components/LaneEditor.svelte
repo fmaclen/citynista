@@ -30,7 +30,6 @@
 	const MATERIAL_OPTIONS: { value: LaneMaterial; label: string }[] = [
 		{ value: 'asphalt', label: 'Asphalt' },
 		{ value: 'concrete', label: 'Concrete' },
-		{ value: 'pavement', label: 'Pavement' },
 		{ value: 'grass', label: 'Grass' },
 		{ value: 'dirt', label: 'Dirt' }
 	];

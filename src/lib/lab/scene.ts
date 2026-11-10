@@ -14,12 +14,16 @@ import {
 import { endKey, type Control, type Junction, type Place, type Pt } from './model';
 import { buildRoad, isRoadway, type EndCut, type Fill, type RoadDraw } from './road';
 
+// Sidewalk paving and raised concrete medians are the same concrete.
+const CONCRETE = '#a3a39e';
+
 export const COLOURS: Record<Fill | 'ground' | 'white' | 'yellow', string> = {
 	ground: '#6aa86f',
 	asphalt: '#3d3d3d',
-	pavement: '#a3a39e',
+	pavement: CONCRETE,
 	grass: '#4f9a55',
-	concrete: '#8f8f8a',
+	concrete: CONCRETE,
+	dirt: '#9c7f5a',
 	hatch: '#3d3d3d',
 	trail: '#55555a',
 	white: '#ecece4',
@@ -301,6 +305,13 @@ export class Scene {
 				]
 			),
 			COLOURS.asphalt
+		);
+		fillPaths(
+			all(
+				(r) => r.fills.get('dirt') ?? [],
+				(j) => j.carried.filter((c) => c.surface === 'dirt').flatMap((c) => c.paths)
+			),
+			COLOURS.dirt
 		);
 		for (const island of this.placeIslands()) fillPaths([island.path], COLOURS[island.surface]);
 		for (const fill of ['grass', 'concrete'] as const) {

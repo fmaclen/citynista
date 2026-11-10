@@ -33,24 +33,30 @@ import {
 	type Road
 } from '../lab/model';
 
+// The role says what a lane carries, the material what it is made of. A
+// buffer's material also decides its shape: asphalt is a painted (hatched)
+// median, concrete or grass a raised one.
 export function labLane(lane: EditorLane, fallbackId: string): Lane {
 	const id = lane.id ?? fallbackId;
+	const buffer = lane.role === 'buffer';
+	const surface =
+		lane.material === 'asphalt'
+			? buffer
+				? 'hatch'
+				: 'asphalt'
+			: lane.material === 'concrete'
+				? buffer
+					? 'concrete'
+					: 'pavement'
+				: lane.material;
 	if (lane.role === 'vehicle') {
 		const dir =
 			lane.direction === 'forward' ? 'fwd' : lane.direction === 'backward' ? 'back' : 'both';
-		return { id, kind: 'drive', width: lane.width, dir, surface: 'asphalt' };
+		return { id, kind: 'drive', width: lane.width, dir, surface };
 	}
 	if (lane.role === 'pedestrian') {
-		return { id, kind: 'walk', width: lane.width, dir: 'none', surface: 'pavement' };
+		return { id, kind: 'walk', width: lane.width, dir: 'none', surface };
 	}
-	const surface =
-		lane.material === 'asphalt'
-			? 'hatch'
-			: lane.material === 'concrete'
-				? 'concrete'
-				: lane.material === 'pavement'
-					? 'pavement'
-					: 'grass';
 	return { id, kind: 'buffer', width: lane.width, dir: 'none', surface };
 }
 

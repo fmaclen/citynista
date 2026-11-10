@@ -112,10 +112,10 @@ const GRAPH_DATA = {
 };
 
 const NODE_CONNECTION_LANES = [
-	{ id: 'l0', role: 'pedestrian', material: 'pavement', width: 2, direction: 'bidirectional' },
+	{ id: 'l0', role: 'pedestrian', material: 'concrete', width: 2, direction: 'bidirectional' },
 	{ id: 'l1', role: 'vehicle', material: 'asphalt', width: 3, direction: 'backward' },
 	{ id: 'l2', role: 'vehicle', material: 'asphalt', width: 3, direction: 'forward' },
-	{ id: 'l3', role: 'pedestrian', material: 'pavement', width: 2, direction: 'bidirectional' }
+	{ id: 'l3', role: 'pedestrian', material: 'concrete', width: 2, direction: 'bidirectional' }
 ];
 
 // Every arm starts at its junction, so l1 (backward) arrives and l2 (forward)
@@ -171,10 +171,10 @@ const SCALE = 720 / 500;
 const toScreen = (x: number, y: number) => ({ x: 640 + x * SCALE, y: 360 + y * SCALE });
 
 const EXPECTED_SEGMENT_0_LANES: SavedLane[] = [
-	{ id: 'l0', role: 'pedestrian', material: 'pavement', width: 2, direction: 'bidirectional' },
+	{ id: 'l0', role: 'pedestrian', material: 'concrete', width: 2, direction: 'bidirectional' },
 	{ id: 'l1', role: 'vehicle', material: 'asphalt', width: 3, direction: 'backward' },
 	{ id: 'l2', role: 'vehicle', material: 'asphalt', width: 3, direction: 'forward' },
-	{ id: 'l3', role: 'pedestrian', material: 'pavement', width: 2, direction: 'bidirectional' }
+	{ id: 'l3', role: 'pedestrian', material: 'concrete', width: 2, direction: 'bidirectional' }
 ];
 
 const laneKey = (lanes: SavedLane[]) =>

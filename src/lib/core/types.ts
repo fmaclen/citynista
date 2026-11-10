@@ -1,5 +1,5 @@
 export type LaneRole = 'vehicle' | 'pedestrian' | 'buffer';
-export type LaneMaterial = 'asphalt' | 'concrete' | 'pavement' | 'grass' | 'dirt';
+export type LaneMaterial = 'asphalt' | 'concrete' | 'grass' | 'dirt';
 export type LegacyLaneSurface = 'asphalt' | 'concrete' | 'grass' | 'curb' | 'paint';
 export type LaneDirection = 'forward' | 'backward' | 'bidirectional';
 
