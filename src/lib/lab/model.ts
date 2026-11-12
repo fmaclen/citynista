@@ -52,6 +52,10 @@ export interface Road {
 	id: string;
 	points: PathPoint[];
 	stretches: Stretch[];
+	// Metres the whole cross-section moves further right for each metre
+	// along, on top of its stretches' offsets: a road shifted differently at
+	// its two ends runs straight between them.
+	lean?: number;
 	// Height along the road, flat for now.
 	height: number;
 	// How far before each end a raised median stops in its rounded nose

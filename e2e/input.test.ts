@@ -1,18 +1,14 @@
 import { expect, test, type Page } from '@playwright/test';
+import { createLanesFrom } from '../src/lib/core/lane-template';
+import { openGraph } from './scenes';
 import { saveCity } from './save';
 
 const STORAGE_KEY = 'citynista-graph-v2';
 const SCALE = 720 / 500;
 const toScreen = (x: number, y: number) => ({ x: 640 + x * SCALE, y: 360 + y * SCALE });
 
-async function seed(page: Page, data: unknown) {
-	await page.goto('/?topdown');
-	await expect(page.locator('canvas')).toBeVisible();
-	await page.evaluate(({ key, data }) => localStorage.setItem(key, JSON.stringify(data)), {
-		key: STORAGE_KEY,
-		data
-	});
-	await page.reload();
+async function seed(page: Page, data: object) {
+	await openGraph(page, data);
 	await expect(page.locator('nav')).toBeVisible();
 }
 
@@ -28,7 +24,7 @@ test.describe('Drags that end off the canvas', () => {
 				{ id: 'a', x: -200, y: 0 },
 				{ id: 'b', x: 200, y: 0 }
 			],
-			segments: [{ id: 's', startNodeId: 'a', endNodeId: 'b', laneTemplateId: 'street' }]
+			segments: [{ id: 's', startNodeId: 'a', endNodeId: 'b', lanes: createLanesFrom('street') }]
 		});
 		const mid = toScreen(0, 0);
 		await page.mouse.click(mid.x, mid.y);
@@ -59,7 +55,7 @@ test.describe('Drags that end off the canvas', () => {
 				{ id: 'a', x: 150, y: -150 },
 				{ id: 'b', x: 250, y: -150 }
 			],
-			segments: [{ id: 's', startNodeId: 'a', endNodeId: 'b', laneTemplateId: 'street' }]
+			segments: [{ id: 's', startNodeId: 'a', endNodeId: 'b', lanes: createLanesFrom('street') }]
 		});
 		const on = toScreen(200, -150);
 		await page.mouse.click(on.x, on.y);

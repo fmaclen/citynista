@@ -1,4 +1,6 @@
 import { expect, test } from '@playwright/test';
+import { createLanesFrom } from '../src/lib/core/lane-template';
+import { openGraph } from './scenes';
 import { saveCity } from './save';
 
 const STORAGE_KEY = 'citynista-graph-v2';
@@ -10,8 +12,18 @@ const GRAPH_DATA = {
 		{ id: 'node-2', x: 200, y: 0 }
 	],
 	segments: [
-		{ id: 'segment-0', startNodeId: 'node-0', endNodeId: 'node-1', laneTemplateId: 'street' },
-		{ id: 'segment-1', startNodeId: 'node-1', endNodeId: 'node-2', laneTemplateId: 'avenue' }
+		{
+			id: 'segment-0',
+			startNodeId: 'node-0',
+			endNodeId: 'node-1',
+			lanes: createLanesFrom('street')
+		},
+		{
+			id: 'segment-1',
+			startNodeId: 'node-1',
+			endNodeId: 'node-2',
+			lanes: createLanesFrom('avenue')
+		}
 	]
 };
 
@@ -21,15 +33,7 @@ const toScreen = (x: number, y: number) => ({ x: 640 + x * SCALE, y: 360 + y * S
 
 test.describe('Marquee Selection', () => {
 	test('dragging a rectangle selects the contained nodes and segments', async ({ page }) => {
-		await page.goto('/?topdown');
-		await expect(page.locator('canvas')).toBeVisible();
-		await page.evaluate(
-			({ key, data }) => {
-				localStorage.setItem(key, JSON.stringify(data));
-			},
-			{ key: STORAGE_KEY, data: GRAPH_DATA }
-		);
-		await page.reload();
+		await openGraph(page, GRAPH_DATA);
 		await expect(page.locator('canvas')).toBeVisible();
 		await expect(page.locator('nav')).toBeVisible();
 

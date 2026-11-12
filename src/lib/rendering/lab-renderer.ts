@@ -190,7 +190,8 @@ export class LabRenderer {
 		this.builder.hold(nodeId);
 	}
 
-	// The shortest and longest a node's taper may be set to.
+	// The shortest and longest each road may be set to stop short of a node,
+	// by segment id: its side of a taper, or its setback at a junction.
 	taperLimits(nodeId: string) {
 		return this.builder.limits.get(nodeId);
 	}

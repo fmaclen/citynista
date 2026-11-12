@@ -7,6 +7,7 @@
 
 import type { Graph } from './graph.svelte';
 import { segmentEnds } from './attach';
+import { offsetAt } from './road-line';
 import type { Segment } from './segment.svelte';
 import type { JunctionConnection, JunctionCrossing, Lane as EditorLane } from './types';
 import { samplePath, type PathSample } from '../lab/geometry';
@@ -21,7 +22,6 @@ import {
 	type RoadGeo
 } from '../lab/junction';
 import { kindOf, lateral, sidePoint } from '../lab/connect';
-import { crossesRoadway } from '../lab/link';
 import {
 	endKey,
 	type Connection,
@@ -187,9 +187,6 @@ const TAPER_PER_SHIFT = 6;
 const MIN_TAPER = 8;
 // A shift smaller than this needs no taper at all.
 const NO_SHIFT = 0.05;
-// A crossing moved over from the old way of storing it lands this far beyond
-// the end of its road's taper.
-const MIGRATED_CROSSING = 3;
 // The first guess for a change of cross-section, before the lanes' shifts
 // are known.
 const FIRST_TAPER = 16;
@@ -236,9 +233,31 @@ const mirror = (key: string) =>
 		.map((s) => s.replace(/:o$/, ':x').replace(/:i$/, ':o').replace(/:x$/, ':i'))
 		.join(',');
 
-function setbacks(arms: Arm[], taper: number | undefined) {
+const dot = (a: Pt, b: Pt) => a.x * b.x + a.y * b.y;
+
+// Where two sides of a node meet (its lanes find their way across), how far
+// each side's lead road stops short: its side of the taper (`reach`: set by
+// hand, held, or what the shifts need; unknown at first), never less than a
+// little, nor less than a bend needs.
+function linkSetbacks(a: Arm, b: Arm, reach: [number | undefined, number | undefined]) {
+	const d = dot(a.out, b.out);
+	// Offsets read across the node, to the right of the way through it.
+	const placeA = a.end === 'end' ? a.segment.offsetEnd : -a.segment.offsetStart;
+	const placeB = b.end === 'start' ? b.segment.offsetStart : -b.segment.offsetEnd;
+	const same = mirror(a.key) === b.key && Math.abs(placeA - placeB) < 0.01;
+	// A bend: both sides pull back far enough for the lanes to turn on a
+	// curve (R tan(deflection / 2)).
+	const deflection = Math.PI - Math.acos(Math.max(-1, Math.min(1, d)));
+	const r = 1.5 * Math.max(a.half, b.half);
+	const bend = d < -0.995 ? 0 : r * Math.tan(Math.min(deflection, 2.4) / 2);
+	return reach.map((x) => Math.max(THROUGH_GAP, x ?? (same ? 0 : FIRST_TAPER / 2), bend));
+}
+
+// At a junction of three or more roads, how far each road stops short of the
+// node when nothing is set by hand: far enough for curb corners or for the
+// crossing roads' curb lines.
+function setbacks(arms: Arm[]) {
 	const out = new Map<Arm, number>();
-	const dot = (a: Pt, b: Pt) => a.x * b.x + a.y * b.y;
 	// Each arm's straight-on partner: the most nearly opposite arm, if it is
 	// nearly opposite.
 	const partner = new Map<Arm, Arm>();
@@ -250,24 +269,6 @@ function setbacks(arms: Arm[], taper: number | undefined) {
 		if (partner.has(p.a) || partner.has(p.b)) continue;
 		partner.set(p.a, p.b);
 		partner.set(p.b, p.a);
-	}
-	if (arms.length === 2) {
-		const [a, b] = arms;
-		const d = dot(a.out, b.out);
-		// Offsets read across the node, to the right of the way through it.
-		const placeA = a.end === 'end' ? a.segment.offset : -a.segment.offset;
-		const placeB = b.end === 'start' ? b.segment.offset : -b.segment.offset;
-		const same = mirror(a.key) === b.key && Math.abs(placeA - placeB) < 0.01;
-		const half = (taper ?? (same ? 0 : FIRST_TAPER)) / 2;
-		// A bend: both sides pull back far enough for the lanes to turn on a
-		// curve (R tan(deflection / 2)).
-		const deflection = Math.PI - Math.acos(Math.max(-1, Math.min(1, d)));
-		const r = 1.5 * Math.max(a.half, b.half);
-		const bend = d < -0.995 ? 0 : r * Math.tan(Math.min(deflection, 2.4) / 2);
-		const trim = Math.max(THROUGH_GAP, half, bend);
-		out.set(a, trim);
-		out.set(b, trim);
-		return out;
 	}
 	// A road without sidewalks is a driveway when it is narrow from curb to
 	// curb (medians included) and no road faces it across the node: it stops
@@ -317,7 +318,6 @@ function linkGroups(arms: Arm[], sides: Record<string, string> | undefined): [Ar
 	const mains = arms.filter((a) => !attached(a));
 	if (mains.length > 2) return null;
 	const lead = mains[0] ?? arms[0];
-	const dot = (p: Pt, q: Pt) => p.x * q.x + p.y * q.y;
 	const a = arms.filter(
 		(x) => x === lead || (x !== mains[1] && attached(x) && dot(x.out, lead.out) > 0)
 	);
@@ -436,17 +436,20 @@ export class PlaceBuilder {
 	// make, and the shortest it may be set to, from the last build.
 	private tapers = new Map<string, number>();
 	private least = new Map<string, number>();
-	// Each such node's taper limits, for its handles.
-	limits = new Map<string, { min: number; max: number }>();
-	// A node whose taper holds still (its connections are being edited).
-	private held: { node: string; taper: number } | null = null;
+	// How far each road may be set to stop short of a node (node id, then
+	// segment id), for the handles: at a node of two roads, its side of the
+	// taper; at a junction of more, its setback.
+	limits = new Map<string, Map<string, { min: number; max: number }>>();
+	// A node whose tapers hold still (its connections are being edited), each
+	// side's setback by segment id.
+	private held: { node: string; setbacks: Map<string, number> } | null = null;
 
-	// Keeps a node's taper where it is until released.
+	// Keeps a node's tapers where they are until released.
 	hold(nodeId: string | null) {
-		const taper = nodeId ? (this.used.get(nodeId) ?? 0) : 0;
-		this.held = nodeId ? { node: nodeId, taper } : null;
+		this.held = nodeId ? { node: nodeId, setbacks: new Map(this.used.get(nodeId)) } : null;
 	}
-	private used = new Map<string, number>();
+	// Each node of two roads' setbacks from the last build, by segment id.
+	private used = new Map<string, Map<string, number>>();
 
 	// A node's stored junction data as JSON, read once per object: edits
 	// always replace the object.
@@ -548,7 +551,7 @@ export class PlaceBuilder {
 				if (!segment || !curve) continue;
 				const end: End = segment.startNodeId === node.id ? 'start' : 'end';
 				const section = this.section(segment);
-				const off = segment.offset;
+				const off = offsetAt(segment, end);
 				const out = outward(curve, end);
 				// The drawing direction leaves the start and arrives at the end.
 				const along = end === 'start' ? out : { x: -out.x, y: -out.y };
@@ -569,45 +572,76 @@ export class PlaceBuilder {
 			const groups = linkGroups(arms, node.junction?.sides);
 			if (groups) links.set(node.id, groups);
 			else
-				for (const [arm, trim] of setbacks(arms, undefined))
-					trims.set(`${arm.segment.id}:${arm.end}`, trim);
+				for (const [arm, trim] of setbacks(arms)) trims.set(`${arm.segment.id}:${arm.end}`, trim);
 		}
-		// Nodes of two roads: the taper (set by hand, held, or the one the
-		// shifts need), never shorter than the shifts allow nor so long it
-		// runs into the road's far node.
+		// How much of a road its node at `end` may take: half of it when the
+		// far node is one where lanes find their way across (the two may meet
+		// in its middle), otherwise up to the far node's setback, leaving some.
+		const roomOf = (arm: Arm) => {
+			const other = arm.end === 'start' ? arm.segment.endNodeId : arm.segment.startNodeId;
+			const farEnd = arm.end === 'start' ? 'end' : 'start';
+			const length = curves.get(arm.segment.id)?.length ?? 0;
+			return links.has(other)
+				? length / 2
+				: length - (trims.get(`${arm.segment.id}:${farEnd}`) ?? 0) - ROAD_LEFT;
+		};
+		// Junctions of three or more: a road's setback set by hand makes the
+		// junction bigger on it, never smaller than its curb corners need nor
+		// past the far node's setback. Every automatic setback is known first,
+		// so this reads the same whichever node comes first.
 		this.limits.clear();
-		for (const [nodeId, groups] of links) {
-			const arms = [groups[0][0], groups[1][0]];
-			const node = graph.nodes.get(nodeId)!;
-			let room = Infinity;
-			for (const arm of [...groups[0], ...groups[1]]) {
-				const other = arm.end === 'start' ? arm.segment.endNodeId : arm.segment.startNodeId;
-				const farEnd = arm.end === 'start' ? 'end' : 'start';
-				const length = curves.get(arm.segment.id)?.length ?? 0;
-				// A road between two such nodes is shared half and half: the two
-				// tapers may meet in its middle.
-				const room_ = links.has(other)
-					? length / 2
-					: length - (trims.get(`${arm.segment.id}:${farEnd}`) ?? 0) - ROAD_LEFT;
-				room = Math.min(room, room_);
+		const hand: [string, number][] = [];
+		for (const [nodeId, arms] of armsAt) {
+			if (links.has(nodeId)) continue;
+			const set = graph.nodes.get(nodeId)?.junction?.setbacks;
+			const limits = new Map<string, { min: number; max: number }>();
+			for (const arm of arms) {
+				const key = `${arm.segment.id}:${arm.end}`;
+				const min = trims.get(key) ?? 0;
+				const max = Math.max(min, roomOf(arm));
+				limits.set(arm.segment.id, { min, max });
+				const value = set?.[arm.segment.id];
+				if (value !== undefined) hand.push([key, Math.min(max, Math.max(min, value))]);
 			}
-			const max = Math.max(0, room * 2);
-			const min = Math.min(this.least.get(nodeId) ?? THROUGH_GAP * 2, max);
-			this.limits.set(nodeId, { min, max });
-			const held = this.held?.node === nodeId ? this.held.taper : undefined;
-			const set = node.junction?.taper;
-			const wanted = set ?? held ?? this.tapers.get(nodeId);
-			const taper =
-				wanted === undefined
-					? undefined
-					: Math.min(max, set !== undefined ? Math.max(min, wanted) : wanted);
-			const result = setbacks(arms, taper);
-			for (const [k, group] of groups.entries())
-				for (const arm of group) {
-					const trim = Math.min(result.get(arms[k])!, room);
-					trims.set(`${arm.segment.id}:${arm.end}`, trim);
-					this.used.set(nodeId, trim * 2);
-				}
+			this.limits.set(nodeId, limits);
+		}
+		for (const [key, trim] of hand) trims.set(key, trim);
+		// Nodes of two sides: each side's taper (set by hand, held, or half
+		// what the shifts need), never shorter than the shifts allow nor so
+		// long it runs into the road's far node. Left to itself the taper is
+		// the same length both sides, as long as the side with least room
+		// allows.
+		for (const [nodeId, groups] of links) {
+			const node = graph.nodes.get(nodeId)!;
+			const lead = [groups[0][0], groups[1][0]];
+			const rooms = groups.map((group) => Math.min(...group.map(roomOf)));
+			const shared = Math.min(...rooms);
+			const need = this.tapers.get(nodeId);
+			const least = (this.least.get(nodeId) ?? THROUGH_GAP * 2) / 2;
+			const limits = new Map<string, { min: number; max: number }>();
+			const reach = lead.map((arm, k) => {
+				const id = arm.segment.id;
+				const max = Math.max(0, rooms[k]);
+				const min = Math.min(least, max);
+				limits.set(id, { min, max });
+				const set = node.junction?.setbacks?.[id];
+				if (set !== undefined) return { value: Math.min(max, Math.max(min, set)), room: rooms[k] };
+				const held = this.held?.node === nodeId ? this.held.setbacks.get(id) : undefined;
+				const wanted = held ?? (need === undefined ? undefined : need / 2);
+				return {
+					value: wanted === undefined ? undefined : Math.min(Math.max(0, shared), wanted),
+					room: shared
+				};
+			});
+			if (groups.every((g) => g.length === 1)) this.limits.set(nodeId, limits);
+			const result = linkSetbacks(lead[0], lead[1], [reach[0].value, reach[1].value]);
+			const used = new Map<string, number>();
+			for (const [k, group] of groups.entries()) {
+				const trim = Math.min(result[k], reach[k].room);
+				used.set(lead[k].segment.id, trim);
+				for (const arm of group) trims.set(`${arm.segment.id}:${arm.end}`, trim);
+			}
+			this.used.set(nodeId, used);
 		}
 
 		const roads: Road[] = [];
@@ -633,16 +667,22 @@ export class PlaceBuilder {
 			// Junctions are keyed on the road's shape (numbered); its crossings
 			// come later, onto a fresh copy each build.
 			const ids = segment.lanes.map((l) => l.id).join();
-			const key = `${curveKeys.get(segment.id)}|${d0}|${d1}|${segment.offset}|${segment.lanesKey}|${ids}`;
+			const shifts = `${segment.offsetStart},${segment.offsetEnd}`;
+			const key = `${curveKeys.get(segment.id)}|${d0}|${d1}|${shifts}|${segment.lanesKey}|${ids}`;
 			let shape = this.shapes.get(segment.id);
 			if (shape?.key !== key) {
 				const lanes = segment.lanes.map((l, i) => labLane(l, `l${i}`));
+				// The shift blends from one end's to the other's with distance
+				// along the whole segment (road-line.ts); the road starts d0 in.
+				const lean = (segment.offsetEnd - segment.offsetStart) / (curve.length || 1);
+				const offset = segment.offsetStart + lean * d0;
 				const road: Road = {
 					id: segment.id,
 					points: piece(curve, d0, curve.length - d1),
-					stretches: [{ at: 0, taper: 0, align: 'centre', offset: segment.offset, lanes }],
+					stretches: [{ at: 0, taper: 0, align: 'centre', offset, lanes }],
 					height: 0
 				};
+				if (lean) road.lean = lean;
 				shape = { key, road, path: samplePath(road), version: ++this.version };
 				this.shapes.set(segment.id, shape);
 			}
@@ -655,7 +695,6 @@ export class PlaceBuilder {
 			roads.map((r) => [r.id, { road: r, path: this.shapes.get(r.id)!.path }])
 		);
 		const junctions = new Map<string, Junction>();
-		let migrated = false;
 		const junctionKeys = new Map<string, string>();
 		for (const [nodeId, arms] of armsAt) {
 			const node = graph.nodes.get(nodeId)!;
@@ -691,46 +730,6 @@ export class PlaceBuilder {
 				}
 			}
 			const d = defaults(junction, geos);
-			// Crossings used to be stored as a sidewalk connection from one road
-			// end to the opposite sidewalk of the other: they become crossings
-			// across the first road, just beyond the node.
-			const info = endsOf(junction, geos);
-			const old = (stored?.added ?? []).filter((c) => {
-				const x = laneEndOf(info, c.from);
-				const y = laneEndOf(info, c.to);
-				return (
-					!!x &&
-					!!y &&
-					x.end !== y.end &&
-					x.lane.lane.kind === 'walk' &&
-					crossesRoadway(x.end, x.lane, y.end, y.lane)
-				);
-			});
-			if (stored && old.length) {
-				const moved: JunctionCrossing[] = [];
-				for (const c of old) {
-					const x = laneEndOf(info, c.from)!;
-					const walks = x.end.lanes.filter((l) => l.lane.kind === 'walk');
-					const across = walks.reduce((far, l) =>
-						Math.abs(l.left - x.lane.left) > Math.abs(far.left - x.lane.left) ? l : far
-					);
-					const segment = graph.segments.get(c.from.road);
-					const trim = trims.get(`${c.from.road}:${c.from.end}`) ?? 0;
-					if (segment && across !== x.lane)
-						moved.push({
-							road: c.from.road,
-							end: c.from.end,
-							lanes: [c.from.lane, across.ref.lane],
-							at: trim + MIGRATED_CROSSING
-						});
-				}
-				node.junction = {
-					...stored,
-					added: (stored.added ?? []).filter((c) => !old.includes(c)),
-					crossings: [...(stored.crossings ?? []), ...moved]
-				};
-				migrated = true;
-			}
 			// The defaults, less those removed by hand, plus those added by hand.
 			const keyOf = (r: Connection['from']) => `${endKey(r)}/${r.lane}`;
 			const same = (x: Connection, y: Connection) =>
@@ -849,20 +848,23 @@ export class PlaceBuilder {
 		for (const id of [...this.roadVersions.keys()])
 			if (!roadKeys.has(id)) this.roadVersions.delete(id);
 
-		let settled = !migrated;
+		let settled = true;
 		for (const [nodeId, junction] of junctions) {
-			if (!links.has(nodeId)) continue;
+			const groups = links.get(nodeId);
+			if (!groups) continue;
 			const { need, least } = this.taperOf(nodeId, junction, geos, junctionKeys.get(nodeId)!);
-			// A taper set by hand is held to the least its shifts allow, which
+			const set = groups.map((g) => graph.nodes.get(nodeId)?.junction?.setbacks?.[g[0].segment.id]);
+			// A side set by hand is held to the least its shifts allow, which
 			// is only known now (on load, say): build again with it.
-			const set = graph.nodes.get(nodeId)?.junction?.taper;
-			if (set !== undefined && set < least - 0.01 && this.least.get(nodeId) !== least)
+			if (
+				set.some((s) => s !== undefined && s < least / 2 - 0.005) &&
+				this.least.get(nodeId) !== least
+			)
 				settled = false;
 			this.least.set(nodeId, least);
 			if (Math.abs((this.tapers.get(nodeId) ?? -1) - need) > 0.01) {
 				this.tapers.set(nodeId, need);
-				if (graph.nodes.get(nodeId)?.junction?.taper === undefined && this.held?.node !== nodeId)
-					settled = false;
+				if (set.some((s) => s === undefined) && this.held?.node !== nodeId) settled = false;
 			}
 		}
 		for (const id of [...this.tapers.keys()]) if (!junctions.has(id)) this.tapers.delete(id);

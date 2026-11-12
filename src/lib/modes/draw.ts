@@ -582,7 +582,7 @@ export function setupDrawMode(editor: Editor): ModeHandlers {
 			const startNode = editor.graph.nodes.get(startNodeId);
 			const control = startNode ? solveControl(startNode, target) : null;
 			const { endId: endNodeId, segment } = layRoad(editor.graph, startNodeId, target, control);
-			if (segment) editor.resolveSegmentCrossings();
+			if (segment) editor.resolveSegmentCrossings([segment.id]);
 
 			editor.rebuildRoads();
 			editor.graph.save();

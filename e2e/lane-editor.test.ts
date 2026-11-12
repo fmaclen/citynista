@@ -1,18 +1,29 @@
 import { expect, test } from '@playwright/test';
+import { createLanesFrom } from '../src/lib/core/lane-template';
+import { openGraph } from './scenes';
 import { saveCity } from './save';
 
 const STORAGE_KEY = 'citynista-graph-v2';
 
-// Legacy save format: segments reference a template id instead of owning lanes.
-const LEGACY_GRAPH_DATA = {
+const GRAPH_DATA = {
 	nodes: [
 		{ id: 'node-0', x: -200, y: 0 },
 		{ id: 'node-1', x: 0, y: 0 },
 		{ id: 'node-2', x: 200, y: 0 }
 	],
 	segments: [
-		{ id: 'segment-0', startNodeId: 'node-0', endNodeId: 'node-1', laneTemplateId: 'street' },
-		{ id: 'segment-1', startNodeId: 'node-1', endNodeId: 'node-2', laneTemplateId: 'avenue' }
+		{
+			id: 'segment-0',
+			startNodeId: 'node-0',
+			endNodeId: 'node-1',
+			lanes: createLanesFrom('street')
+		},
+		{
+			id: 'segment-1',
+			startNodeId: 'node-1',
+			endNodeId: 'node-2',
+			lanes: createLanesFrom('avenue')
+		}
 	]
 };
 
@@ -21,15 +32,7 @@ const SCALE = 720 / 500;
 const toScreen = (x: number, y: number) => ({ x: 640 + x * SCALE, y: 360 + y * SCALE });
 
 async function seedGraph(page: import('@playwright/test').Page) {
-	await page.goto('/?topdown');
-	await expect(page.locator('canvas')).toBeVisible();
-	await page.evaluate(
-		({ key, data }) => {
-			localStorage.setItem(key, JSON.stringify(data));
-		},
-		{ key: STORAGE_KEY, data: LEGACY_GRAPH_DATA }
-	);
-	await page.reload();
+	await openGraph(page, GRAPH_DATA);
 	await expect(page.locator('canvas')).toBeVisible();
 	await expect(page.locator('nav')).toBeVisible();
 }
@@ -82,7 +85,7 @@ async function blueAt(page: import('@playwright/test').Page, at: { x: number; y:
 }
 
 test.describe('Lane Editor', () => {
-	test('panel opens on selection, edits widths, migrates legacy saves', async ({ page }) => {
+	test('panel opens on selection and edits widths', async ({ page }) => {
 		await seedGraph(page);
 		await selectSegment(page);
 
@@ -113,7 +116,6 @@ test.describe('Lane Editor', () => {
 			width: 5,
 			direction: 'bidirectional'
 		});
-		expect(edited.laneTemplateId).toBeUndefined();
 	});
 
 	test('the panel never scrolls sideways and the longest labels fit', async ({ page }) => {

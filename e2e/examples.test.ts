@@ -1,6 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import { readFileSync } from 'node:fs';
-import { openScene } from './scenes';
+import { EXAMPLES, SCHEMA_VERSION } from '../src/lib/core/city-store';
+import { openScene, readScene } from './scenes';
 import { saveCity } from './save';
 
 // A loaded scene lands in the current city of the localStorage city library.
@@ -60,6 +61,104 @@ test.describe('Cities', () => {
 		const corner = graph.nodes.find((node: { id: string }) => node.id === 'node-1');
 		expect(corner).toEqual({ id: 'node-1', x: 0, y: 0 });
 		expect(graph.segments[0].lanes.length).toBeGreaterThan(0);
+	});
+
+	test('cities saved with another schema version, or none, are ignored and cleared', async ({
+		page
+	}) => {
+		const graph = readScene('median-corner');
+		const stale = { nodes: [], segments: [] };
+		await page.goto('/robots.txt');
+		await page.evaluate(
+			({ graph, stale, version }) => {
+				localStorage.clear();
+				const put = (key: string, value: unknown) =>
+					localStorage.setItem(key, JSON.stringify(value));
+				put('citynista:cities', [
+					{ id: 'current', name: 'current', version },
+					{ id: 'unversioned', name: 'unversioned' },
+					{ id: 'newer', name: 'newer', version: version + 1 },
+					// Listed at this version, but the record itself is older.
+					{ id: 'old-record', name: 'old-record', version }
+				]);
+				put('citynista:city:current', {
+					id: 'current',
+					name: 'current',
+					graph,
+					camera: null,
+					version
+				});
+				put('citynista:city:unversioned', {
+					id: 'unversioned',
+					name: 'unversioned',
+					graph: stale,
+					camera: null
+				});
+				put('citynista:cam:unversioned', { zoom: 1, targetX: 0, targetZ: 0, azimuth: 0, polar: 0 });
+				put('citynista:city:newer', {
+					id: 'newer',
+					name: 'newer',
+					graph: stale,
+					camera: null,
+					version: version + 1
+				});
+				put('citynista:city:old-record', {
+					id: 'old-record',
+					name: 'old-record',
+					graph: stale,
+					camera: null
+				});
+				localStorage.setItem('citynista:current-city', 'current');
+			},
+			{ graph, stale, version: SCHEMA_VERSION }
+		);
+		await page.goto('/?topdown');
+		await expect(cityBar(page).getByText('current', { exact: true })).toBeVisible();
+
+		// The current city loads as stored.
+		await saveCity(page);
+		expect((await storedCity(page, 'current')).graph.segments).toHaveLength(graph.segments.length);
+
+		// The others drop out of the library, their keys gone with them.
+		await cityBar(page).getByLabel('City menu').click();
+		for (const id of ['unversioned', 'newer', 'old-record'])
+			await expect(page.getByRole('menuitem', { name: id, exact: true })).toHaveCount(0);
+		await page.keyboard.press('Escape');
+		expect(await storedIndex(page)).toEqual([
+			{ id: 'current', name: 'current', version: SCHEMA_VERSION }
+		]);
+		const left = await page.evaluate(() =>
+			Object.keys(localStorage).filter((k) => k.startsWith('citynista:'))
+		);
+		expect(left.sort()).toEqual([
+			'citynista:cities',
+			'citynista:city:current',
+			'citynista:current-city'
+		]);
+	});
+
+	test('a stale current city boots a fresh empty one instead', async ({ page }) => {
+		await page.goto('/robots.txt');
+		await page.evaluate((graph) => {
+			localStorage.clear();
+			localStorage.setItem('citynista:cities', JSON.stringify([{ id: 'old', name: 'old' }]));
+			localStorage.setItem(
+				'citynista:city:old',
+				JSON.stringify({ id: 'old', name: 'old', graph, camera: null })
+			);
+			localStorage.setItem('citynista:current-city', 'old');
+		}, readScene('median-corner'));
+		await page.goto('/?topdown');
+		await expect(cityBar(page).getByText('untitled', { exact: true })).toBeVisible();
+		expect(await storedCity(page, 'old')).toBeNull();
+		expect((await storedCity(page, 'untitled')).graph).toEqual({ nodes: [], segments: [] });
+	});
+
+	test('every example carries the current schema version', () => {
+		for (const { id } of EXAMPLES) {
+			const example = JSON.parse(readFileSync(`static/examples/${id}.json`, 'utf8'));
+			expect(example.version, id).toBe(SCHEMA_VERSION);
+		}
 	});
 
 	test('an example opens untouched; Save makes a city of your own from it', async ({ page }) => {
@@ -150,7 +249,9 @@ test.describe('Cities', () => {
 		page.once('dialog', (dialog) => dialog.accept());
 		await page.reload();
 		await expect(name).toHaveText('Downtown');
-		expect(await storedIndex(page)).toEqual([{ id: 'median-corner', name: 'Downtown' }]);
+		expect(await storedIndex(page)).toEqual([
+			{ id: 'median-corner', name: 'Downtown', version: SCHEMA_VERSION }
+		]);
 		expect((await storedCity(page, 'median-corner')).graph.segments).toHaveLength(2);
 	});
 
@@ -173,8 +274,8 @@ test.describe('Cities', () => {
 		await saveCity(page);
 
 		expect(await storedIndex(page)).toEqual([
-			{ id: 'median-corner', name: 'median-corner' },
-			{ id: 'copy', name: 'copy' }
+			{ id: 'median-corner', name: 'median-corner', version: SCHEMA_VERSION },
+			{ id: 'copy', name: 'copy', version: SCHEMA_VERSION }
 		]);
 		expect((await storedCity(page, 'copy')).graph.segments).toHaveLength(3);
 		expect((await storedCity(page, 'median-corner')).graph.segments).toHaveLength(2);
@@ -205,7 +306,9 @@ test.describe('Cities', () => {
 
 		await menuItem(page, 'Delete this city');
 		await expect(name).toHaveText('fresh');
-		expect(await storedIndex(page)).toEqual([{ id: 'fresh', name: 'fresh' }]);
+		expect(await storedIndex(page)).toEqual([
+			{ id: 'fresh', name: 'fresh', version: SCHEMA_VERSION }
+		]);
 		expect(await storedCity(page, 'median-corner')).toBeNull();
 	});
 });

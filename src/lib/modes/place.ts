@@ -146,7 +146,8 @@ export function setupPlaceMode(editor: Editor) {
 				endNodeId,
 				cloneLanes(snapshot.lanes)
 			);
-			segment.offset = snapshot.offset;
+			segment.offsetStart = snapshot.offsetStart;
+			segment.offsetEnd = snapshot.offsetEnd;
 			if (snapshot.controlX !== undefined && snapshot.controlY !== undefined) {
 				segment.setControlPoint(
 					snapshot.controlX + placement.translation.dx,
@@ -195,7 +196,8 @@ export function setupPlaceMode(editor: Editor) {
 				cloneLanes(snapshot.lanes)
 			);
 			segmentIds.set(snapshot.id, segment.id);
-			segment.offset = snapshot.offset;
+			segment.offsetStart = snapshot.offsetStart;
+			segment.offsetEnd = snapshot.offsetEnd;
 			if (snapshot.controlX !== undefined && snapshot.controlY !== undefined) {
 				segment.setControlPoint(
 					snapshot.controlX + placement.translation.dx,
@@ -216,7 +218,7 @@ export function setupPlaceMode(editor: Editor) {
 			});
 		}
 
-		editor.resolveSegmentCrossings();
+		editor.resolveSegmentCrossings(segmentIds.values());
 		editor.rebuildRoads();
 		editor.graph.save();
 		editor.pendingPlacement = null;

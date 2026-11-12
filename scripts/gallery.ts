@@ -65,6 +65,7 @@ interface Seg {
 	from: string;
 	to: string;
 	lanes: Lane[];
+	// The shift at both ends.
 	offset?: number;
 	control?: Pt;
 }
@@ -83,7 +84,7 @@ function graph(
 			startNodeId: s.from,
 			endNodeId: s.to,
 			lanes: s.lanes,
-			...(s.offset ? { offset: s.offset } : {}),
+			...(s.offset ? { offsetStart: s.offset, offsetEnd: s.offset } : {}),
 			...(s.control ? { controlX: s.control[0], controlY: s.control[1] } : {})
 		}))
 	};
@@ -274,7 +275,7 @@ const scenes: SceneDef[] = [
 		id: 'lane-add',
 		title: 'Lane added on the kerb side',
 		note: 'Avenue eastward; east of m the eastbound side gains a kerb lane, slid 1.75 m south, with a 40 m taper set on m.',
-		graph: graph({ w: [-120, 0], m: [0, 0, { taper: 40 }], e: [120, 0] }, [
+		graph: graph({ w: [-120, 0], m: [0, 0, { setbacks: { west: 20, east: 20 } }], e: [120, 0] }, [
 			{ id: 'west', from: 'w', to: 'm', lanes: avenue() },
 			{ id: 'east', from: 'm', to: 'e', lanes: avenue({ fwd: 3 }), offset: 1.75 }
 		]),

@@ -1298,9 +1298,10 @@ const saved = await page.evaluate(() => {
 	const id = localStorage.getItem('citynista:current-city');
 	const city = JSON.parse(localStorage.getItem(`citynista:city:${id}`) ?? 'null');
 	const camera = JSON.parse(localStorage.getItem(`citynista:cam:${id}`) ?? 'null');
-	return { graph: city?.graph, camera };
+	return { version: city?.version, graph: city?.graph, camera };
 });
-if (!saved.graph || !saved.camera) throw new Error('nothing to save: no city graph or camera');
+if (!saved.version || !saved.graph || !saved.camera)
+	throw new Error('nothing to save: no city version, graph or camera');
 writeFileSync('static/examples/neighbourhood.json', JSON.stringify(saved, null, '\t') + '\n');
 // The drawing's sanity check: loops, kinks, stray ends and overlaps.
 const issues = auditNeighbourhood(saved.graph);

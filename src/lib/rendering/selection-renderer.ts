@@ -6,7 +6,7 @@ interface Pt {
 	x: number;
 	y: number;
 }
-import { getQuadraticBezierPoint, getQuadraticBezierTangent } from '../geometry/bezier';
+import { shownAt, shownLine } from '../core/road-line';
 import { editorLineGeometry, createEditorLineMaterial } from './editor-line';
 import {
 	HOVER_COLOR,
@@ -59,24 +59,13 @@ interface SegmentVisual {
 	control: THREE.Group;
 }
 
-// A point of the drawn line at t, moved by the segment's offset.
-function shifted(segment: Segment, startNode: Pt, endNode: Pt, t: number) {
-	const cx = segment.controlX ?? (startNode.x + endNode.x) / 2;
-	const cy = segment.controlY ?? (startNode.y + endNode.y) / 2;
-	const p = getQuadraticBezierPoint(startNode.x, startNode.y, cx, cy, endNode.x, endNode.y, t);
-	const d = getQuadraticBezierTangent(startNode.x, startNode.y, cx, cy, endNode.x, endNode.y, t);
-	const l = Math.hypot(d.x, d.y) || 1;
-	return { x: p.x - (d.y / l) * segment.offset, y: p.y + (d.x / l) * segment.offset };
-}
-
-// Where the curvature handle is drawn: the control point, moved by the
-// road's offset (its normal half way along).
+// Where the curvature handle is drawn: the control point, moved as the
+// road's middle is by its shift (its normal half way along).
 export function controlHandle(segment: Segment, startNode: Pt, endNode: Pt) {
 	const cx = segment.controlX ?? (startNode.x + endNode.x) / 2;
 	const cy = segment.controlY ?? (startNode.y + endNode.y) / 2;
-	const mid = shifted(segment, startNode, endNode, 0.5);
-	const line = getQuadraticBezierPoint(startNode.x, startNode.y, cx, cy, endNode.x, endNode.y, 0.5);
-	return { x: cx + mid.x - line.x, y: cy + mid.y - line.y };
+	const mid = shownAt(segment, startNode, endNode, 0.5);
+	return { x: cx + mid.point.x - mid.line.x, y: cy + mid.point.y - mid.line.y };
 }
 
 function buildRibbonGeometry(
@@ -87,44 +76,18 @@ function buildRibbonGeometry(
 	hi: number,
 	y: number
 ) {
-	const cx = segment.controlX ?? (startNode.x + endNode.x) / 2;
-	const cy = segment.controlY ?? (startNode.y + endNode.y) / 2;
 	const steps = segment.hasControlPoint ? CURVE_SAMPLES : 1;
+	// Where the road is drawn: the line moved by the segment's shift.
+	const line = shownLine(segment, startNode, endNode, steps);
 
 	const positions = new Float32Array((steps + 1) * 6);
-	for (let i = 0; i <= steps; i++) {
-		const t = i / steps;
-		const point = getQuadraticBezierPoint(
-			startNode.x,
-			startNode.y,
-			cx,
-			cy,
-			endNode.x,
-			endNode.y,
-			t
-		);
-		const tangent = getQuadraticBezierTangent(
-			startNode.x,
-			startNode.y,
-			cx,
-			cy,
-			endNode.x,
-			endNode.y,
-			t
-		);
-		const length = Math.hypot(tangent.x, tangent.y);
-		const nx = length > 0.0001 ? -tangent.y / length : 0;
-		const ny = length > 0.0001 ? tangent.x / length : 1;
-
-		// Where the road is drawn: the line moved by the segment's offset.
-		const px = point.x + nx * segment.offset;
-		const py = point.y + ny * segment.offset;
-		positions[i * 6] = px + nx * hi;
+	for (const [i, { x, y: z, normal: n }] of line.entries()) {
+		positions[i * 6] = x + n.x * hi;
 		positions[i * 6 + 1] = y;
-		positions[i * 6 + 2] = py + ny * hi;
-		positions[i * 6 + 3] = px + nx * lo;
+		positions[i * 6 + 2] = z + n.y * hi;
+		positions[i * 6 + 3] = x + n.x * lo;
 		positions[i * 6 + 4] = y;
-		positions[i * 6 + 5] = py + ny * lo;
+		positions[i * 6 + 5] = z + n.y * lo;
 	}
 
 	const indices: number[] = [];
@@ -275,11 +238,15 @@ export class SelectionRenderer {
 			);
 		}
 
-		// The guides and the curvature handle move with the road's offset.
+		// The guides and the curvature handle move with the road's shift.
 		const control = controlHandle(segment, startNode, endNode);
 		visual.handles.geometry.dispose();
 		visual.handles.geometry = editorLineGeometry(
-			[shifted(segment, startNode, endNode, 0), control, shifted(segment, startNode, endNode, 1)],
+			[
+				shownAt(segment, startNode, endNode, 0).point,
+				control,
+				shownAt(segment, startNode, endNode, 1).point
+			],
 			GUIDE_Y
 		);
 

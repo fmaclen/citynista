@@ -13,7 +13,7 @@ T3 opens each thread in `.worktrees/<branch>`; `scripts/worktree-setup` writes t
 
 ## How it fits together
 
-**The graph** (`src/lib/core/`) is what the user edits and what is saved: nodes and segments. A segment has one cross-section (`lanes`, each with a stable `id`), an optional quadratic control point, and an `offset` (metres the cross-section sits right of the drawn line). A node's `junction` holds the user's edits there: connections `added`/`removed` against the defaults, `crossings`, per-approach `control`, a two-road node's `taper`. `connections` on it is a copy of the result, rewritten on every build.
+**The graph** (`src/lib/core/`) is what the user edits and what is saved: nodes and segments. A segment has one cross-section (`lanes`, each with a stable `id`), an optional quadratic control point, and a shift at each end, `offsetStart`/`offsetEnd` (metres the cross-section sits right of the drawn line there, blending linearly along the road). A node's `junction` holds the user's edits there: connections `added`/`removed` against the defaults, `crossings`, per-approach `control`, per-road `setbacks` (how far each road stops short of the node: its side of a two-road taper, or the junction's size on it; unset is automatic). `connections` on it is a copy of the result, rewritten on every build.
 
 **The road model** (`src/lib/lab/`, model in `model.ts`) is what gets drawn. `core/place.ts` reads the graph into it every rebuild: each segment becomes a road trimmed back from its nodes, each node of two or more roads a junction whose connections are the defaults (`lab/connect.ts`) minus `removed` plus `added`. Nothing recognises a junction type from angles; defaults are a few general rules written at the top of `connect.ts`, and crossing defaults in `defaultCrossings` (`lab/junction.ts`).
 
@@ -24,13 +24,13 @@ T3 opens each thread in `.worktrees/<branch>`; `scripts/worktree-setup` writes t
 
 **Performance contract:** editing cost stays proportional to what changed, not to map size. `PlaceBuilder` caches curves, road shapes, junctions, tapers and default crossings by key; keep new per-road or per-node work behind those keys. `?stats` exposes `__renderStats()` and `__perfMove()` for measuring a drag frame.
 
-**Where the road is:** `core/road-line.ts` is the line each road shows on (drawn line moved by the offset). Picking, snapping, splitting, crossing detection and node rings (`nodePoint`) all read it; nodes themselves stay on the drawn lines.
+**Where the road is:** `core/road-line.ts` is the line each road shows on (drawn line moved by the per-end shifts). Picking, snapping, splitting, crossing detection, node rings (`nodePoint`), the selection band and the handles all read it; nodes themselves stay on the drawn lines. The offset handle (`modes/offset.ts`) moves a road sideways: an end at a node of one or two roads takes its node along and keeps no shift; an end at a junction of three or more keeps the shift, so a ring there can sit off that road.
 
 **Earcut caveat:** never hand `THREE.ShapeGeometry` a polygon with holes; it mis-triangulates. `toPolygons` in `lab/clip.ts` slices holed polygons into simple pieces.
 
 ## Editing
 
-`src/lib/editor.svelte.ts` owns the graph, scene, renderers, selection and modes. One `graph.save()` is one undo step. Modes live in `src/lib/modes/`: select (default; drag nodes, roads, curvature handle, offset handle, taper handles on a selected two-road node), draw (pick a preset slot; smooth chaining and Shift angle snaps), split, bulldoze, place (paste), and the lane connector (double-click a node: drag lane dot to lane dot to toggle a connection, drag or double-click crossing handles, click approach badges to cycle none/stop/yield/signal). After drawing, `core/crossings.ts` splits roads that cross where they show.
+`src/lib/editor.svelte.ts` owns the graph, scene, renderers, selection and modes. One `graph.save()` is one undo step. Modes live in `src/lib/modes/`: select (default; drag nodes, roads, curvature handle, offset handle, setback arrows with dashed guides on a selected node, Shift-drag moves every road's), draw (pick a preset slot; smooth chaining and Shift angle snaps), split, bulldoze, place (paste), and the lane connector (double-click a node: drag lane dot to lane dot to toggle a connection, drag or double-click crossing handles, click approach badges to cycle none/stop/yield/signal). After a draw, paste or drag, `core/crossings.ts` joins the changed roads to what they pass over where they show: a node under the road, or another road crossed mid-span.
 
 The lane panel (`components/LaneEditor.svelte`) edits the selected segments' lanes in place. Keyboard shortcuts fire only when the event target is `<body>`.
 

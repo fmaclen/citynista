@@ -23,7 +23,10 @@ type Seg = {
 	from: string;
 	to: string;
 	lanes: Lane[];
+	// The shift at both ends, unless one is given on its own.
 	offset?: number;
+	offsetStart?: number;
+	offsetEnd?: number;
 	control?: [number, number];
 };
 
@@ -46,7 +49,8 @@ function graphOf(nodes: Record<string, [number, number, JunctionData?]>, segs: S
 					controlX: s.control?.[0],
 					controlY: s.control?.[1],
 					hasControlPoint: !!s.control,
-					offset: s.offset ?? 0,
+					offsetStart: s.offsetStart ?? s.offset ?? 0,
+					offsetEnd: s.offsetEnd ?? s.offset ?? 0,
 					lanes: s.lanes,
 					lanesKey: serializeLanes(s.lanes),
 					totalWidth: s.lanes.reduce((a, l) => a + l.width, 0)
@@ -79,7 +83,8 @@ function sceneGraph(name: string) {
 			from: s.startNodeId,
 			to: s.endNodeId,
 			lanes: s.lanes,
-			offset: s.offset,
+			offsetStart: s.offsetStart,
+			offsetEnd: s.offsetEnd,
 			control: s.controlX !== undefined ? [s.controlX, s.controlY!] : undefined
 		}))
 	);
@@ -163,7 +168,8 @@ function rightTurnLane() {
 	west.totalWidth += 3.5;
 	// Slid half a lane toward its kerb, as a pocket is, so its through lanes
 	// line up with the road beyond.
-	west.offset = 1.75;
+	west.offsetStart = 1.75;
+	west.offsetEnd = 1.75;
 	return graph;
 }
 
@@ -216,7 +222,7 @@ test('swapping two lanes across a node keeps both kerb lines', () => {
 						{ from: ref('one', 'end', 'l5'), to: ref('two', 'start', 'l6') },
 						{ from: ref('one', 'end', 'l6'), to: ref('two', 'start', 'l5') }
 					],
-					taper: 30
+					setbacks: { one: 15, two: 15 }
 				}
 			]
 		},
@@ -721,3 +727,45 @@ test('the sidewalk ends square beside a crosswalk over a road without sidewalks'
 		expect(inside(draw.pavement, at(3.4, edge + out * 1.5)), `past landing at ${edge}`).toBe(false);
 	}
 });
+
+// A skewed four-way junction of divided roads without sidewalks: north-west,
+// south-west, east and south-east, the last two only 45° apart. Each corner
+// stays outside both roads' edge lines, from a few metres in front of a
+// road's mouth to well behind it, so no corner pinches a road's opening
+// narrower than the road. Automatically, every end sits a hair inside its
+// neighbour's curb line; set by hand, south-west and south-east stop further
+// out than their neighbours.
+for (const name of ['skewed-four', 'skewed-four-setbacks'])
+	test(`no corner of the ${name} junction cuts inside a road's edge`, () => {
+		const { scene } = build(sceneGraph(name));
+		const j = scene.effective.find((x) => x.id === 'k')!;
+		const ends = endsOf(j, scene.geos);
+		const outline = outlineOf(j, ends);
+		const curb = outline.corners.flatMap((c) =>
+			c.pts.flatMap((p, i) => {
+				if (i === 0) return [p];
+				const q = c.pts[i - 1];
+				const n = Math.ceil(distance(p, q) / 0.25);
+				return Array.from({ length: n }, (_, k) => ({
+					x: q.x + ((p.x - q.x) * (k + 1)) / n,
+					y: q.y + ((p.y - q.y) * (k + 1)) / n
+				}));
+			})
+		);
+		for (const e of ends) {
+			const { p, out, n } = e.frame;
+			const across = (q: Pt) => (q.x - p.x) * n.x + (q.y - p.y) * n.y;
+			const along = (q: Pt) => (q.x - p.x) * out.x + (q.y - p.y) * out.y;
+			const { lo, hi } = outline.curbs.get(e.key)!;
+			const [left, right] = [across(lo), across(hi)].sort((a, b) => a - b);
+			// How far the curb reaches in from the nearer edge line, 6 m in front
+			// of the mouth to 10 m behind it. Only the hair of overlap the
+			// automatic setbacks leave.
+			const inside = Math.max(
+				...curb
+					.filter((q) => along(q) > -6 && along(q) < 10)
+					.map((q) => Math.min(across(q) - left, right - across(q)))
+			);
+			expect(inside, e.key).toBeLessThan(0.25);
+		}
+	});

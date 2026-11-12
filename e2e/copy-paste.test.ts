@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { openGraph } from './scenes';
 import { saveCity } from './save';
 
 const STORAGE_KEY = 'citynista-graph-v2';
@@ -28,7 +29,7 @@ interface SavedJunction {
 	removed?: SavedConnection[];
 	crossings?: SavedCrossing[];
 	control?: Record<string, string>;
-	taper?: number;
+	setbacks?: Record<string, number>;
 }
 
 interface SavedLane {
@@ -53,7 +54,8 @@ interface SavedSegment {
 	endNodeId: string;
 	controlX?: number;
 	controlY?: number;
-	offset?: number;
+	offsetStart?: number;
+	offsetEnd?: number;
 	lanes: SavedLane[];
 }
 
@@ -87,12 +89,13 @@ const GRAPH_DATA = {
 			endNodeId: 'node-1',
 			controlX: -150,
 			controlY: -120,
-			offset: 1.5,
+			offsetStart: 1.5,
+			offsetEnd: 1.5,
 			lanes: [
-				{ type: 'sidewalk', width: 2, direction: 'bidirectional' },
-				{ type: 'road', width: 3, direction: 'backward' },
-				{ type: 'turn', width: 3, direction: 'forward', turn: 'left' },
-				{ type: 'sidewalk', width: 2, direction: 'bidirectional' }
+				{ role: 'pedestrian', material: 'concrete', width: 2, direction: 'bidirectional' },
+				{ role: 'vehicle', material: 'asphalt', width: 3, direction: 'backward' },
+				{ role: 'vehicle', material: 'asphalt', width: 3, direction: 'forward' },
+				{ role: 'pedestrian', material: 'concrete', width: 2, direction: 'bidirectional' }
 			]
 		},
 		{
@@ -100,12 +103,12 @@ const GRAPH_DATA = {
 			startNodeId: 'node-2',
 			endNodeId: 'node-3',
 			lanes: [
-				{ type: 'sidewalk', width: 3, direction: 'bidirectional' },
-				{ type: 'grass', width: 1, direction: 'bidirectional' },
-				{ type: 'road', width: 3.5, direction: 'backward' },
-				{ type: 'road', width: 3.5, direction: 'forward' },
-				{ type: 'grass', width: 1, direction: 'bidirectional' },
-				{ type: 'sidewalk', width: 3, direction: 'bidirectional' }
+				{ role: 'pedestrian', material: 'concrete', width: 3, direction: 'bidirectional' },
+				{ role: 'buffer', material: 'grass', width: 1, direction: 'bidirectional' },
+				{ role: 'vehicle', material: 'asphalt', width: 3.5, direction: 'backward' },
+				{ role: 'vehicle', material: 'asphalt', width: 3.5, direction: 'forward' },
+				{ role: 'buffer', material: 'grass', width: 1, direction: 'bidirectional' },
+				{ role: 'pedestrian', material: 'concrete', width: 3, direction: 'bidirectional' }
 			]
 		}
 	]
@@ -131,7 +134,7 @@ const NODE_A_JUNCTION: SavedJunction = {
 	],
 	crossings: [{ road: 'segment-a-east', end: 'start', lanes: ['l0', 'l3'], on: false }],
 	control: { 'segment-a-north:start': 'signal', 'segment-a-west:start': 'yield' },
-	taper: 12
+	setbacks: { 'segment-a-east': 12 }
 };
 
 const NODE_B_JUNCTION: SavedJunction = {
@@ -186,15 +189,7 @@ const laneKey = (lanes: SavedLane[]) =>
 		.join(',');
 
 async function seedGraph(page: import('@playwright/test').Page, data: object = GRAPH_DATA) {
-	await page.goto('/?topdown');
-	await expect(page.locator('canvas')).toBeVisible();
-	await page.evaluate(
-		({ key, data }) => {
-			localStorage.setItem(key, JSON.stringify(data));
-		},
-		{ key: STORAGE_KEY, data }
-	);
-	await page.reload();
+	await openGraph(page, data);
 	await expect(page.locator('canvas')).toBeVisible();
 	await expect(page.locator('nav')).toBeVisible();
 }
@@ -247,7 +242,9 @@ const remapJunction = (junction: SavedJunction, sourceArms: string[], targetArms
 				return [`${road(id)}:${end}`, value];
 			})
 		),
-		taper: junction.taper
+		setbacks: Object.fromEntries(
+			Object.entries(junction.setbacks ?? {}).map(([id, value]) => [road(id), value])
+		)
 	};
 };
 
@@ -316,7 +313,7 @@ test.describe('segment copy/paste', () => {
 		expect(clonedStart!.y).toBeCloseTo(0, 0);
 		expect(clonedEnd!.x).toBeCloseTo(220, 0);
 		expect(clonedEnd!.y).toBeCloseTo(0, 0);
-		expect(clone!.offset).toBe(1.5);
+		expect([clone!.offsetStart, clone!.offsetEnd]).toEqual([1.5, 1.5]);
 		// The copied node keeps its junction edits, renamed onto the clone.
 		expect(edits(clonedStart!.junction)).toEqual({
 			removed: [

@@ -12,8 +12,8 @@
 			"startNodeId": "n",
 			"endNodeId": "c",
 			"lanes": [
-				{ "type": "road", "width": 3.5, "direction": "backward" },
-				{ "type": "road", "width": 3.5, "direction": "forward" }
+				{ "role": "vehicle", "material": "asphalt", "width": 3.5, "direction": "backward" },
+				{ "role": "vehicle", "material": "asphalt", "width": 3.5, "direction": "forward" }
 			]
 		},
 		{
@@ -21,8 +21,8 @@
 			"startNodeId": "e",
 			"endNodeId": "c",
 			"lanes": [
-				{ "type": "road", "width": 3.5, "direction": "backward" },
-				{ "type": "road", "width": 3.5, "direction": "forward" }
+				{ "role": "vehicle", "material": "asphalt", "width": 3.5, "direction": "backward" },
+				{ "role": "vehicle", "material": "asphalt", "width": 3.5, "direction": "forward" }
 			]
 		},
 		{
@@ -30,8 +30,8 @@
 			"startNodeId": "s",
 			"endNodeId": "c",
 			"lanes": [
-				{ "type": "road", "width": 3.5, "direction": "backward" },
-				{ "type": "road", "width": 3.5, "direction": "forward" }
+				{ "role": "vehicle", "material": "asphalt", "width": 3.5, "direction": "backward" },
+				{ "role": "vehicle", "material": "asphalt", "width": 3.5, "direction": "forward" }
 			]
 		},
 		{
@@ -39,8 +39,8 @@
 			"startNodeId": "w",
 			"endNodeId": "c",
 			"lanes": [
-				{ "type": "road", "width": 3.5, "direction": "backward" },
-				{ "type": "road", "width": 3.5, "direction": "forward" }
+				{ "role": "vehicle", "material": "asphalt", "width": 3.5, "direction": "backward" },
+				{ "role": "vehicle", "material": "asphalt", "width": 3.5, "direction": "forward" }
 			]
 		}
 	]

@@ -14,7 +14,7 @@
 				"sides": {
 					"ramp": "right"
 				},
-				"taper": 40
+				"setbacks": { "south": 20, "north": 20 }
 			}
 		},
 		{
@@ -161,10 +161,8 @@
 					"id": "l7"
 				}
 			],
-			"offset": 0,
 			"controlX": 10,
-			"controlY": -100,
-			"hasControlPoint": true
+			"controlY": -100
 		},
 		{
 			"id": "ramp",
@@ -180,8 +178,7 @@
 				}
 			],
 			"controlX": 20,
-			"controlY": -25,
-			"hasControlPoint": true
+			"controlY": -25
 		}
 	]
 }

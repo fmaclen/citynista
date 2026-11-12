@@ -124,7 +124,8 @@
 					"id": "l7"
 				}
 			],
-			"offset": 1.75
+			"offsetStart": 1.75,
+			"offsetEnd": 1.75
 		},
 		{
 			"id": "ramp",

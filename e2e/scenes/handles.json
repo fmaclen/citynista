@@ -21,7 +21,7 @@
 			"y": 20,
 			"junction": {
 				"connections": [],
-				"taper": 20
+				"setbacks": { "narrow": 10, "wide": 10 }
 			}
 		},
 		{
@@ -104,7 +104,8 @@
 			],
 			"controlX": -65,
 			"controlY": -5,
-			"offset": 2
+			"offsetStart": 2,
+			"offsetEnd": 2
 		},
 		{
 			"id": "narrow",

@@ -34,7 +34,6 @@ import {
 	type Mark,
 	type RowMark
 } from './road';
-import { lateral } from './connect';
 
 const neg = (a: Pt) => ({ x: -a.x, y: -a.y });
 
@@ -133,26 +132,6 @@ function along(pts: Pt[], u: number) {
 		x: pts[i].x + (pts[i + 1].x - pts[i].x) * f,
 		y: pts[i].y + (pts[i + 1].y - pts[i].y) * f
 	};
-}
-
-// Whether a sidewalk connection runs from one side of the carriageway to the
-// other (an old way of storing a crossing; see place.ts).
-export function crossesRoadway(a: EndInfo, la: LaneEnd, b: EndInfo, lb: LaneEnd) {
-	const span = (e: EndInfo, into: boolean) => {
-		const lats = e.lanes
-			.filter((l) => isTravel(l.lane))
-			.flatMap((l) => [
-				lateral(e, { ...l, left: l.left, right: l.left }, into),
-				lateral(e, { ...l, left: l.right, right: l.right }, into)
-			]);
-		return lats.length ? { lo: Math.min(...lats), hi: Math.max(...lats) } : null;
-	};
-	const sa = span(a, true);
-	const sb = span(b, false);
-	if (!sa || !sb) return false;
-	const pa = lateral(a, la, true);
-	const pb = lateral(b, lb, false);
-	return (pa < sa.lo && pb > sb.hi) || (pa > sa.hi && pb < sb.lo);
 }
 
 // A node's two sides, when its lanes find their way across it from one to

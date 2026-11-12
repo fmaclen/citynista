@@ -1,6 +1,6 @@
 import type { ModeHandlers } from './types';
 import type { Editor, HandleRef, TaperHandleInfo } from '../editor.svelte';
-import { offsetFromPointer, type OffsetHandle } from './offset';
+import { beginOffsetDrag, dragOffset, type OffsetDrag } from './offset';
 import { segmentEnds } from '../core/attach';
 import { controlHandle } from '../rendering/selection-renderer';
 import type { Segment } from '../core/segment.svelte';
@@ -30,10 +30,12 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 	// Shift+click on a selected node means "deselect" only if no drag
 	// follows — a shift+drag instead smooths the node's tangent live.
 	let pendingShiftToggle: string | null = null;
-	// Dragging a taper handle of the selected node sets its taper.
+	// Dragging a setback handle of the selected node sets that road's setback.
 	let taperDrag: TaperHandleInfo | null = null;
-	// Dragging the selected road's lateral offset handle.
-	let offsetDrag: OffsetHandle | null = null;
+	// Dragging the selected road's lateral offset handle, and the nodes it
+	// has moved.
+	let offsetDrag: OffsetDrag | null = null;
+	let offsetMoved: string[] = [];
 	let dragDistance = 0;
 
 	const marquee = createMarquee(editor, MARQUEE_COLOR, 0.4);
@@ -431,8 +433,9 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 		editor.setHoveredSegment(null);
 		editor.lightHandle(handleAt(worldPos.x, worldPos.z), 'active');
 
-		// Dragging a taper handle of the selected node. The handles sit out
-		// where the taper ends, so node dragging still works at the centre.
+		// Dragging a setback handle of the selected node (Shift moves every
+		// road's together). The handles sit out where each road stops short,
+		// so node dragging still works at the centre.
 		if (editor.selectedNodes.size === 1) {
 			const handle = editor.taperHandleAt(worldPos.x, worldPos.z);
 			if (handle) {
@@ -443,7 +446,8 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 
 		const offset = editor.offsetHandleAt(worldPos.x, worldPos.z);
 		if (offset) {
-			offsetDrag = offset;
+			offsetDrag = beginOffsetDrag(editor, offset, worldPos.x, worldPos.z);
+			offsetMoved = [];
 			return;
 		}
 
@@ -502,22 +506,17 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 		const worldPos = editor.sceneManager.screenToWorld(event.clientX, event.clientY);
 
 		if (taperDrag) {
-			editor.setTaperFromDrag(taperDrag, worldPos.x, worldPos.z);
+			editor.setTaperFromDrag(taperDrag, worldPos.x, worldPos.z, event.shiftKey);
 			return;
 		}
 
 		if (offsetDrag) {
-			const segment = editor.graph.segments.get(offsetDrag.segmentId);
-			if (segment) {
-				segment.offset = offsetFromPointer(
-					editor,
-					offsetDrag,
-					worldPos.x,
-					worldPos.z,
-					event.shiftKey
-				);
-				scheduleApply();
+			offsetMoved = dragOffset(editor, offsetDrag, worldPos.x, worldPos.z, event.shiftKey);
+			for (const id of offsetMoved) {
+				const node = editor.graph.nodes.get(id);
+				if (node) editor.nodeRenderer.updateNode(node);
 			}
+			scheduleApply();
 			return;
 		}
 
@@ -539,8 +538,8 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 		const dx = worldPos.x - dragStartX;
 		const dz = worldPos.z - dragStartZ;
 
+		dragDistance += Math.hypot(dx, dz);
 		if (dragTarget.type === 'nodes') {
-			dragDistance += Math.hypot(dx, dz);
 			if (dragDistance > 1) pendingShiftToggle = null;
 
 			for (const nodeId of editor.selectedNodes) {
@@ -613,6 +612,12 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 		if (offsetDrag) {
 			offsetDrag = null;
 			flushApply();
+			// Moved nodes may have carried roads over others: they join there.
+			const roads = offsetMoved.flatMap(
+				(id) => editor.graph.nodes.get(id)?.connectedSegments ?? []
+			);
+			if (roads.length) editor.resolveSegmentCrossings(new Set(roads));
+			offsetMoved = [];
 			editor.graph.save();
 			return;
 		}
@@ -637,15 +642,30 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 			pendingShiftToggle = null;
 		}
 
-		// Moving things never splits segments — crossings only become
-		// intersections while drawing.
+		// Roads moved over a node or across another road join it there.
 		if (isDragging) {
 			flushApply();
+			if (dragTarget && dragDistance > 0) editor.resolveSegmentCrossings(movedRoads(dragTarget));
 			editor.graph.save();
 		}
 		isDragging = false;
 		dragTarget = null;
+		dragDistance = 0;
 		controlFrames.clear();
+	};
+
+	// The roads a drag reshaped: every road at a moved node, or the one
+	// whose curve was dragged.
+	const movedRoads = (target: NonNullable<DragTarget>) => {
+		if (target.type === 'controlPoint') return [target.segmentId];
+		const nodes =
+			target.type === 'nodes'
+				? [...editor.selectedNodes]
+				: target.segmentIds.flatMap((id) => {
+						const segment = editor.graph.segments.get(id);
+						return segment ? [segment.startNodeId, segment.endNodeId] : [];
+					});
+		return new Set(nodes.flatMap((id) => editor.graph.nodes.get(id)?.connectedSegments ?? []));
 	};
 
 	// Out of hand, a handle still under the pointer goes back to hover.

@@ -38,22 +38,26 @@
 			"endNodeId": "b",
 			"lanes": [
 				{
-					"type": "sidewalk",
+					"role": "pedestrian",
+					"material": "concrete",
 					"width": 2,
 					"direction": "bidirectional"
 				},
 				{
-					"type": "road",
+					"role": "vehicle",
+					"material": "asphalt",
 					"width": 3.5,
 					"direction": "backward"
 				},
 				{
-					"type": "road",
+					"role": "vehicle",
+					"material": "asphalt",
 					"width": 3.5,
 					"direction": "forward"
 				},
 				{
-					"type": "sidewalk",
+					"role": "pedestrian",
+					"material": "concrete",
 					"width": 2,
 					"direction": "bidirectional"
 				}
@@ -65,22 +69,26 @@
 			"endNodeId": "c",
 			"lanes": [
 				{
-					"type": "sidewalk",
+					"role": "pedestrian",
+					"material": "concrete",
 					"width": 2,
 					"direction": "bidirectional"
 				},
 				{
-					"type": "road",
+					"role": "vehicle",
+					"material": "asphalt",
 					"width": 3.5,
 					"direction": "backward"
 				},
 				{
-					"type": "road",
+					"role": "vehicle",
+					"material": "asphalt",
 					"width": 3.5,
 					"direction": "forward"
 				},
 				{
-					"type": "sidewalk",
+					"role": "pedestrian",
+					"material": "concrete",
 					"width": 2,
 					"direction": "bidirectional"
 				}
@@ -92,22 +100,26 @@
 			"endNodeId": "d",
 			"lanes": [
 				{
-					"type": "sidewalk",
+					"role": "pedestrian",
+					"material": "concrete",
 					"width": 2,
 					"direction": "bidirectional"
 				},
 				{
-					"type": "road",
+					"role": "vehicle",
+					"material": "asphalt",
 					"width": 3.5,
 					"direction": "backward"
 				},
 				{
-					"type": "road",
+					"role": "vehicle",
+					"material": "asphalt",
 					"width": 3.5,
 					"direction": "forward"
 				},
 				{
-					"type": "sidewalk",
+					"role": "pedestrian",
+					"material": "concrete",
 					"width": 2,
 					"direction": "bidirectional"
 				}
@@ -119,7 +131,8 @@
 			"endNodeId": "f",
 			"lanes": [
 				{
-					"type": "road",
+					"role": "vehicle",
+					"material": "asphalt",
 					"width": 3.5,
 					"direction": "forward"
 				}

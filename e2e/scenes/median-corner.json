@@ -23,47 +23,56 @@
 			"endNodeId": "node-1",
 			"lanes": [
 				{
-					"type": "sidewalk",
+					"role": "pedestrian",
+					"material": "concrete",
 					"width": 3,
 					"direction": "bidirectional"
 				},
 				{
-					"type": "grass",
+					"role": "buffer",
+					"material": "grass",
 					"width": 1,
 					"direction": "bidirectional"
 				},
 				{
-					"type": "road",
+					"role": "vehicle",
+					"material": "asphalt",
 					"width": 3.5,
 					"direction": "backward"
 				},
 				{
-					"type": "road",
+					"role": "vehicle",
+					"material": "asphalt",
 					"width": 3.5,
 					"direction": "backward"
 				},
 				{
-					"type": "median",
+					"role": "buffer",
+					"material": "concrete",
 					"width": 2,
 					"direction": "bidirectional"
 				},
 				{
-					"type": "road",
+					"role": "vehicle",
+					"material": "asphalt",
 					"width": 3.5,
 					"direction": "forward"
 				},
 				{
-					"type": "road",
+					"role": "vehicle",
+					"material": "asphalt",
 					"width": 3.5,
 					"direction": "forward"
 				},
 				{
-					"type": "grass",
+					"role": "buffer",
+					"material": "grass",
 					"width": 1,
 					"direction": "bidirectional"
 				},
 				{
-					"type": "sidewalk",
+					"role": "pedestrian",
+					"material": "concrete",
 					"width": 3,
 					"direction": "bidirectional"
 				}
@@ -75,47 +84,56 @@
 			"endNodeId": "node-2",
 			"lanes": [
 				{
-					"type": "sidewalk",
+					"role": "pedestrian",
+					"material": "concrete",
 					"width": 3,
 					"direction": "bidirectional"
 				},
 				{
-					"type": "grass",
+					"role": "buffer",
+					"material": "grass",
 					"width": 1,
 					"direction": "bidirectional"
 				},
 				{
-					"type": "road",
+					"role": "vehicle",
+					"material": "asphalt",
 					"width": 3.5,
 					"direction": "backward"
 				},
 				{
-					"type": "road",
+					"role": "vehicle",
+					"material": "asphalt",
 					"width": 3.5,
 					"direction": "backward"
 				},
 				{
-					"type": "median",
+					"role": "buffer",
+					"material": "concrete",
 					"width": 2,
 					"direction": "bidirectional"
 				},
 				{
-					"type": "road",
+					"role": "vehicle",
+					"material": "asphalt",
 					"width": 3.5,
 					"direction": "forward"
 				},
 				{
-					"type": "road",
+					"role": "vehicle",
+					"material": "asphalt",
 					"width": 3.5,
 					"direction": "forward"
 				},
 				{
-					"type": "grass",
+					"role": "buffer",
+					"material": "grass",
 					"width": 1,
 					"direction": "bidirectional"
 				},
 				{
-					"type": "sidewalk",
+					"role": "pedestrian",
+					"material": "concrete",
 					"width": 3,
 					"direction": "bidirectional"
 				}

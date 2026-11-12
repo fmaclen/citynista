@@ -16,15 +16,21 @@ interface Pt {
 	y: number;
 }
 
-interface SegmentLike {
+export interface SegmentLike {
 	id: string;
 	startNodeId: string;
 	endNodeId: string;
 	controlX?: number;
 	controlY?: number;
-	offset: number;
+	// Its shift at each end (road-line.ts).
+	offsetStart: number;
+	offsetEnd: number;
 	lanes: Lane[];
 }
+
+// A segment's shift at the end that meets `nodeId`.
+const shiftAt = (segment: SegmentLike, nodeId: string) =>
+	segment.startNodeId === nodeId ? segment.offsetStart : segment.offsetEnd;
 
 // Where a cross-section's roadway lies across it, from its centre.
 export function roadwayOf(lanes: Lane[]) {
@@ -101,7 +107,8 @@ export function attachShift(graph: Graph, segment: SegmentLike, nodeId: string):
 		if (!m) continue;
 		const r = roadwayOf(main.lanes);
 		const k = m.n.x * d.x + m.n.y * d.y;
-		edge = Math.min(edge, k >= 0 ? r.hi + main.offset : -(r.lo + main.offset));
+		const off = shiftAt(main, nodeId);
+		edge = Math.min(edge, k >= 0 ? r.hi + off : -(r.lo + off));
 	}
 	if (!Number.isFinite(edge)) return zero;
 	const mine = roadwayOf(segment.lanes);
@@ -110,7 +117,7 @@ export function attachShift(graph: Graph, segment: SegmentLike, nodeId: string):
 	// Where its roadway's middle goes, measured from the node along d.
 	const reach = edge + (beside ? half : -half);
 	// Its drawn end goes where that puts its roadway's middle.
-	const middle = (mine.lo + mine.hi) / 2 + segment.offset;
+	const middle = (mine.lo + mine.hi) / 2 + shiftAt(segment, nodeId);
 	// (Its own normal leans by the angle it joins at.)
 	const lean = own.n.x * d.x + own.n.y * d.y;
 	const along = reach - lean * middle;

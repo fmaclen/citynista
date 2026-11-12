@@ -1,6 +1,5 @@
 export type LaneRole = 'vehicle' | 'pedestrian' | 'buffer';
 export type LaneMaterial = 'asphalt' | 'concrete' | 'grass' | 'dirt';
-export type LegacyLaneSurface = 'asphalt' | 'concrete' | 'grass' | 'curb' | 'paint';
 export type LaneDirection = 'forward' | 'backward' | 'bidirectional';
 
 export interface Lane {
@@ -17,30 +16,6 @@ export interface Lane {
 export interface Brush {
 	name: string;
 	lanes: Lane[];
-}
-
-// The legacy on-disk lane shape, accepted for migration on load. Old saves used
-// `type` (+ optional `turn`); pre-material saves write `role` + `surface`.
-export type LegacyLaneType =
-	| 'road'
-	| 'concrete'
-	| 'bike'
-	| 'parking'
-	| 'transit'
-	| 'turn'
-	| 'sidewalk'
-	| 'grass'
-	| 'median';
-
-export interface StoredLane {
-	id?: string;
-	type?: LegacyLaneType;
-	turn?: 'left' | 'right';
-	role?: LaneRole;
-	surface?: LegacyLaneSurface;
-	material?: LaneMaterial;
-	width: number;
-	direction: LaneDirection;
 }
 
 export interface LaneTemplate {
@@ -89,9 +64,11 @@ export interface JunctionData {
 	connections: JunctionConnection[];
 	added?: JunctionConnection[];
 	removed?: JunctionConnection[];
-	// Where only two roads meet: the length the lanes take to find their way
-	// across, set by hand (otherwise it follows how far they shift).
-	taper?: number;
+	// How far each road (by segment id) stops short of the node, set by hand:
+	// where two roads meet, where its side of the taper ends; at a junction
+	// of more, how much room the junction takes on it. A road without one
+	// gets the automatic setback.
+	setbacks?: Record<string, number>;
 	// Crossings added by hand, and default ones moved or switched off.
 	crossings?: JunctionCrossing[];
 	// Each approach's control set by hand (keyed by road end), over the
@@ -119,11 +96,11 @@ export interface SegmentData {
 	endNodeId: string;
 	controlX?: number;
 	controlY?: number;
-	lanes?: StoredLane[];
-	// Metres the cross-section sits to the right of the drawn line.
-	offset?: number;
-	// Legacy saves referenced a shared template instead of owning lanes.
-	laneTemplateId?: string;
+	lanes: Lane[];
+	// Metres the cross-section sits to the right of the drawn line at each
+	// end; absent is 0.
+	offsetStart?: number;
+	offsetEnd?: number;
 }
 
 export interface GraphData {

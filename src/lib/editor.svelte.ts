@@ -27,7 +27,7 @@ import type { LaneConnection } from './core/lane-connections';
 import { CROSSING_DEPTH, CROSSING_FROM_END, endsOf, type EndInfo } from './lab/junction';
 import { crossingAt } from './core/place';
 import { mapJunction } from './core/junction-data';
-import { nodePoint, roadLine } from './core/road-line';
+import { nodePoint, offsetOutOf, roadLine } from './core/road-line';
 import { segmentEnds } from './core/attach';
 import { kindOf } from './lab/connect';
 import { isTravel } from './lab/road';
@@ -40,6 +40,7 @@ import { LabRenderer } from './rendering/lab-renderer';
 import { COLOURS } from './lab/scene';
 import { SelectionRenderer } from './rendering/selection-renderer';
 import { HandleRenderer } from './rendering/handle-renderer';
+import { GuideRenderer } from './rendering/guide-renderer';
 import { offsetHandle, type OffsetHandle } from './modes/offset';
 import { ConnectionRenderer } from './rendering/connection-renderer';
 import {
@@ -55,8 +56,8 @@ import {
 	type HandleState
 } from './rendering/editor-palette';
 
-// A taper handle on a selected node where two roads meet: it sits where the
-// transition ends on one of them.
+// A setback handle on a selected node: it sits where one of its roads stops
+// short of it (where two roads meet, where that side of the taper ends).
 export interface TaperHandleInfo {
 	// Its place among the node's handles.
 	index: number;
@@ -90,7 +91,7 @@ import { setupPlaceMode } from './modes/place';
 const NEW_CROSSING_BEYOND = 3;
 // Lane dots of two road ends that nearly meet sit at least this far apart.
 const CONNECTOR_SPREAD = 10;
-// Taper handles sit at least this far from their node, so the node itself
+// Setback handles sit at least this far from their node, so the node itself
 // can always be grabbed.
 const TAPER_HANDLE_REACH = 4;
 
@@ -147,7 +148,8 @@ export interface ClipboardSegmentSnapshot {
 	endNodeId: string;
 	controlX?: number;
 	controlY?: number;
-	offset: number;
+	offsetStart: number;
+	offsetEnd: number;
 	lanes: Lane[];
 }
 
@@ -215,6 +217,7 @@ export class Editor {
 	showConnections = $state(false);
 	selectionRenderer!: SelectionRenderer;
 	taperRenderer!: HandleRenderer;
+	guideRenderer!: GuideRenderer;
 	// The selected road's lateral offset handle.
 	offsetRenderer!: HandleRenderer;
 	// In the connector, a handle on each crosswalk to slide it along its road.
@@ -336,6 +339,7 @@ export class Editor {
 		scene.background = new THREE.Color(COLOURS.ground);
 		this.selectionRenderer = new SelectionRenderer(scene, screenSized);
 		this.taperRenderer = new HandleRenderer(scene, screenSized, 'taper');
+		this.guideRenderer = new GuideRenderer(scene, this.sceneManager.beforeFrame);
 		this.offsetRenderer = new HandleRenderer(scene, screenSized, 'offset');
 		this.crossingRenderer = new HandleRenderer(scene, screenSized, 'crossing');
 		this.connectionRenderer = new ConnectionRenderer(scene, screenSized);
@@ -663,7 +667,8 @@ export class Editor {
 				endNodeId: segment.endNodeId,
 				controlX: segment.controlX,
 				controlY: segment.controlY,
-				offset: segment.offset,
+				offsetStart: segment.offsetStart,
+				offsetEnd: segment.offsetEnd,
 				lanes: cloneLanes(segment.lanes)
 			});
 		}
@@ -812,24 +817,11 @@ export class Editor {
 		this.currentCityName = city.name;
 		this.cityCamera = this.readCameraCache(city.id) ?? city.camera;
 		this.cities = this.cityStore.list();
-		this.graph.fromJSON(this.workingGraph(city));
+		this.graph.fromJSON(city.graph);
 		for (const node of this.graph.nodes.values()) {
 			this.nodeRenderer.createNode(node);
 		}
 		this.rebuildRoads();
-	}
-
-	// The saved graph is the legacy single-graph slot (written on every save and
-	// city switch); the current city's snapshot is the fallback. Reading the legacy slot
-	// first lets external writers (and the e2e harness) seed a graph before boot.
-	private workingGraph(city: CityRecord): GraphData {
-		try {
-			const raw = localStorage.getItem('citynista-graph-v2');
-			if (raw) return JSON.parse(raw) as GraphData;
-		} catch {
-			// fall through to the city snapshot
-		}
-		return city.graph;
 	}
 
 	// Apply the saved camera for the current city. The page calls this only on the
@@ -907,8 +899,9 @@ export class Editor {
 		}
 	}
 
-	// Back-compat mirror of the current city's saved graph — the single-graph
-	// slot the e2e suite, any legacy reader, and boot's workingGraph() still read.
+	// A copy of the current city's saved graph under one fixed key, so the e2e
+	// suite and scripts can read what was saved without knowing the city's id.
+	// Write-only: the app never reads it back.
 	private writeMirror(graph: GraphData) {
 		try {
 			localStorage.setItem('citynista-graph-v2', JSON.stringify(graph));
@@ -1070,10 +1063,11 @@ export class Editor {
 		return NODE_RING_PX * this.sceneManager.worldPerPixel();
 	}
 
-	// Turn any mid-span segment crossings into shared nodes, so overlapping
-	// roads become real intersections.
-	resolveSegmentCrossings() {
-		if (!resolveCrossings(this.graph)) return;
+	// Join the changed roads to what they pass over: a node under the road,
+	// or another road crossed mid-span, so overlapping roads become real
+	// intersections.
+	resolveSegmentCrossings(changed: Iterable<string>) {
+		if (!resolveCrossings(this.graph, changed)) return;
 
 		this.clearSelection();
 		for (const node of this.graph.nodes.values()) {
@@ -1180,29 +1174,46 @@ export class Editor {
 		this.refreshTaperHandles();
 	}
 
-	// Taper handles on a single selected node where only two roads meet: an
-	// arrow on each road where the transition between them ends. Dragging either
-	// sets the transition's length.
+	// Setback handles on a single selected node of two or more roads: an arrow
+	// on each road where it stops short of the node. Where two roads meet that
+	// is where its side of the taper ends; at a junction of more, where the
+	// junction ends on it. Dragging one sets that road's setback.
+	// Dashed guides go with them: across each road's full width where it
+	// stops short, and, where the node's ring sits off a road (a road with a
+	// large offset), from the ring to where that road shows at the node.
 	refreshTaperHandles() {
 		const nodeId = this.selectedNodes.size === 1 ? [...this.selectedNodes][0] : null;
 		const node = nodeId ? this.graph.nodes.get(nodeId) : undefined;
-		if (!node || node.connectedSegments.length !== 2 || !this.roadRenderer?.derived) {
+		const limits = node && this.roadRenderer?.taperLimits(node.id);
+		if (!node || !limits || !this.roadRenderer?.derived) {
 			this.currentTaperHandles = [];
 			this.taperRenderer?.clear();
+			this.guideRenderer?.clear();
 			return;
 		}
 		const rich: TaperHandleInfo[] = [];
+		const guides: [Point, Point][] = [];
+		const ring = nodePoint(this.graph, node);
 		for (const segmentId of node.connectedSegments) {
 			const segment = this.graph.segments.get(segmentId);
 			const span = this.roadRenderer.derived?.spans.get(segmentId);
-			if (!segment || !span) continue;
+			if (!segment || !span || !limits.has(segmentId)) continue;
 			const atStart = segment.startNodeId === node.id;
 			// Along the road as it shows (offset and all), from the node out.
 			let centerline: Point[] = roadLine(this.graph, segment);
 			if (!atStart) centerline = [...centerline].reverse();
 			const trim = atStart ? span.d0 : span.total - span.d0 - span.length;
-			// Where the taper ends, but never on the node itself.
+			// Where the road stops short, but never on the node itself.
 			const reach = Math.max(trim, TAPER_HANDLE_REACH);
+			const end = pointAlong(centerline, trim);
+			const along = directionAlong(centerline, trim);
+			const half = segment.totalWidth / 2;
+			guides.push([
+				{ x: end.x - along.y * half, y: end.y + along.x * half },
+				{ x: end.x + along.y * half, y: end.y - along.x * half }
+			]);
+			const at = centerline[0];
+			if (Math.hypot(ring.x - at.x, ring.y - at.y) > half) guides.push([ring, at]);
 			rich.push({
 				index: rich.length,
 				nodeId: node.id,
@@ -1216,6 +1227,7 @@ export class Editor {
 		}
 		this.currentTaperHandles = rich;
 		this.taperRenderer.show(rich.map((h) => ({ at: h.handle, dir: h.dir })));
+		this.guideRenderer.show(guides);
 	}
 
 	taperHandleAt(worldX: number, worldZ: number): TaperHandleInfo | null {
@@ -1236,9 +1248,10 @@ export class Editor {
 		return best;
 	}
 
-	// While dragging a taper handle: the transition reaches as far along the
-	// road from the node as the pointer, on both sides.
-	setTaperFromDrag(handle: TaperHandleInfo, worldX: number, worldZ: number) {
+	// While dragging a setback handle: its road stops as far along from the
+	// node as the pointer; with `every` (Shift held) every road at the node
+	// does, each within its own limits.
+	setTaperFromDrag(handle: TaperHandleInfo, worldX: number, worldZ: number, every = false) {
 		const points = handle.centerline;
 		let accumulated = 0;
 		let bestArc = 0;
@@ -1262,13 +1275,18 @@ export class Editor {
 		}
 		const node = this.graph.nodes.get(handle.nodeId);
 		if (!node) return;
-		// Within the taper's limits: no steeper than the lanes' shift allows,
-		// and never into the far node's setback.
+		// Within each road's limits: a taper no steeper than the lanes' shift
+		// allows, a junction no smaller than its curb corners need, and never
+		// into the far node's setback.
 		const limits = this.roadRenderer.taperLimits(node.id);
-		const taper = Math.min(limits?.max ?? Infinity, Math.max(limits?.min ?? 0, bestArc * 2));
-		node.junction = { ...(node.junction ?? { connections: [] }), taper };
+		const setbacks = { ...node.junction?.setbacks };
+		const roads = every ? this.currentTaperHandles.map((h) => h.segmentId) : [handle.segmentId];
+		for (const road of roads) {
+			const limit = limits?.get(road);
+			setbacks[road] = Math.min(limit?.max ?? Infinity, Math.max(limit?.min ?? 0, bestArc));
+		}
+		node.junction = { ...(node.junction ?? { connections: [] }), setbacks };
 		this.rebuildRoads();
-		this.refreshTaperHandles();
 	}
 
 	finishTaper() {
@@ -1632,6 +1650,7 @@ export class Editor {
 		this.refreshRevealedNodes();
 		this.currentTaperHandles = [];
 		this.taperRenderer.clear();
+		this.guideRenderer.clear();
 		this.currentOffsetHandle = null;
 		this.offsetRenderer?.clear();
 	}
@@ -1745,8 +1764,9 @@ export class Editor {
 		if (farA === farB) return false;
 		const flowA = segA.endNodeId === nodeId ? segA.lanes : reverseLanes(segA.lanes);
 		const flowB = segB.startNodeId === nodeId ? segB.lanes : reverseLanes(segB.lanes);
-		const offsetA = segA.endNodeId === nodeId ? segA.offset : -segA.offset;
-		const offsetB = segB.startNodeId === nodeId ? segB.offset : -segB.offset;
+		// Each read to the right of the flow through the node.
+		const offsetA = -offsetOutOf(segA, nodeId);
+		const offsetB = offsetOutOf(segB, nodeId);
 		return serializeLanes(flowA) === serializeLanes(flowB) && Math.abs(offsetA - offsetB) < 1e-6;
 	}
 
@@ -1767,7 +1787,8 @@ export class Editor {
 		const flowB = segB.startNodeId === nodeId ? segB.lanes : reverseLanes(segB.lanes);
 
 		const merged = this.graph.createSegment(farAId, farBId, cloneLanes(flowA));
-		merged.offset = segA.endNodeId === nodeId ? segA.offset : -segA.offset;
+		merged.offsetStart = offsetOutOf(segA, farAId);
+		merged.offsetEnd = -offsetOutOf(segB, farBId);
 		// Keep the shape: bow the merged road through where the node sat unless the
 		// three points were already collinear, in which case it stays straight.
 		const ax = farB.x - farA.x;
@@ -1939,6 +1960,7 @@ export class Editor {
 		}
 		this.selectionRenderer?.dispose();
 		this.taperRenderer?.dispose();
+		this.guideRenderer?.dispose();
 		this.offsetRenderer?.dispose();
 		this.crossingRenderer?.dispose();
 		this.connectionRenderer?.dispose();

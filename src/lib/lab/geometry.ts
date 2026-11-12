@@ -164,7 +164,7 @@ function sectionAt(road: Road, i: number, distance: number): LaneSpan[] {
 			(leftEdge(cur.align, total) + shift(cur)) * f
 		: leftEdge(cur.align, total) + shift(cur);
 	const spans: LaneSpan[] = [];
-	let x = anchor;
+	let x = anchor + (road.lean ?? 0) * distance;
 	for (const row of rows) {
 		spans.push({ lane: row.lane, left: x, right: x + row.width });
 		x += row.width;

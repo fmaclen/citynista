@@ -655,6 +655,11 @@ export interface Curb {
 	mouth: Pt[];
 }
 
+// How far a road end may sit inside a neighbour's curb line and still have
+// its corner run straight along both edges (automatic setbacks overlap by a
+// tenth of a metre, more at a sharp angle).
+const OVERLAP = 1;
+
 const dedupe = (pts: Pt[]) => pts.filter((q, i) => i === 0 || dist(q, pts[i - 1]) > 0.01);
 
 export function curbsOf(ends: EndInfo[]) {
@@ -763,6 +768,17 @@ function cornerCurve(a: Curb, b: Curb, bulge: number) {
 			}
 			arc[arc.length - 1] = to;
 			return [p0, ...arc, p3].filter((q, i, list) => i === 0 || dist(q, list[i - 1]) > 0.02);
+		}
+		// The curb lines meet just behind a curb point instead: that end sits a
+		// little inside the other road's line, as roads meeting at a sharp angle
+		// do. No curve fits between them; any would swing into the other road's
+		// mouth and pinch it. The curb runs along both edges to where they meet,
+		// back along an end's own edge where nothing lies beyond it.
+		const reaches = (s: number, bare: boolean) => s > 0.05 || (bare && s > -OVERLAP);
+		if (reaches(sAt, a.bareLeave) && reaches(tAt, b.bareArrive)) {
+			return [p0, offsetPoint(p0, d0, sAt), p3].filter(
+				(q, i, list) => i === 0 || dist(q, list[i - 1]) > 0.02
+			);
 		}
 	}
 	let k =

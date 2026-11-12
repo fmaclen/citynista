@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { SvelteSet } from 'svelte/reactivity';
 import type { CameraState } from '$lib/core/types';
 import { screenSizedMap } from './handle-shapes';
+import { frameHooks } from './guide-renderer';
 
 // Default extent of the buildable world, in metres (world units). The map is a
 // finite diorama slab rather than an endless plane; overridable per SceneManager
@@ -77,6 +78,9 @@ export class SceneManager {
 	// Editor handles drawn at a fixed size on screen (see handle-shapes.ts):
 	// each is scaled to world units per pixel, at most its value, every frame.
 	readonly screenSized = screenSizedMap();
+	// Called with world units per pixel before each frame draws, for overlays
+	// laid out in screen pixels that a scale alone can't keep (dashed guides).
+	readonly beforeFrame = frameHooks();
 
 	private container: HTMLElement;
 	private animationFrameId: number | null = null;
@@ -584,6 +588,7 @@ export class SceneManager {
 		for (const [object, most] of this.screenSized) {
 			object.scale.setScalar(Math.min(worldPerPixel, most));
 		}
+		for (const hook of this.beforeFrame) hook(worldPerPixel);
 
 		this.renderer.render(this.scene, this.camera);
 

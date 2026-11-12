@@ -1,5 +1,5 @@
 import type { Lane, SegmentData } from './types';
-import { createLanesFrom, getTotalWidth, migrateLanes, serializeLanes } from './lane-template';
+import { getTotalWidth, serializeLanes } from './lane-template';
 
 export class Segment {
 	id: string;
@@ -8,9 +8,11 @@ export class Segment {
 	controlX = $state<number | undefined>(undefined);
 	controlY = $state<number | undefined>(undefined);
 	lanes = $state<Lane[]>([]);
-	// Metres the cross-section sits to the right of the drawn line, looking
-	// from the start node to the end node (0 = centred on the line).
-	offset = $state(0);
+	// Metres the cross-section sits to the right of the drawn line at each
+	// end, looking from the start node to the end node (0 = centred on the
+	// line); it blends from one to the other along the road (road-line.ts).
+	offsetStart = $state(0);
+	offsetEnd = $state(0);
 
 	lanesKey = $derived(serializeLanes(this.lanes));
 	totalWidth = $derived(getTotalWidth(this.lanes));
@@ -62,20 +64,19 @@ export class Segment {
 			controlY: this.controlY,
 			lanes: this.cloneLanes()
 		};
-		if (this.offset) data.offset = this.offset;
+		if (this.offsetStart) data.offsetStart = this.offsetStart;
+		if (this.offsetEnd) data.offsetEnd = this.offsetEnd;
 		return data;
 	}
 
 	static fromJSON(data: SegmentData) {
-		const lanes =
-			data.lanes && data.lanes.length > 0
-				? migrateLanes(data.lanes)
-				: createLanesFrom(data.laneTemplateId ?? 'street');
+		const lanes = data.lanes.map((lane) => ({ ...lane }));
 		const segment = new Segment(data.id, data.startNodeId, data.endNodeId, lanes);
 		if (data.controlX !== undefined && data.controlY !== undefined) {
 			segment.setControlPoint(data.controlX, data.controlY);
 		}
-		segment.offset = data.offset ?? 0;
+		segment.offsetStart = data.offsetStart ?? 0;
+		segment.offsetEnd = data.offsetEnd ?? 0;
 		return segment;
 	}
 }
