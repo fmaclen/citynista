@@ -3,8 +3,8 @@ import * as THREE from 'three';
 // The shared look of every "editor line" — connector movement arcs, handle
 // stems, bezier curvature guides: a row of small rounded beads, drawn above
 // everything so it reads as editor UI and never as road paint. This is the ONE
-// place to change how those lines look (bead size, spacing, opacity); each
-// takes the colour of the handle it belongs to (editor-palette.ts). Every
+// place to change how those lines look (bead size, spacing, opacity); they
+// are drawn in the handle fill, or a state's tint (editor-palette.ts). Every
 // editor line is built from `editorLineGeometry` + `createEditorLineMaterial`.
 export const EDITOR_LINE_OPACITY = 0.95;
 

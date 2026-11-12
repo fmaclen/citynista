@@ -28,8 +28,8 @@ Status key: **now** (in progress) · **next** (agreed, queued) · **later**
 - **next** — Apply the hover convention (blue + slight scale + grab cursor) to
   **setback handles** and any other overlay, not just connector dots.
 - **done** — Editor lines share one beaded style (`rendering/editor-line.ts`).
-- **idea** — Overlay handles are sized in world units, so they balloon when
-  zoomed in. Consider constant screen-pixel sizing for all handles/dots.
+- **done** — Handles, dots and node rings hold a constant size on screen;
+  a node ring (20 px) is also its click area.
 
 ## Junctions / geometry
 

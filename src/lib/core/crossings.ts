@@ -5,7 +5,7 @@ import { roadAt, roadLine } from './road-line';
 
 const SAMPLES = 50;
 // Crossings this close to an existing endpoint are already junctions.
-const ENDPOINT_EXCLUSION = 6;
+export const ENDPOINT_EXCLUSION = 6;
 const MAX_SPLITS = 50;
 
 export interface Crossing {
@@ -213,7 +213,8 @@ function intersectLineSegments(
 
 // Split a segment at parameter t through an existing node. Curved segments
 // keep their exact shape: de Casteljau subdivision of a quadratic yields two
-// quadratics whose control points are the lerped legs.
+// quadratics whose control points are the lerped legs. Returns the two
+// halves: start to the node, and the node to the end.
 export function splitSegment(graph: Graph, segment: Segment, t: number, nodeId: string) {
 	const startNode = graph.nodes.get(segment.startNodeId);
 	const endNode = graph.nodes.get(segment.endNodeId);
@@ -254,4 +255,5 @@ export function splitSegment(graph: Graph, segment: Segment, t: number, nodeId: 
 	if (rightControl) {
 		right.setControlPoint(rightControl.x, rightControl.y);
 	}
+	return { left, right };
 }

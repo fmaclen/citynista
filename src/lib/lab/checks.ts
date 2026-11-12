@@ -22,14 +22,22 @@ const sum = (paths: Paths) => paths.reduce((s, p) => s + area(p), 0);
 const TOL = 0.05;
 
 function segmentsCross(a: Pt, b: Pt, c: Pt, d: Pt) {
-	const side = (p: Pt, q: Pt, r: Pt) => (q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x);
+	// How far r lies to the left of the line through p and q.
+	const side = (p: Pt, q: Pt, r: Pt) =>
+		((q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x)) /
+		(Math.hypot(q.x - p.x, q.y - p.y) || 1);
 	// Apart in either axis: no crossing (and no float noise between two
 	// pieces of one straight line).
 	if (Math.max(a.x, b.x) < Math.min(c.x, d.x) || Math.max(c.x, d.x) < Math.min(a.x, b.x))
 		return false;
 	if (Math.max(a.y, b.y) < Math.min(c.y, d.y) || Math.max(c.y, d.y) < Math.min(a.y, b.y))
 		return false;
-	return side(c, d, a) * side(c, d, b) < 0 && side(a, b, c) * side(a, b, d) < 0;
+	// Lines that only meet don't cross: one running on at a slight angle from
+	// where the other ends, its first point a float's width off the other's
+	// last, touches it. Each end must lie clearly on its side.
+	const s = [side(c, d, a), side(c, d, b), side(a, b, c), side(a, b, d)];
+	if (s.some((v) => Math.abs(v) < 1e-6)) return false;
+	return s[0] * s[1] < 0 && s[2] * s[3] < 0;
 }
 
 export function check(scene: Scene): string[] {
@@ -40,7 +48,9 @@ export function check(scene: Scene): string[] {
 	const junctions = scene.effective.map((j) => ({ j, draw: scene.junctionDraw(j.id)! }));
 
 	const roadway = union(roadDraws.flatMap((r) => r.draw.roadway));
-	const outlines = union(junctions.flatMap((j) => j.draw.asphalt));
+	const outlines = union(
+		junctions.flatMap((j) => [...j.draw.asphalt, ...(j.draw.lanes ?? []).flatMap((l) => l.paths)])
+	);
 	const surface = union([...roadway, ...outlines]);
 	// Paint may also sit on a trail (its centre line).
 	const painted = union([...surface, ...roadDraws.flatMap((r) => r.draw.fills.get('trail') ?? [])]);

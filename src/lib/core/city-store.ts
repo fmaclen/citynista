@@ -56,6 +56,12 @@ export class CityStore {
 		localStorage.setItem(INDEX_KEY, JSON.stringify(index));
 	}
 
+	// A rename touches only the name; the stored map stays as last saved.
+	rename(id: string, name: string) {
+		const city = this.load(id);
+		if (city) this.save({ ...city, name });
+	}
+
 	remove(id: string) {
 		localStorage.removeItem(cityKey(id));
 		const index = this.list().filter((c) => c.id !== id);

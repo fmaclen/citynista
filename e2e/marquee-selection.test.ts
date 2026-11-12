@@ -57,8 +57,7 @@ test.describe('Marquee Selection', () => {
 		await page.mouse.move(allEnd.x, allEnd.y);
 		await page.mouse.up();
 
-		await expect(panel.getByText('Editing 2 segments')).toBeVisible();
-		await expect(panel.getByText('different lane configurations')).toBeVisible();
+		await expect(panel.getByText('different lanes')).toBeVisible();
 
 		// Delete removes the whole marquee selection.
 		await page.locator('body').press('Delete');

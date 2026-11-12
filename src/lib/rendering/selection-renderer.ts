@@ -8,47 +8,53 @@ interface Pt {
 }
 import { getQuadraticBezierPoint, getQuadraticBezierTangent } from '../geometry/bezier';
 import { editorLineGeometry, createEditorLineMaterial } from './editor-line';
-import { HOVER_COLOR, SELECT_COLOR, DANGER_COLOR, CURVE_HANDLE } from './editor-palette';
 import {
+	HOVER_COLOR,
+	SELECT_COLOR,
+	DANGER_COLOR,
+	HANDLE_FILL,
+	type HandleState
+} from './editor-palette';
+import {
+	CURVE_HANDLE,
 	disposeHandleObject,
-	handleMaterial,
 	handleObject,
-	outlineMaterial,
-	squareShape,
+	setHandleState,
 	type ScreenSized
 } from './handle-shapes';
 
-// Segment highlights: a translucent full-width ribbon with round end caps sized
-// to the node rings. Hover, selection and delete-hover are the *same* highlight
+// Segment highlights: a translucent full-width ribbon from node to node; the
+// revealed node rings mark its ends (no end caps, which would double the tint
+// where they overlap the ribbon). Hover, selection and delete-hover are the *same* highlight
 // and differ only in color — cyan for hover, yellow for selection, red for
 // delete. The fill sits just above the road and does not write depth, so it
 // composites cleanly over the network at any camera tilt without z-fighting
 // (an earlier LessDepth/depth-write trick relied on bit-equal coplanar depth,
 // which the perspective + logarithmic depth buffer no longer guarantees).
 // A selected road also shows its curvature handle: a square on the control
-// point, on beaded guides from the road's ends, in the curve colour.
+// point, on beaded guides from the road's ends (see handle-shapes.ts).
 const HIGHLIGHT_OPACITY = 0.2;
 const FILL_RENDER_ORDER = 1;
 const GUIDE_RENDER_ORDER = 2;
 const CONTROL_RENDER_ORDER = 8;
 const CURVE_SAMPLES = 50;
-const CAP_SEGMENTS = 48;
 const RIBBON_MARGIN = 1;
 const HOVER_Y = 0.16;
 const SELECT_Y = 0.17;
 const GUIDE_Y = 0.21;
 const CONTROL_Y = 0.22;
+const LANE_Y = 0.18;
+const LANE_OPACITY = 0.55;
 
 interface Highlight {
 	ribbon: THREE.Mesh;
-	startCap: THREE.Mesh;
-	endCap: THREE.Mesh;
 	material: THREE.MeshBasicMaterial;
 }
 
 interface SegmentVisual {
 	group: THREE.Group;
 	fill: Highlight;
+	lane: THREE.Mesh;
 	handles: THREE.Mesh;
 	control: THREE.Group;
 }
@@ -77,7 +83,8 @@ function buildRibbonGeometry(
 	segment: Segment,
 	startNode: Pt,
 	endNode: Pt,
-	halfWidth: number,
+	lo: number,
+	hi: number,
 	y: number
 ) {
 	const cx = segment.controlX ?? (startNode.x + endNode.x) / 2;
@@ -112,12 +119,12 @@ function buildRibbonGeometry(
 		// Where the road is drawn: the line moved by the segment's offset.
 		const px = point.x + nx * segment.offset;
 		const py = point.y + ny * segment.offset;
-		positions[i * 6] = px + nx * halfWidth;
+		positions[i * 6] = px + nx * hi;
 		positions[i * 6 + 1] = y;
-		positions[i * 6 + 2] = py + ny * halfWidth;
-		positions[i * 6 + 3] = px - nx * halfWidth;
+		positions[i * 6 + 2] = py + ny * hi;
+		positions[i * 6 + 3] = px + nx * lo;
 		positions[i * 6 + 4] = y;
-		positions[i * 6 + 5] = py - ny * halfWidth;
+		positions[i * 6 + 5] = py + ny * lo;
 	}
 
 	const indices: number[] = [];
@@ -147,15 +154,9 @@ function createHighlight(color: number): Highlight {
 	});
 
 	const ribbon = new THREE.Mesh(new THREE.BufferGeometry(), material);
-	const startCap = new THREE.Mesh(new THREE.BufferGeometry(), material);
-	const endCap = new THREE.Mesh(new THREE.BufferGeometry(), material);
-	startCap.rotation.x = -Math.PI / 2;
-	endCap.rotation.x = -Math.PI / 2;
-	for (const mesh of [ribbon, startCap, endCap]) {
-		mesh.renderOrder = FILL_RENDER_ORDER;
-	}
+	ribbon.renderOrder = FILL_RENDER_ORDER;
 
-	return { ribbon, startCap, endCap, material };
+	return { ribbon, material };
 }
 
 function updateHighlight(
@@ -163,30 +164,23 @@ function updateHighlight(
 	segment: Segment,
 	startNode: Pt,
 	endNode: Pt,
-	startRadius: number,
-	endRadius: number,
 	y: number
 ) {
 	const halfWidth = segment.totalWidth / 2 + RIBBON_MARGIN;
 
 	highlight.ribbon.geometry.dispose();
-	highlight.ribbon.geometry = buildRibbonGeometry(segment, startNode, endNode, halfWidth, y);
-
-	highlight.startCap.geometry.dispose();
-	highlight.startCap.geometry = new THREE.CircleGeometry(startRadius, CAP_SEGMENTS);
-	const start = shifted(segment, startNode, endNode, 0);
-	const end = shifted(segment, startNode, endNode, 1);
-	highlight.startCap.position.set(start.x, y, start.y);
-
-	highlight.endCap.geometry.dispose();
-	highlight.endCap.geometry = new THREE.CircleGeometry(endRadius, CAP_SEGMENTS);
-	highlight.endCap.position.set(end.x, y, end.y);
+	highlight.ribbon.geometry = buildRibbonGeometry(
+		segment,
+		startNode,
+		endNode,
+		-halfWidth,
+		halfWidth,
+		y
+	);
 }
 
 function disposeHighlight(highlight: Highlight) {
 	highlight.ribbon.geometry.dispose();
-	highlight.startCap.geometry.dispose();
-	highlight.endCap.geometry.dispose();
 	highlight.material.dispose();
 }
 
@@ -195,52 +189,40 @@ export class SelectionRenderer {
 	private screenSized: ScreenSized;
 	private visuals = new Map<string, SegmentVisual>();
 	private hover: Highlight | null = null;
-	private guideMaterial = createEditorLineMaterial(CURVE_HANDLE.color);
-	private controlMaterials = {
-		outline: outlineMaterial(),
-		fill: handleMaterial(CURVE_HANDLE.color)
-	};
+	private guideMaterial = createEditorLineMaterial(HANDLE_FILL);
+	// The curvature handle under the pointer or in hand.
+	private lit: { segmentId: string; state: HandleState } | null = null;
+	// One lane of a selected road, lit while its row in the lane panel is hovered.
+	private laneMaterial = new THREE.MeshBasicMaterial({
+		color: HOVER_COLOR,
+		transparent: true,
+		opacity: LANE_OPACITY,
+		depthTest: false,
+		depthWrite: false,
+		side: THREE.DoubleSide
+	});
 
 	constructor(scene: THREE.Scene, screenSized: ScreenSized) {
 		this.scene = scene;
 		this.screenSized = screenSized;
 	}
 
-	showHover(
-		segment: Segment,
-		startNode: Pt,
-		endNode: Pt,
-		startRadius: number,
-		endRadius: number,
-		danger = false
-	) {
+	showHover(segment: Segment, startNode: Pt, endNode: Pt, danger = false) {
 		if (!this.hover) {
 			this.hover = createHighlight(HOVER_COLOR);
-			this.scene.add(this.hover.ribbon, this.hover.startCap, this.hover.endCap);
+			this.scene.add(this.hover.ribbon);
 		}
 
 		this.hover.material.color.setHex(danger ? DANGER_COLOR : HOVER_COLOR);
-		updateHighlight(this.hover, segment, startNode, endNode, startRadius, endRadius, HOVER_Y);
+		updateHighlight(this.hover, segment, startNode, endNode, HOVER_Y);
 		this.hover.ribbon.visible = true;
-		this.hover.startCap.visible = true;
-		this.hover.endCap.visible = true;
 	}
 
 	hideHover() {
-		if (this.hover) {
-			this.hover.ribbon.visible = false;
-			this.hover.startCap.visible = false;
-			this.hover.endCap.visible = false;
-		}
+		if (this.hover) this.hover.ribbon.visible = false;
 	}
 
-	showSegment(
-		segment: Segment,
-		startNode: Pt,
-		endNode: Pt,
-		startRadius: number,
-		endRadius: number
-	) {
+	showSegment(segment: Segment, startNode: Pt, endNode: Pt, laneIndex: number | null = null) {
 		let visual = this.visuals.get(segment.id);
 
 		if (!visual) {
@@ -250,26 +232,48 @@ export class SelectionRenderer {
 			handles.renderOrder = GUIDE_RENDER_ORDER;
 
 			const control = handleObject(
-				squareShape(CURVE_HANDLE),
-				this.controlMaterials,
+				CURVE_HANDLE,
 				{ x: 0, y: 0 },
 				{ x: 1, y: 0 },
 				CONTROL_Y,
-				CONTROL_RENDER_ORDER
+				CONTROL_RENDER_ORDER,
+				this.lit?.segmentId === segment.id ? this.lit.state : 'rest'
 			);
 			this.screenSized.set(control, Infinity);
 
+			const lane = new THREE.Mesh(new THREE.BufferGeometry(), this.laneMaterial);
+			lane.renderOrder = FILL_RENDER_ORDER;
+
 			const group = new THREE.Group();
-			group.add(fill.ribbon, fill.startCap, fill.endCap);
+			group.add(fill.ribbon);
+			group.add(lane);
 			group.add(handles);
 			group.add(control);
 			this.scene.add(group);
 
-			visual = { group, fill, handles, control };
+			visual = { group, fill, lane, handles, control };
 			this.visuals.set(segment.id, visual);
 		}
 
-		updateHighlight(visual.fill, segment, startNode, endNode, startRadius, endRadius, SELECT_Y);
+		updateHighlight(visual.fill, segment, startNode, endNode, SELECT_Y);
+
+		// Lanes run left to right across the road as drawn, centred on it.
+		const lit = laneIndex === null ? undefined : segment.lanes[laneIndex];
+		visual.lane.visible = lit !== undefined;
+		if (lit) {
+			const lo =
+				-segment.totalWidth / 2 +
+				segment.lanes.slice(0, laneIndex ?? 0).reduce((sum, l) => sum + l.width, 0);
+			visual.lane.geometry.dispose();
+			visual.lane.geometry = buildRibbonGeometry(
+				segment,
+				startNode,
+				endNode,
+				lo,
+				lo + lit.width,
+				LANE_Y
+			);
+		}
 
 		// The guides and the curvature handle move with the road's offset.
 		const control = controlHandle(segment, startNode, endNode);
@@ -282,11 +286,21 @@ export class SelectionRenderer {
 		visual.control.position.set(control.x, CONTROL_Y, control.y);
 	}
 
+	// Tints one road's curvature handle for its state and the rest back to
+	// rest; null for none.
+	lightControl(segmentId: string | null, state: HandleState = 'hover') {
+		this.lit = segmentId === null ? null : { segmentId, state };
+		for (const [id, visual] of this.visuals) {
+			setHandleState(visual.control, id === segmentId ? state : 'rest');
+		}
+	}
+
 	hideSegment(segmentId: string) {
 		const visual = this.visuals.get(segmentId);
 		if (!visual) return;
 
 		disposeHighlight(visual.fill);
+		visual.lane.geometry.dispose();
 		visual.handles.geometry.dispose();
 		disposeHandleObject(visual.control);
 		this.screenSized.delete(visual.control);
@@ -304,7 +318,6 @@ export class SelectionRenderer {
 	dispose() {
 		this.clear();
 		this.guideMaterial.dispose();
-		this.controlMaterials.outline.dispose();
-		this.controlMaterials.fill.dispose();
+		this.laneMaterial.dispose();
 	}
 }

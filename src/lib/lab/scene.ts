@@ -11,7 +11,7 @@ import {
 	type JunctionDraw,
 	type RoadGeo
 } from './junction';
-import { endKey, type Control, type Junction, type Place, type Pt } from './model';
+import { endKey, type Control, type Junction, type Place, type Pt, type Surface } from './model';
 import { buildRoad, isRoadway, type EndCut, type Fill, type RoadDraw } from './road';
 
 // Sidewalk paving and raised concrete medians are the same concrete.
@@ -29,6 +29,27 @@ export const COLOURS: Record<Fill | 'ground' | 'white' | 'yellow', string> = {
 	white: '#ecece4',
 	yellow: '#e6c34a'
 };
+
+// A junction is paved in the material that carries the most car-lane width
+// across its arms, each arm counting its car lanes where it meets the node.
+// It reads only lane widths and materials, so dragging a road never changes
+// it. Ties go to the first material in this order, asphalt first.
+const PAVING_ORDER: Surface[] = ['asphalt', 'pavement', 'concrete', 'dirt', 'grass', 'hatch'];
+
+export function pavingOf(junction: Junction, roads: Map<string, RoadGeo>) {
+	const width = new Map<Surface, number>();
+	for (const e of junction.ends) {
+		const stretches = roads.get(e.road)?.road.stretches ?? [];
+		const stretch = e.end === 'start' ? stretches[0] : stretches[stretches.length - 1];
+		for (const lane of stretch?.lanes ?? [])
+			if (lane.kind === 'drive' || lane.kind === 'bus')
+				width.set(lane.surface, (width.get(lane.surface) ?? 0) + lane.width);
+	}
+	let best: Surface = 'asphalt';
+	for (const surface of PAVING_ORDER)
+		if ((width.get(surface) ?? 0) > (width.get(best) ?? 0)) best = surface;
+	return best;
+}
 
 export interface View {
 	x: number;
@@ -53,7 +74,7 @@ export class Scene {
 	place: Place;
 	geos = new Map<string, RoadGeo>();
 	private roadDraws = new Map<string, { key: string; draw: RoadDraw }>();
-	private junctionDraws = new Map<string, { key: string; draw: JunctionDraw }>();
+	private junctionDraws = new Map<string, { key: string; draw: JunctionDraw; paving: Surface }>();
 	private versions = new Map<string, number>();
 	private touching = new Map<string, { key: string; touching: boolean }>();
 	lastBuildMs = 0;
@@ -155,7 +176,11 @@ export class Scene {
 				...inside.map((r) => `${r}:${this.version(`road:${r}`)}`)
 			].join('|');
 			if (this.junctionDraws.get(j.id)?.key !== key) {
-				this.junctionDraws.set(j.id, { key, draw: buildJunction(j, this.geos) });
+				this.junctionDraws.set(j.id, {
+					key,
+					draw: buildJunction(j, this.geos),
+					paving: pavingOf(j, this.geos)
+				});
 			}
 		}
 		for (const id of [...this.junctionDraws.keys()])
@@ -169,8 +194,10 @@ export class Scene {
 				const walkOnly = !road.stretches.some((st) => st.lanes.some(isRoadway));
 				const length = this.geos.get(road.id)?.path.length ?? 0;
 				const crossing = crossingReach(road, length, end) > 0;
-				if (!crossing && this.junctionDraws.get(j.id)?.draw.carriedEnds.has(key))
-					return { paint: 0, nose: 0 };
+				const draw = this.junctionDraws.get(j.id)?.draw;
+				if (!crossing && draw?.carriedEnds.has(key)) return { paint: 0, nose: 0 };
+				if (!crossing && draw?.linesOn?.has(key))
+					return { paint: 0, nose: road.noses?.[end] ?? 0.5 };
 				// Lines stop half a metre short of the outline, clear of anything
 				// painted across the junction; further back at a stop line.
 				const setback =
@@ -190,6 +217,10 @@ export class Scene {
 
 	junctionDraw(id: string) {
 		return this.junctionDraws.get(id)?.draw;
+	}
+
+	junctionPaving(id: string) {
+		return this.junctionDraws.get(id)?.paving ?? 'asphalt';
 	}
 
 	roadDraw(id: string) {
@@ -274,10 +305,17 @@ export class Scene {
 		const roads = [...this.roadDraws.entries()]
 			.filter(([id]) => !this.hidden.has(id))
 			.map(([, r]) => r.draw);
-		const junctions = [...this.junctionDraws.values()].map((j) => j.draw);
+		const entries = [...this.junctionDraws.values()];
+		const junctions = entries.map((j) => j.draw);
+		const asphaltPaved = new Set(entries.filter((j) => j.paving === 'asphalt').map((j) => j.draw));
 		// Ground-level surfaces first, raised ones on top, paint last. Each
 		// surface is one fill across every road and junction, so no seam shows
 		// where a road meets its junction.
+		// A junction's car lanes carried across go in with their roads' lanes.
+		const lanes = (j: JunctionDraw, fill: Fill) =>
+			(j.lanes ?? [])
+				.filter((l) => (l.surface === 'hatch' ? 'asphalt' : l.surface) === fill)
+				.flatMap((l) => l.paths);
 		const all = (pick: (r: RoadDraw) => Paths, pickJ: (j: JunctionDraw) => Paths = () => []) => [
 			...roads.flatMap(pick),
 			...junctions.flatMap(pickJ)
@@ -285,7 +323,7 @@ export class Scene {
 		fillPaths(
 			all(
 				(r) => r.fills.get('pavement') ?? [],
-				(j) => j.pavement
+				(j) => [...j.pavement, ...lanes(j, 'pavement')]
 			),
 			COLOURS.pavement
 		);
@@ -300,16 +338,21 @@ export class Scene {
 			all(
 				(r) => r.fills.get('asphalt') ?? [],
 				(j) => [
-					...j.asphalt,
+					...(asphaltPaved.has(j) ? j.asphalt : []),
 					...j.carried.filter((c) => c.surface === 'hatch').flatMap((c) => c.paths)
 				]
 			),
 			COLOURS.asphalt
 		);
+		for (const j of entries)
+			if (j.paving !== 'asphalt') fillPaths(j.draw.asphalt, COLOURS[j.paving]);
 		fillPaths(
 			all(
 				(r) => r.fills.get('dirt') ?? [],
-				(j) => j.carried.filter((c) => c.surface === 'dirt').flatMap((c) => c.paths)
+				(j) => [
+					...j.carried.filter((c) => c.surface === 'dirt').flatMap((c) => c.paths),
+					...lanes(j, 'dirt')
+				]
 			),
 			COLOURS.dirt
 		);
@@ -320,10 +363,10 @@ export class Scene {
 					(r) => r.fills.get(fill) ?? [],
 					(j) => [
 						...j.carried.filter((c) => c.surface === fill).flatMap((c) => c.paths),
-						...(fill === 'grass' ? j.verges : [])
+						...(fill === 'grass' ? j.verges : []),
+						...lanes(j, fill)
 					]
 				),
-
 				COLOURS[fill]
 			);
 		}

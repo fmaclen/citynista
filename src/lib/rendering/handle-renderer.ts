@@ -1,46 +1,35 @@
 import * as THREE from 'three';
 import type { Pt as Point } from '../lab/model';
 import { editorLineGeometry, createEditorLineMaterial } from './editor-line';
+import { HANDLE_FILL, type HandleState } from './editor-palette';
 import {
 	CROSSING_HANDLE,
+	CROSSING_OFF_HANDLE,
 	OFFSET_HANDLE,
 	TAPER_HANDLE,
-	ZEBRA_STRIPE_COLOR,
-	type HandleLook
-} from './editor-palette';
-import {
-	arrowShape,
 	disposeHandleObject,
-	handleMaterial,
 	handleObject,
-	outlineMaterial,
-	triangleShape,
-	zebraShape,
-	type HandleParts,
+	setHandleState,
+	type HandleShape,
 	type ScreenSized
 } from './handle-shapes';
 
-// Draggable handles of one kind, each on an optional beaded stem in its
-// colour: a node's taper ends (triangles pointing along their road), a road's
-// offset (a two-headed arrow across it), the connector's crossings (zebra
-// bars across their road, hollow when switched off). A cheap overlay, rebuilt
-// on selection and edits.
+// Draggable handles of one kind (see handle-shapes.ts for the shapes): a
+// node's taper ends (arrows pointing along their road, away from the node),
+// a road's offset (a double arrow across it), the connector's crossings (bars
+// across their road, hollow when switched off, each on a beaded line from
+// sidewalk to sidewalk while on). One of them can be lit for its state. A
+// cheap overlay, rebuilt on selection and edits.
 const STEM_Y = 0.3;
 const HANDLE_Y = 0.31;
 const RENDER_ORDER = 8;
 
 export type HandleKind = 'taper' | 'offset' | 'crossing';
 
-const LOOKS: Record<HandleKind, HandleLook> = {
-	taper: TAPER_HANDLE,
-	offset: OFFSET_HANDLE,
-	crossing: CROSSING_HANDLE
-};
-
-function shapeOf(kind: HandleKind, hollow: boolean): HandleParts {
-	if (kind === 'taper') return triangleShape(TAPER_HANDLE);
-	if (kind === 'offset') return arrowShape(OFFSET_HANDLE);
-	return zebraShape(CROSSING_HANDLE, hollow);
+function shapeOf(kind: HandleKind, hollow: boolean): HandleShape {
+	if (kind === 'taper') return TAPER_HANDLE;
+	if (kind === 'offset') return OFFSET_HANDLE;
+	return hollow ? CROSSING_OFF_HANDLE : CROSSING_HANDLE;
 }
 
 export interface Handle {
@@ -59,27 +48,24 @@ export class HandleRenderer {
 	private kind: HandleKind;
 	private group: THREE.Group | null = null;
 	private handles: THREE.Object3D[] = [];
-	private lineMaterial: THREE.MeshBasicMaterial;
-	private outline = outlineMaterial();
-	private fill: THREE.MeshBasicMaterial;
-	private detail = handleMaterial(ZEBRA_STRIPE_COLOR);
+	private lineMaterial = createEditorLineMaterial(HANDLE_FILL);
+	// The handle under the pointer or in hand, by its place in the list shown.
+	private lit: { index: number; state: HandleState } | null = null;
 
 	constructor(scene: THREE.Scene, screenSized: ScreenSized, kind: HandleKind) {
 		this.scene = scene;
 		this.screenSized = screenSized;
 		this.kind = kind;
-		const color = LOOKS[kind].color;
-		this.lineMaterial = createEditorLineMaterial(color);
-		this.fill = handleMaterial(color);
 	}
 
 	show(handles: Handle[]) {
+		const lit = this.lit;
 		this.clear();
+		this.lit = lit;
 		if (handles.length === 0) return;
 
 		const group = new THREE.Group();
-		const materials = { outline: this.outline, fill: this.fill, detail: this.detail };
-		for (const h of handles) {
+		handles.forEach((h, i) => {
 			if (h.stem) {
 				const stem = new THREE.Mesh(editorLineGeometry(h.stem, STEM_Y), this.lineMaterial);
 				stem.renderOrder = RENDER_ORDER - 1;
@@ -87,24 +73,31 @@ export class HandleRenderer {
 			}
 			const handle = handleObject(
 				shapeOf(this.kind, !!h.hollow),
-				materials,
 				h.at,
 				h.dir,
 				HANDLE_Y,
-				RENDER_ORDER
+				RENDER_ORDER,
+				lit?.index === i ? lit.state : 'rest'
 			);
 			this.screenSized.set(handle, Infinity);
 			this.handles.push(handle);
 			group.add(handle);
-		}
+		});
 
 		this.scene.add(group);
 		this.group = group;
 	}
 
+	// Tints one handle for its state and the rest back to rest; null for none.
+	light(index: number | null, state: HandleState = 'hover') {
+		this.lit = index === null ? null : { index, state };
+		this.handles.forEach((h, i) => setHandleState(h, i === index ? state : 'rest'));
+	}
+
 	clear() {
 		for (const handle of this.handles) this.screenSized.delete(handle);
 		this.handles = [];
+		this.lit = null;
 		if (!this.group) return;
 		disposeHandleObject(this.group);
 		this.scene.remove(this.group);
@@ -113,6 +106,6 @@ export class HandleRenderer {
 
 	dispose() {
 		this.clear();
-		for (const m of [this.lineMaterial, this.outline, this.fill, this.detail]) m.dispose();
+		this.lineMaterial.dispose();
 	}
 }

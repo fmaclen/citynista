@@ -5,10 +5,9 @@ import type { ModeHandlers } from './types';
 import { segmentHitAt } from './picking';
 import { splitSegment } from '../core/crossings';
 import { closestOnRoad, roadAt } from '../core/road-line';
-import { NODE_Y_OFFSET } from '../rendering/node-renderer';
+import { NODE_Y_OFFSET, nodeRingGeometry } from '../rendering/node-renderer';
 
 const MARKER_COLOR = 0xfacc15;
-const MARKER_THICKNESS = 1.2;
 // Sit the marker at the node ring's exact height so it doesn't drift on screen
 // against the node that replaces it once a tilted camera projects them.
 const MARKER_Y = NODE_Y_OFFSET;
@@ -19,19 +18,13 @@ export function setupSplitMode(editor: Editor): ModeHandlers {
 		transparent: true,
 		opacity: 0.9
 	});
-	const marker = new THREE.Mesh(new THREE.BufferGeometry(), markerMaterial);
+	// Previews the node the cut makes: a node ring, sized on screen like one.
+	const marker = new THREE.Mesh(nodeRingGeometry(), markerMaterial);
 	marker.rotation.x = -Math.PI / 2;
 	marker.position.y = MARKER_Y;
 	marker.visible = false;
 	editor.sceneManager.scene.add(marker);
-
-	let markerRadius = 0;
-	const setMarkerRadius = (radius: number) => {
-		if (radius === markerRadius) return;
-		markerRadius = radius;
-		marker.geometry.dispose();
-		marker.geometry = new THREE.RingGeometry(radius - MARKER_THICKNESS, radius, 48);
-	};
+	editor.sceneManager.screenSized.set(marker, Infinity);
 
 	let target: { segment: Segment; x: number; y: number; t: number } | null = null;
 
@@ -55,13 +48,15 @@ export function setupSplitMode(editor: Editor): ModeHandlers {
 
 		// Too close to an endpoint would stack nodes — also stops a second click
 		// landing right beside a node just placed (it is now an endpoint here).
-		const radius = editor.nodeRingRadius({ connectedSegments: [segment.id] });
+		// The gap is the road's half width plus 2 m, half again; zoomed in far
+		// enough that a node ring is smaller, the ring sets it instead, so a
+		// cut can land as close as you can aim.
+		const gap = 1.5 * Math.min(segment.totalWidth / 2 + 2, editor.nodeRingRadius());
 		const nearStart = Math.hypot(on.line.x - startNode.x, on.line.y - startNode.y);
 		const nearEnd = Math.hypot(on.line.x - endNode.x, on.line.y - endNode.y);
-		if (Math.min(nearStart, nearEnd) < radius * 1.5) return;
+		if (Math.min(nearStart, nearEnd) < gap) return;
 
 		editor.setHoveredSegment(segment.id);
-		setMarkerRadius(radius);
 		marker.position.set(on.point.x, MARKER_Y, on.point.y);
 		marker.visible = true;
 		target = { segment, x: on.line.x, y: on.line.y, t: closest.t };
@@ -98,6 +93,7 @@ export function setupSplitMode(editor: Editor): ModeHandlers {
 	const cleanup = () => {
 		editor.setHoveredSegment(null);
 		editor.sceneManager.scene.remove(marker);
+		editor.sceneManager.screenSized.delete(marker);
 		marker.geometry.dispose();
 		markerMaterial.dispose();
 	};

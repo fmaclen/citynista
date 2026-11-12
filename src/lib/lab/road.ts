@@ -199,6 +199,11 @@ export interface RowMark {
 	o: number;
 	colour: 'white' | 'yellow';
 	dashed: boolean;
+	// Where the mark lies, when it isn't simply `o` across its row.
+	p?: Pt;
+	// What the mark follows (a path's edge, say): marks with one key at
+	// consecutive rows are one line, however far apart across their rows.
+	key?: string;
 }
 
 const edged = (lane: Lane) => isTravel(lane) || (lane.kind === 'drive' && lane.dir === 'both');
@@ -286,10 +291,11 @@ export function rowMarks(spans: LaneSpan[]): RowMark[] {
 }
 
 // Chain each station's marks into continuous polylines: a mark carries on to
-// the nearest mark of the same kind at the next station.
+// the mark with its key at the next station, or else to the nearest mark of
+// the same kind there.
 // Lines shorter than `least` are dropped (crumbs).
 export function chainLines(stations: { d: number; marks: RowMark[] }[], least = 1) {
-	type Line = { mark: RowMark; d: number[]; o: number[] };
+	type Line = { mark: RowMark; d: number[]; o: number[]; marks: RowMark[] };
 	const done: Line[] = [];
 	let live: Line[] = [];
 	for (const row of stations) {
@@ -301,28 +307,39 @@ export function chainLines(stations: { d: number; marks: RowMark[] }[], least = 
 		const kinds = new Set(marks.map((m) => `${m.colour}${m.dashed}`));
 		for (const line of live) kinds.add(`${line.mark.colour}${line.mark.dashed}`);
 		for (const kind of kinds) {
+			const carry = (line: Line, m: RowMark, k: number) => {
+				used.add(k);
+				line.d.push(row.d);
+				line.o.push(m.o);
+				line.marks.push(m);
+				next.push(line);
+			};
+			const all = marks
+				.map((m, k) => ({ m, k }))
+				.filter(({ m }) => `${m.colour}${m.dashed}` === kind);
 			const lines = live
 				.filter((l) => `${l.mark.colour}${l.mark.dashed}` === kind)
+				.filter((l) => {
+					const key = l.marks[l.marks.length - 1].key;
+					const same = key === undefined ? undefined : all.find((c) => c.m.key === key);
+					if (!same || used.has(same.k)) return true;
+					carry(l, same.m, same.k);
+					return false;
+				})
 				.sort((p, q) => p.o[p.o.length - 1] - q.o[q.o.length - 1]);
-			const cand = marks
-				.map((m, k) => ({ m, k }))
-				.filter(({ m }) => `${m.colour}${m.dashed}` === kind)
-				.sort((p, q) => p.m.o - q.m.o);
+			const cand = all.filter(({ k }) => !used.has(k)).sort((p, q) => p.m.o - q.m.o);
 			let c = 0;
 			for (const line of lines) {
 				const last = line.o[line.o.length - 1];
 				while (c < cand.length && cand[c].m.o < last - 0.75) c++;
 				if (c < cand.length && Math.abs(cand[c].m.o - last) < 0.75) {
-					used.add(cand[c].k);
-					line.d.push(row.d);
-					line.o.push(cand[c].m.o);
-					next.push(line);
+					carry(line, cand[c].m, cand[c].k);
 					c++;
 				} else done.push(line);
 			}
 		}
 		marks.forEach((m, k) => {
-			if (!used.has(k)) next.push({ mark: m, d: [row.d], o: [m.o] });
+			if (!used.has(k)) next.push({ mark: m, d: [row.d], o: [m.o], marks: [m] });
 		});
 		live = next;
 	}

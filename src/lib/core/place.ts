@@ -12,6 +12,7 @@ import type { JunctionConnection, JunctionCrossing, Lane as EditorLane } from '.
 import { samplePath, type PathSample } from '../lab/geometry';
 import {
 	CROSSING_FROM_END,
+	NARROW,
 	SHORT_LINK,
 	defaultCrossings,
 	defaults,
@@ -173,8 +174,8 @@ const CORNER_ROOM = 3;
 // road's curb line (just inside it), so that road's sidewalk runs straight
 // on across its mouth.
 const CURB_GAP = -0.1;
-// A road with sidewalks stops this far past the mouth of one without (a
-// driveway): its curb turns straight into the driveway's edge.
+// A road with sidewalks stops this far past the mouth of a driveway: its curb
+// turns straight into the driveway's edge.
 const MOUTH_ROOM = 0.5;
 // A road carrying straight on through a node of two still stops this far
 // short, so the junction between has a little length to draw.
@@ -268,6 +269,14 @@ function setbacks(arms: Arm[], taper: number | undefined) {
 		out.set(b, trim);
 		return out;
 	}
+	// A road without sidewalks is a driveway when it is narrow from curb to
+	// curb (medians included) and no road faces it across the node: it stops
+	// on the other roads' curb lines and they turn straight into its edges.
+	// Any other road meets a road with sidewalks with curb corners, as one
+	// with sidewalks of its own does (lab/junction.ts, joinsOnly, decides the
+	// same for the drawing).
+	const driveway = (a: Arm) => !a.walks && a.roadway.hi - a.roadway.lo < NARROW && !partner.has(a);
+	const cornered = (a: Arm, b: Arm) => (a.walks || b.walks) && !driveway(a) && !driveway(b);
 	for (const arm of arms) {
 		let trim = 0;
 		for (const other of arms) {
@@ -278,11 +287,15 @@ function setbacks(arms: Arm[], taper: number | undefined) {
 			const side = dot(arm.out, other.n);
 			const sin = Math.max(MIN_SIN, Math.abs(side));
 			// Past the other road's far edge on the arm's side, where that road
-			// actually lies, and some, for curb corners; a road with no
-			// sidewalks of its own stops on the other's curb line, and only
-			// clears the mouth of one.
-			const span = arm.walks && other.walks ? other.full : other.roadway;
-			const room = !arm.walks ? CURB_GAP : other.walks ? CORNER_ROOM : MOUTH_ROOM;
+			// actually lies, and some, for curb corners; a road with sidewalks
+			// only clears a driveway's mouth, and any other pair of roads stop
+			// on each other's curb lines.
+			const span = cornered(arm, other) ? other.full : other.roadway;
+			const room = cornered(arm, other)
+				? CORNER_ROOM
+				: arm.walks && driveway(other)
+					? MOUTH_ROOM
+					: CURB_GAP;
 			const edge = side >= 0 ? span.hi : -span.lo;
 			const clear = Math.max(0, edge + room);
 			const need = cos > 0 ? (clear + arm.half * cos) / sin : clear;

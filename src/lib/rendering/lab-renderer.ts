@@ -9,9 +9,9 @@ import type { Paths } from 'clipper-lib';
 import type { Graph } from '../core/graph.svelte';
 import { PlaceBuilder, type Derived } from '../core/place';
 import type { JunctionDraw } from '../lab/junction';
-import type { Pt } from '../lab/model';
 import type { RoadDraw } from '../lab/road';
 import { COLOURS, Scene } from '../lab/scene';
+import type { Pt, Surface } from '../lab/model';
 import { toPolygons } from '../lab/clip';
 import { crossSection, frameAt, offsetPoint } from '../lab/geometry';
 
@@ -87,13 +87,24 @@ function roadParts(draw: RoadDraw): Part[] {
 	];
 }
 
-function junctionParts(draw: JunctionDraw): Part[] {
+// The paved area keeps the asphalt layer whatever it is made of, so sidewalks
+// and verges stack around it the same way.
+function junctionParts(draw: JunctionDraw, paving: Surface): Part[] {
 	const carried = (surface: 'grass' | 'concrete' | 'dirt' | 'hatch') =>
 		draw.carried.filter((c) => c.surface === surface).flatMap((c) => c.paths);
 	const parts: Part[] = [
+		// Each car lane in the layer its road draws it in.
+		...(draw.lanes ?? []).map(
+			(l): Part => ({
+				layer: l.surface === 'hatch' ? 'asphalt' : l.surface,
+				colour: COLOURS[l.surface],
+				paths: l.paths
+			})
+		),
 		{ layer: 'pavement', colour: COLOURS.pavement, paths: draw.pavement },
 		{ layer: 'trail', colour: COLOURS.trail, paths: draw.trail },
-		{ layer: 'asphalt', colour: COLOURS.asphalt, paths: [...draw.asphalt, ...carried('hatch')] },
+		{ layer: 'asphalt', colour: COLOURS[paving], paths: draw.asphalt },
+		{ layer: 'asphalt', colour: COLOURS.asphalt, paths: carried('hatch') },
 		{ layer: 'dirt', colour: COLOURS.dirt, paths: carried('dirt') },
 		{ layer: 'grass', colour: COLOURS.grass, paths: [...carried('grass'), ...draw.verges] },
 		{ layer: 'concrete', colour: COLOURS.concrete, paths: carried('concrete') }
@@ -137,7 +148,8 @@ export class LabRenderer {
 		this.three.add(this.overlay);
 	}
 
-	update(graph: Graph) {
+	// With `only`, draws just those roads and the junctions at those nodes.
+	update(graph: Graph, only?: { roads: Set<string>; nodes: Set<string> }) {
 		const derived = this.builder.build(graph);
 		this.derived = derived;
 		const scene = this.scene ?? new Scene(derived.place);
@@ -153,15 +165,16 @@ export class LabRenderer {
 		const live = new Set<string>();
 		for (const road of derived.place.roads) {
 			const draw = scene.roadDraw(road.id);
-			if (!draw || scene.hidden.has(road.id)) continue;
+			if (!draw || scene.hidden.has(road.id) || (only && !only.roads.has(road.id))) continue;
 			live.add(`road:${road.id}`);
 			this.place(`road:${road.id}`, draw, () => roadParts(draw));
 		}
 		for (const j of scene.effective) {
 			const draw = scene.junctionDraw(j.id);
-			if (!draw) continue;
+			if (!draw || (only && !j.id.split('+').some((id) => only.nodes.has(id)))) continue;
 			live.add(`junction:${j.id}`);
-			this.place(`junction:${j.id}`, draw, () => junctionParts(draw));
+			const paving = scene.junctionPaving(j.id);
+			this.place(`junction:${j.id}`, draw, () => junctionParts(draw, paving));
 		}
 		for (const [id, piece] of this.pieces) {
 			if (live.has(id)) continue;

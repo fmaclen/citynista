@@ -1,14 +1,72 @@
 <script lang="ts">
 	import { getEditorContext } from '$lib/editor.svelte';
 	import { getTotalWidth, laneSwatchColor } from '$lib/core/lane-template';
-	import { MATERIAL_COLOR } from '$lib/core/lane-types';
+	import type { Lane } from '$lib/core/types';
+	import { labLane } from '$lib/core/place';
+	import { rowMarks } from '$lib/lab/road';
+	import { COLOURS } from '$lib/lab/scene';
 	import { Button } from '$lib/components/ui/button';
-	import { Combine, Grid3x3, Plus, Redo2, Route, Scissors, Undo2, Tractor } from '@lucide/svelte';
+	import {
+		Circle,
+		Combine,
+		Grid3x3,
+		Plus,
+		Redo2,
+		Route,
+		Scissors,
+		Slash,
+		Spline,
+		Undo2,
+		Tractor
+	} from '@lucide/svelte';
+	import type { DrawStyle } from '$lib/modes/types';
 
 	const editor = getEditorContext();
 
 	const maxBrushWidth = $derived(
 		Math.max(1, ...editor.hotbar.flatMap((b) => (b ? [getTotalWidth(b.lanes)] : [])))
+	);
+
+	// The paint a preset's thumbnail shows: the road's own rule (rowMarks) run
+	// over the preset's lanes laid side by side, each line placed as a
+	// fraction of the preset's width. A line at the preset's outer edge is
+	// held 2 px in, or a white edge line would vanish into the toolbar.
+	function paint(lanes: Lane[]) {
+		const total = getTotalWidth(lanes);
+		let left = 0;
+		const spans = lanes.map((lane, i) => {
+			const span = { lane: labLane(lane, `l${i}`), left, right: left + lane.width };
+			left = span.right;
+			return span;
+		});
+		return rowMarks(spans).map((mark) => ({ ...mark, at: (mark.o / total) * 100 }));
+	}
+	const DASHES = (colour: string) =>
+		`repeating-linear-gradient(${colour} 0 4px, transparent 4px 8px)`;
+
+	const STYLES: { style: DrawStyle; label: string; title: string; icon: typeof Circle }[] = [
+		{
+			style: 'straight',
+			label: 'Straight',
+			title: 'Straight roads, end to end (Tab)',
+			icon: Slash
+		},
+		{
+			style: 'curve',
+			label: 'Curve',
+			title: 'Curve on from the road you continue; F flips the curve (Tab)',
+			icon: Spline
+		},
+		{
+			style: 'circle',
+			label: 'Circle',
+			title: 'Circle: click the centre, then the radius; F flips the direction (Tab)',
+			icon: Circle
+		}
+	];
+	// The style strip shows only while a preset is armed.
+	const armed = $derived(
+		(editor.mode === 'draw' || editor.mode === 'circle') && !!editor.activeBrush
 	);
 
 	// Toolbar buttons return focus to the page after acting, so mode keys
@@ -43,6 +101,23 @@
 			return;
 		}
 
+		// Tab cycles the draw style while a preset is armed. Modified Tabs
+		// keep the browser's meaning, and so does a Tab from a focused control.
+		if (
+			event.key === 'Tab' &&
+			armed &&
+			target instanceof HTMLElement &&
+			target.tagName === 'BODY' &&
+			!event.shiftKey &&
+			!event.metaKey &&
+			!event.ctrlKey &&
+			!event.altKey
+		) {
+			event.preventDefault();
+			editor.cycleDrawStyle();
+			return;
+		}
+
 		const index = parseInt(event.key, 10) - 1;
 		if (isNaN(index)) return;
 
@@ -65,18 +140,37 @@
 <svelte:window onkeydown={onKeyDown} />
 
 <div class="fixed bottom-8 left-1/2 z-50 -translate-x-1/2">
+	{#if armed}
+		<nav
+			class="absolute bottom-full left-1/2 mb-2 flex -translate-x-1/2 flex-row items-center gap-1 rounded-lg border bg-background p-1 shadow-lg"
+			aria-label="Draw style"
+		>
+			{#each STYLES as { style, label, title, icon: Icon } (style)}
+				<Button
+					variant={editor.drawStyle === style ? 'default' : 'ghost'}
+					size="sm"
+					onclick={press(() => editor.setDrawStyle(style))}
+					{title}
+					aria-pressed={editor.drawStyle === style}
+				>
+					<Icon class="h-4 w-4" />
+					{label}
+				</Button>
+			{/each}
+		</nav>
+	{/if}
 	<nav
 		class="flex flex-row items-center gap-2 rounded-lg border bg-background p-2 shadow-lg"
 		onwheel={onWheel}
 	>
 		{#each editor.hotbar as brush, i (i)}
-			{@const active = editor.mode === 'draw' && editor.activeSlot === i}
+			{@const active =
+				(editor.mode === 'draw' || editor.mode === 'circle') && editor.activeSlot === i}
 			{@const holding = editor.pickableLanes !== null}
 			<button
 				class="relative h-10 w-10 shrink-0 overflow-hidden rounded-md border-2 transition-colors {active
 					? 'border-foreground'
 					: 'border-border hover:border-muted-foreground'}"
-				style={brush ? `background-color: ${MATERIAL_COLOR.grass};` : ''}
 				aria-label={brush ? brush.name : `Empty slot ${i + 1}`}
 				aria-pressed={active}
 				title={brush
@@ -85,7 +179,7 @@
 						: `Draw ${brush.name} — ${getTotalWidth(brush.lanes)}m (key ${i + 1}) · right-click to remove`
 					: holding
 						? `Put the selected road in slot ${i + 1}`
-						: `Empty slot ${i + 1}`}
+						: `Empty slot ${i + 1} · click to design a preset`}
 				onclick={press(() => (holding ? editor.pickIntoSlot(i) : editor.activateSlot(i)))}
 				oncontextmenu={(event) => removeSlot(event, i)}
 			>
@@ -99,6 +193,14 @@
 								class="h-full"
 								style="width: {(lane.width / getTotalWidth(brush.lanes)) *
 									100}%; background-color: {laneSwatchColor(lane)};"
+							></div>
+						{/each}
+						{#each paint(brush.lanes) as mark, j (j)}
+							<div
+								class="absolute inset-y-0 w-px -translate-x-1/2"
+								style="left: clamp(2px, {mark.at}%, calc(100% - 2px)); background: {mark.dashed
+									? DASHES(COLOURS[mark.colour])
+									: COLOURS[mark.colour]};"
 							></div>
 						{/each}
 					</div>

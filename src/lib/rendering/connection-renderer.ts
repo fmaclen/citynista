@@ -5,28 +5,28 @@ import type { LaneRef } from '../core/types';
 import { editorLineGeometry, createEditorLineMaterial } from './editor-line';
 import {
 	DANGER_COLOR,
+	HANDLE_FILL,
 	HOVER_COLOR,
-	LANE_COLOR,
 	LANE_DOT_MAX_RADIUS,
 	LANE_DOT_PX,
-	VALID_COLOR
+	VALID_COLOR,
+	type HandleState
 } from './editor-palette';
 import {
 	disposeHandleObject,
 	dotShape,
-	handleMaterial,
 	handleObject,
-	outlineMaterial,
+	setHandleState,
 	type ScreenSized
 } from './handle-shapes';
 
 // Lane connectors drawn above everything in connector mode: every allowed
 // movement is a beaded editor line (see editor-line.ts), plus a dot at each lane
 // mouth — a filled disc where traffic enters the node (drag from here), a hollow
-// ring where it leaves (a passive target). Both are in the lane colour, sized
-// on screen (see handle-shapes.ts) up to LANE_DOT_MAX_RADIUS. The hovered dot
-// and its movements turn the hover colour; while dragging, the dot under the
-// cursor turns green on a valid exit, red on an invalid one.
+// ring where it leaves (a passive target). Both are handles (see
+// handle-shapes.ts), sized on screen up to LANE_DOT_MAX_RADIUS. The hovered
+// dot and its movements turn the hover colour; while dragging, the dot under
+// the cursor turns green on a valid exit, red on an invalid one.
 const CONNECTION_Y = 0.3;
 const DOT_Y = 0.31;
 const RING_INNER = 0.55;
@@ -66,21 +66,16 @@ export class ConnectionRenderer {
 	private arcGroup: THREE.Group | null = null;
 	private rubber: THREE.Mesh | null = null;
 	private screenSized: ScreenSized;
-	// Each dot: its screen-sized group, whose outline and fill meshes grow
-	// on hover and take the state's fill material.
-	private dots: { ref: LaneRef; group: THREE.Group; fill: THREE.Mesh }[] = [];
+	// Each dot: its screen-sized group, which grows on hover and is tinted
+	// for its state.
+	private dots: { ref: LaneRef; group: THREE.Group }[] = [];
 	private arcs: { connection: LaneConnection; mesh: THREE.Mesh }[] = [];
 	private hoveredRef: LaneRef | null = null;
 	private dragTargetRef: LaneRef | null = null;
 	private dragValid = false;
-	private activeMaterial = createEditorLineMaterial(LANE_COLOR);
+	private activeMaterial = createEditorLineMaterial(HANDLE_FILL);
 	private highlightArcMaterial = createEditorLineMaterial(HOVER_COLOR);
-	private outlineMaterial = outlineMaterial();
-	private handleMaterial = handleMaterial(LANE_COLOR);
-	private hoverMaterial = handleMaterial(HOVER_COLOR);
-	private validMaterial = handleMaterial(VALID_COLOR);
-	private invalidMaterial = handleMaterial(DANGER_COLOR);
-	private rubberMaterial = createEditorLineMaterial(LANE_COLOR);
+	private rubberMaterial = createEditorLineMaterial(HANDLE_FILL);
 
 	constructor(scene: THREE.Scene, screenSized: ScreenSized) {
 		this.scene = scene;
@@ -110,24 +105,17 @@ export class ConnectionRenderer {
 			// Filled disc = incoming or either way (drag from here), hollow ring =
 			// outgoing.
 			const shape = dotShape(LANE_DOT_PX, endpoint.flow !== 'out' ? 0 : LANE_DOT_PX * RING_INNER);
-			const group = handleObject(
-				shape,
-				{ outline: this.outlineMaterial, fill: this.handleMaterial },
-				endpoint.point,
-				{ x: 1, y: 0 },
-				DOT_Y,
-				DOT_ORDER
-			);
+			const group = handleObject(shape, endpoint.point, { x: 1, y: 0 }, DOT_Y, DOT_ORDER);
 			this.screenSized.set(group, LANE_DOT_MAX_RADIUS / LANE_DOT_PX);
 			dotGroup.add(group);
-			this.dots.push({ ref: endpoint.ref, group, fill: group.children[1] as THREE.Mesh });
+			this.dots.push({ ref: endpoint.ref, group });
 		}
 		this.scene.add(dotGroup);
 		this.dotGroup = dotGroup;
 		this.applyDotStates();
 	}
 
-	// Highlight an incoming dot under the cursor (blue, enlarged); pass null to
+	// Highlight an incoming dot under the cursor (hover tint, enlarged); pass null to
 	// clear. Used when not dragging.
 	setHovered(ref: LaneRef | null) {
 		this.hoveredRef = ref;
@@ -158,16 +146,16 @@ export class ConnectionRenderer {
 
 	private applyDotStates() {
 		for (const dot of this.dots) {
-			let material = this.handleMaterial;
+			let state: HandleState = 'rest';
 			let scale = 1;
 			if (this.dragTargetRef && sameLaneRef(dot.ref, this.dragTargetRef)) {
-				material = this.dragValid ? this.validMaterial : this.invalidMaterial;
+				state = this.dragValid ? 'valid' : 'danger';
 				scale = HOVER_SCALE;
 			} else if (this.hoveredRef && sameLaneRef(dot.ref, this.hoveredRef)) {
-				material = this.hoverMaterial;
+				state = 'hover';
 				scale = HOVER_SCALE;
 			}
-			dot.fill.material = material;
+			setHandleState(dot.group, state);
 			for (const mesh of dot.group.children) mesh.scale.setScalar(scale);
 		}
 	}
@@ -179,7 +167,7 @@ export class ConnectionRenderer {
 	) {
 		this.hideRubberBand();
 		this.rubberMaterial.color.setHex(
-			state === 'valid' ? VALID_COLOR : state === 'invalid' ? DANGER_COLOR : LANE_COLOR
+			state === 'valid' ? VALID_COLOR : state === 'invalid' ? DANGER_COLOR : HANDLE_FILL
 		);
 		const mesh = new THREE.Mesh(editorLineGeometry([from, to], DOT_Y), this.rubberMaterial);
 		mesh.renderOrder = RUBBER_ORDER;
@@ -214,11 +202,6 @@ export class ConnectionRenderer {
 		this.clear();
 		this.activeMaterial.dispose();
 		this.highlightArcMaterial.dispose();
-		this.outlineMaterial.dispose();
-		this.handleMaterial.dispose();
-		this.hoverMaterial.dispose();
-		this.validMaterial.dispose();
-		this.invalidMaterial.dispose();
 		this.rubberMaterial.dispose();
 	}
 }

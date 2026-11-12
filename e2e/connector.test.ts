@@ -68,4 +68,26 @@ test.describe('Lane connector', () => {
 		await page.mouse.click(640, 250);
 		await expect(page.locator('aside')).toBeVisible();
 	});
+	test('one click on a crossing handle switches it; another switches it back', async ({ page }) => {
+		// The handles scene at 4x: T junction j at (70, -30), its west arm's
+		// crossing switched off, the handle 10.5 m out along that arm.
+		await openScene(page, 'handles', 'topdown&cam=0,0,4');
+		const px = (720 / 500) * 4;
+		const at = (x: number, y: number) => ({ x: 640 + x * px, y: 360 + y * px });
+		const westOn = async () => {
+			await saveCity(page);
+			return page.evaluate(() => {
+				const raw = JSON.parse(localStorage.getItem('citynista-graph-v2') ?? 'null');
+				const j = raw.nodes.find((n: { id: string }) => n.id === 'j');
+				return j.junction.crossings.find((c: { road: string }) => c.road === 'jw')?.on;
+			});
+		};
+		const junction = at(70, -30);
+		await page.mouse.dblclick(junction.x, junction.y);
+		const handle = at(59.5, -30.2);
+		await page.mouse.click(handle.x, handle.y);
+		expect(await westOn()).toBe(true);
+		await page.mouse.click(handle.x, handle.y);
+		expect(await westOn()).toBe(false);
+	});
 });

@@ -44,9 +44,16 @@
 
 				// ?model exposes the road model the drawing runs on, for scripts.
 				if (params.has('model')) {
-					const w = window as Window & { __roadModel?: () => unknown; __graph?: () => unknown };
+					const w = window as Window & {
+						__roadModel?: () => unknown;
+						__graph?: () => unknown;
+						__ghostGraph?: () => unknown;
+						__ghostModel?: () => unknown;
+					};
 					w.__roadModel = () => editor.roadRenderer.derived?.place;
 					w.__graph = () => editor.graph.toJSON();
+					w.__ghostGraph = () => editor.ghost?.graph.toJSON();
+					w.__ghostModel = () => editor.ghost?.renderer.derived?.place;
 				}
 
 				// ?cam=x,z,zoom is a headless-screenshot override (top-down, no persist).

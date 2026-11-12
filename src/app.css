@@ -118,4 +118,10 @@
 	body {
 		@apply bg-background text-foreground;
 	}
+	/* Tailwind's preflight gives buttons the default arrow; every clickable
+	   control here shows the hand instead. A utility (cursor-grab) still wins. */
+	button:not(:disabled),
+	[role='button']:not([aria-disabled='true']) {
+		cursor: pointer;
+	}
 }

@@ -1,13 +1,13 @@
 import type { ModeHandlers } from './types';
-import type { Editor, TaperHandleInfo } from '../editor.svelte';
+import type { Editor, HandleRef, TaperHandleInfo } from '../editor.svelte';
 import { offsetFromPointer, type OffsetHandle } from './offset';
 import { segmentEnds } from '../core/attach';
 import { controlHandle } from '../rendering/selection-renderer';
 import type { Segment } from '../core/segment.svelte';
 import type { Node } from '../core/node.svelte';
 import { getQuadraticBezierTangent } from '../geometry/bezier';
-import { CURVE_HANDLE, HOVER_COLOR, RING_THICKNESS } from '../rendering/editor-palette';
-import { hitsHandle } from '../rendering/handle-shapes';
+import { HOVER_COLOR } from '../rendering/editor-palette';
+import { CURVE_HANDLE, hitsHandle } from '../rendering/handle-shapes';
 import { nodeHitAt, segmentHitAt } from './picking';
 import { createMarquee } from './marquee';
 
@@ -36,7 +36,7 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 	let offsetDrag: OffsetHandle | null = null;
 	let dragDistance = 0;
 
-	const marquee = createMarquee(editor, MARQUEE_COLOR, 0.4, RING_THICKNESS);
+	const marquee = createMarquee(editor, MARQUEE_COLOR, 0.4);
 	// Control points expressed in their segment's local frame at drag start,
 	// so curves scale and rotate proportionally with their moving endpoints.
 	const controlFrames = new Map<string, { u: number; v: number }>();
@@ -121,6 +121,15 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 			}
 		}
 		return null;
+	};
+
+	// The handle a press here would grab, in the order onMouseDown tries them.
+	const handleAt = (worldX: number, worldZ: number): HandleRef | null => {
+		const taper = editor.selectedNodes.size === 1 && editor.taperHandleAt(worldX, worldZ);
+		if (taper) return { kind: 'taper', index: taper.index };
+		if (editor.offsetHandleAt(worldX, worldZ)) return { kind: 'offset', index: 0 };
+		const curve = findControlPointAt(worldX, worldZ);
+		return curve ? { kind: 'curve', segmentId: curve.id } : null;
 	};
 
 	const moveControlPoint = (segmentId: string, dx: number, dz: number, factor: number) => {
@@ -418,8 +427,9 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 		dragStartZ = worldPos.z;
 
 		// The hover highlight would go stale while dragging; selection visuals
-		// take over from here.
+		// take over from here. A handle pressed is in hand.
 		editor.setHoveredSegment(null);
+		editor.lightHandle(handleAt(worldPos.x, worldPos.z), 'active');
 
 		// Dragging a taper handle of the selected node. The handles sit out
 		// where the taper ends, so node dragging still works at the centre.
@@ -517,6 +527,7 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 		}
 
 		if (!isDragging || !dragTarget) {
+			editor.lightHandle(handleAt(worldPos.x, worldPos.z));
 			const { node, segment } = pickAt(worldPos.x, worldPos.z);
 			editor.setHoveredNode(node?.id ?? null);
 			// With a node selected, stay focused on it — don't light up other
@@ -592,7 +603,7 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 		dragStartZ = worldPos.z;
 	};
 
-	const onMouseUp = (event: MouseEvent) => {
+	const release = (event: MouseEvent) => {
 		if (taperDrag) {
 			editor.finishTaper();
 			taperDrag = null;
@@ -637,6 +648,13 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 		controlFrames.clear();
 	};
 
+	// Out of hand, a handle still under the pointer goes back to hover.
+	const onMouseUp = (event: MouseEvent) => {
+		release(event);
+		const worldPos = editor.sceneManager.screenToWorld(event.clientX, event.clientY);
+		editor.lightHandle(handleAt(worldPos.x, worldPos.z));
+	};
+
 	// Double-clicking a node (≥2 arms, junctions and transitions) opens the lane
 	// connector for it.
 	const onDoubleClick = (event: MouseEvent) => {
@@ -674,6 +692,7 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 		controlFrames.clear();
 		editor.setHoveredNode(null);
 		editor.setHoveredSegment(null);
+		editor.lightHandle(null);
 		marquee.dispose();
 	};
 

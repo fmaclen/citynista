@@ -1,0 +1,167 @@
+{
+	"nodes": [
+		{
+			"id": "seam-a",
+			"x": -120,
+			"y": -60
+		},
+		{
+			"id": "seam",
+			"x": -60,
+			"y": 0
+		},
+		{
+			"id": "seam-b",
+			"x": 40,
+			"y": 0
+		},
+		{
+			"id": "widen-a",
+			"x": 40,
+			"y": -80
+		},
+		{
+			"id": "widen",
+			"x": 80,
+			"y": -40
+		},
+		{
+			"id": "widen-b",
+			"x": 180,
+			"y": -40
+		},
+		{
+			"id": "lone-a",
+			"x": -140,
+			"y": 100
+		},
+		{
+			"id": "lone-b",
+			"x": -60,
+			"y": 100
+		}
+	],
+	"segments": [
+		{
+			"id": "seam-one",
+			"startNodeId": "seam-a",
+			"endNodeId": "seam",
+			"lanes": [
+				{
+					"id": "m0",
+					"role": "vehicle",
+					"material": "asphalt",
+					"width": 3.5,
+					"direction": "backward"
+				},
+				{
+					"id": "m1",
+					"role": "vehicle",
+					"material": "concrete",
+					"width": 3.5,
+					"direction": "forward"
+				}
+			]
+		},
+		{
+			"id": "seam-two",
+			"startNodeId": "seam",
+			"endNodeId": "seam-b",
+			"lanes": [
+				{
+					"id": "m0",
+					"role": "vehicle",
+					"material": "asphalt",
+					"width": 3.5,
+					"direction": "backward"
+				},
+				{
+					"id": "m1",
+					"role": "vehicle",
+					"material": "concrete",
+					"width": 3.5,
+					"direction": "forward"
+				}
+			],
+			"controlX": -20,
+			"controlY": 40
+		},
+		{
+			"id": "widen-wide",
+			"startNodeId": "widen-a",
+			"endNodeId": "widen",
+			"lanes": [
+				{
+					"id": "w0",
+					"role": "pedestrian",
+					"material": "concrete",
+					"width": 2,
+					"direction": "bidirectional"
+				},
+				{
+					"id": "w1",
+					"role": "vehicle",
+					"material": "asphalt",
+					"width": 3.5,
+					"direction": "backward"
+				},
+				{
+					"id": "w2",
+					"role": "vehicle",
+					"material": "asphalt",
+					"width": 3.5,
+					"direction": "forward"
+				},
+				{
+					"id": "w3",
+					"role": "pedestrian",
+					"material": "concrete",
+					"width": 2,
+					"direction": "bidirectional"
+				}
+			]
+		},
+		{
+			"id": "widen-narrow",
+			"startNodeId": "widen",
+			"endNodeId": "widen-b",
+			"lanes": [
+				{
+					"id": "n0",
+					"role": "vehicle",
+					"material": "asphalt",
+					"width": 3.5,
+					"direction": "backward"
+				},
+				{
+					"id": "n1",
+					"role": "vehicle",
+					"material": "asphalt",
+					"width": 3.5,
+					"direction": "forward"
+				}
+			]
+		},
+		{
+			"id": "lone",
+			"startNodeId": "lone-a",
+			"endNodeId": "lone-b",
+			"lanes": [
+				{
+					"id": "n0",
+					"role": "vehicle",
+					"material": "asphalt",
+					"width": 2.5,
+					"direction": "backward"
+				},
+				{
+					"id": "n1",
+					"role": "vehicle",
+					"material": "asphalt",
+					"width": 2.5,
+					"direction": "forward"
+				}
+			]
+		}
+	]
+}

@@ -135,7 +135,7 @@ function merged(members: Junction[], hidden: Set<string>, geos: Map<string, Road
 	const info = endsOf(j, geos);
 	j.corners = defaultCorners(info);
 	const stored = new Map(members.flatMap((m) => m.walkways).map((w) => [w.id, w]));
-	j.walkways = defaultWalkways(info).map((w) => {
+	j.walkways = defaultWalkways(info, j.connections).map((w) => {
 		const s = stored.get(w.id);
 		return s ? { ...w, on: s.on, paved: s.paved, bare: s.bare } : w;
 	});

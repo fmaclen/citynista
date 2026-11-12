@@ -3,19 +3,17 @@ import type { Segment } from '../core/segment.svelte';
 import type { Node } from '../core/node.svelte';
 import { closestOnRoad, nodePoint } from '../core/road-line';
 
-// Hit radii are the geometry itself — the node's ring, the road's own half
-// width — with a screen-pixel floor for when the geometry is smaller than
-// a finger. Zoomed in, the whole road body is hoverable; zoomed out,
-// targets keep a clickable minimum.
-export const NODE_HIT_PX = 20;
+// A node's hit area is its ring, a fixed size on screen, so zooming in
+// uncovers the roads between close nodes. A road's is its own half width
+// with a screen-pixel floor: zoomed in, the whole road body is hoverable;
+// zoomed out, it keeps a clickable minimum.
 export const SEGMENT_HIT_PX = 14;
 
 export function nodeHitAt(editor: Editor, worldX: number, worldZ: number) {
-	const floor = NODE_HIT_PX * editor.sceneManager.worldPerPixel();
+	const radius = editor.nodeRingRadius();
 	let best: Node | null = null;
 	let bestScore = 1;
 	for (const node of editor.graph.nodes.values()) {
-		const radius = Math.max(editor.nodeRingRadius(node), floor);
 		const p = nodePoint(editor.graph, node);
 		const score = Math.hypot(p.x - worldX, p.y - worldZ) / radius;
 		if (score < bestScore) {
@@ -44,8 +42,8 @@ export function segmentHitAt(editor: Editor, worldX: number, worldZ: number) {
 
 // Inside a node's ring the node wins outright — roads pass through their
 // nodes, so any distance-based tiebreak hands the disc to the segment.
-// Hit radii are geometry-true, so the visible gap between two rings is
-// exactly where the segment is picked.
+// The ring is the hit area, so the visible gap between two rings is exactly
+// where the segment is picked.
 export function pickAt(
 	editor: Editor,
 	worldX: number,
