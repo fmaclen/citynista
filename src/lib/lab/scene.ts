@@ -8,11 +8,12 @@ import {
 	approachSetback,
 	buildJunction,
 	crossingReach,
+	STOP_ROOM,
 	type JunctionDraw,
 	type RoadGeo
 } from './junction';
 import { endKey, type Control, type Junction, type Place, type Pt, type Surface } from './model';
-import { buildRoad, isRoadway, type EndCut, type Fill, type RoadDraw } from './road';
+import { buildRoad, INSET, isRoadway, type EndCut, type Fill, type RoadDraw } from './road';
 
 // Sidewalk paving and raised concrete medians are the same concrete.
 const CONCRETE = '#a3a39e';
@@ -204,7 +205,12 @@ export class Scene {
 					this.junctionDraws.get(j.id)?.draw.setbacks.get(key) ??
 					approachSetback(j, road, length, end);
 				const paint = walkOnly ? 2 : Math.max(0.5, setback);
-				return { paint, nose: road.noses?.[end] ?? paint + 0.5 };
+				// A median's nose stops half a metre behind the paint; at a stop
+				// line it comes forward past it, its lines (the inset round it)
+				// stopping half a metre short of the crossing or the road's end.
+				const stops = (j.control[key] ?? 'none') !== 'none';
+				const nose = stops ? paint - STOP_ROOM + 0.5 + INSET : paint + 0.5;
+				return { paint, nose: road.noses?.[end] ?? nose };
 			};
 			const c = { start: cut('start'), end: cut('end') };
 			const key = `${this.version(`road:${road.id}`)}|${JSON.stringify(c)}`;

@@ -12,6 +12,7 @@ import type { Segment } from './segment.svelte';
 import type { JunctionConnection, JunctionCrossing, Lane as EditorLane } from './types';
 import { samplePath, type PathSample } from '../lab/geometry';
 import {
+	APPROACH_PAINT,
 	CROSSING_FROM_END,
 	NARROW,
 	SHORT_LINK,
@@ -576,18 +577,20 @@ export class PlaceBuilder {
 		}
 		// How much of a road its node at `end` may take: half of it when the
 		// far node is one where lanes find their way across (the two may meet
-		// in its middle), otherwise up to the far node's setback, leaving some.
-		const roomOf = (arm: Arm) => {
+		// in its middle), otherwise up to the far node's setback, leaving
+		// `left`.
+		const roomOf = (arm: Arm, left = ROAD_LEFT) => {
 			const other = arm.end === 'start' ? arm.segment.endNodeId : arm.segment.startNodeId;
 			const farEnd = arm.end === 'start' ? 'end' : 'start';
 			const length = curves.get(arm.segment.id)?.length ?? 0;
 			return links.has(other)
 				? length / 2
-				: length - (trims.get(`${arm.segment.id}:${farEnd}`) ?? 0) - ROAD_LEFT;
+				: length - (trims.get(`${arm.segment.id}:${farEnd}`) ?? 0) - left;
 		};
 		// Junctions of three or more: a road's setback set by hand makes the
 		// junction bigger on it, never smaller than its curb corners need nor
-		// past the far node's setback. Every automatic setback is known first,
+		// past the far node's setback, leaving the road room for the paint
+		// the junction lays on it (its crossing and stop line). Every automatic setback is known first,
 		// so this reads the same whichever node comes first.
 		this.limits.clear();
 		const hand: [string, number][] = [];
@@ -598,7 +601,7 @@ export class PlaceBuilder {
 			for (const arm of arms) {
 				const key = `${arm.segment.id}:${arm.end}`;
 				const min = trims.get(key) ?? 0;
-				const max = Math.max(min, roomOf(arm));
+				const max = Math.max(min, roomOf(arm, Math.max(ROAD_LEFT, APPROACH_PAINT)));
 				limits.set(arm.segment.id, { min, max });
 				const value = set?.[arm.segment.id];
 				if (value !== undefined) hand.push([key, Math.min(max, Math.max(min, value))]);
@@ -614,7 +617,7 @@ export class PlaceBuilder {
 		for (const [nodeId, groups] of links) {
 			const node = graph.nodes.get(nodeId)!;
 			const lead = [groups[0][0], groups[1][0]];
-			const rooms = groups.map((group) => Math.min(...group.map(roomOf)));
+			const rooms = groups.map((group) => Math.min(...group.map((arm) => roomOf(arm))));
 			const shared = Math.min(...rooms);
 			const need = this.tapers.get(nodeId);
 			const least = (this.least.get(nodeId) ?? THROUGH_GAP * 2) / 2;

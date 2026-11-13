@@ -26,7 +26,8 @@ export interface Crossing {
 // split at a new shared node, placed where the two segments' lines meet so
 // both roads stay exactly where they were. Crossings near a road's end are
 // left out of that second pass, so the node pass reaches at least that far
-// even past a narrow road's edge.
+// even past a narrow road's edge, and so are crossings of two roads near a
+// node they already share (`nearSharedNode`): they meet there already.
 // Only the changed roads (and the pieces they split into) are looked at, so an
 // edit never rewires roads elsewhere. Returns whether the graph changed.
 export function resolveCrossings(graph: Graph, changed: Iterable<string>) {
@@ -200,7 +201,8 @@ function findPolylineCrossingsBetween(
 
 			if (
 				isNearSegmentEndpoint(graphA, segmentA, hit) ||
-				isNearSegmentEndpoint(graphB, segmentB, hit)
+				isNearSegmentEndpoint(graphB, segmentB, hit) ||
+				(graphA === graphB && nearSharedNode(graphA, segmentA, segmentB, hit))
 			) {
 				continue;
 			}
@@ -228,6 +230,26 @@ function isNearSegmentEndpoint(graph: Graph, segment: Segment, point: { x: numbe
 		const end = roadAt(graph, segment, t);
 		if (end && Math.hypot(end.point.x - point.x, end.point.y - point.y) < ENDPOINT_EXCLUSION)
 			return true;
+	}
+	return false;
+}
+
+// Whether a crossing of two roads lies near a node they share. From that
+// node the roads' bodies overlap until they are a whole half width each
+// apart: out to (wA + wB) / 2 / sin θ, θ the angle between them there. Each
+// road's line is never shifted further than its half width at the node, so
+// two roads sharing a node whose lines cross within that reach are only
+// crossing inside the junction they already make.
+function nearSharedNode(graph: Graph, a: Segment, b: Segment, point: { x: number; y: number }) {
+	for (const nodeId of [a.startNodeId, a.endNodeId]) {
+		if (nodeId !== b.startNodeId && nodeId !== b.endNodeId) continue;
+		const node = graph.nodes.get(nodeId);
+		const ta = roadAt(graph, a, a.startNodeId === nodeId ? 0 : 1)?.tangent;
+		const tb = roadAt(graph, b, b.startNodeId === nodeId ? 0 : 1)?.tangent;
+		if (!node || !ta || !tb) continue;
+		const sin = Math.abs(ta.x * tb.y - ta.y * tb.x);
+		const reach = (getTotalWidth(a.lanes) + getTotalWidth(b.lanes)) / 2 / sin;
+		if (Math.hypot(point.x - node.x, point.y - node.y) < reach) return true;
 	}
 	return false;
 }

@@ -769,3 +769,125 @@ for (const name of ['skewed-four', 'skewed-four-setbacks'])
 			expect(inside, e.key).toBeLessThan(0.25);
 		}
 	});
+
+const divided = (): Lane[] => [
+	{ role: 'vehicle', material: 'asphalt', width: 3.5, direction: 'backward' },
+	{ role: 'buffer', material: 'concrete', width: 2, direction: 'bidirectional' },
+	{ role: 'vehicle', material: 'asphalt', width: 3.5, direction: 'forward' }
+];
+
+// How far a point lies from a polyline.
+const offLine = (p: Pt, pts: Pt[]) =>
+	Math.min(
+		...pts.slice(1).map((b, i) => {
+			const a = pts[i];
+			const d = { x: b.x - a.x, y: b.y - a.y };
+			const t = ((p.x - a.x) * d.x + (p.y - a.y) * d.y) / (d.x * d.x + d.y * d.y || 1);
+			const k = Math.max(0, Math.min(1, t));
+			return distance(p, { x: a.x + d.x * k, y: a.y + d.y * k });
+		})
+	);
+
+// Four divided roads (one lane each way, a concrete median) at a skewed
+// junction (e2e/scenes/skewed-priority.json): west and east have right of way
+// and bend through it, the other two stop, and both join on the same side.
+// West stops 14 m short, so the curb between west and east is long and bends
+// one way then the other.
+test('an edge line runs the whole curb between two priority roads, at its inset', () => {
+	const { scene } = build(sceneGraph('skewed-priority'));
+	const j = scene.effective.find((x) => x.id === 'k')!;
+	const outline = outlineOf(j, endsOf(j, scene.geos));
+	const curb = outline.corners.find(
+		(c) => [c.a, c.b].sort().join() === 'east:start,west:start'
+	)!.pts;
+	const lines = scene
+		.junctionDraw('k')!
+		.marks.filter((m) => m.colour === 'white' && !m.dashed && offLine(m.pts[0], curb) < 0.5);
+	expect(lines.length).toBe(1);
+	const { pts } = lines[0];
+	// From one mouth to the other, the inset in from the curb all along.
+	const ends = [pts[0], pts[pts.length - 1]];
+	for (const c of [curb[0], curb[curb.length - 1]])
+		expect(Math.min(...ends.map((p) => distance(p, c)))).toBeCloseTo(0.2, 1);
+	for (const p of pts) expect(offLine(p, curb), `at ${p.x}, ${p.y}`).toBeCloseTo(0.2, 1);
+	expect(check(scene)).toEqual([]);
+});
+
+test('the lines either side of a median join round its nose, but not at a free or carried end', () => {
+	const { scene } = build(sceneGraph('skewed-priority'));
+	for (const id of ['west', 'east', 'sw', 'se']) {
+		const draw = scene.roadDraw(id)!;
+		const yellow = draw.marks.filter((m) => m.colour === 'yellow');
+		// One line: from the free end up one side, round the nose at the
+		// junction and back down the other.
+		expect(yellow.length, id).toBe(1);
+		const along = yellow[0].along!;
+		expect(along[0]).toBeCloseTo(draw.path.length, 1);
+		expect(along[along.length - 1]).toBeCloseTo(draw.path.length, 1);
+		// Round the tip, the inset short of it.
+		expect(Math.min(...along)).toBeCloseTo(draw.cut.start.nose! - 0.2, 1);
+	}
+
+	// A road on its own, and a divided road narrowing into a plain one at a
+	// node of two (the median carried square to the node): two lines each.
+	const plain = (): Lane[] => divided().filter((l) => l.role === 'vehicle');
+	const { scene: other } = build(
+		graphOf({ a: [-60, 0], m: [0, 0], b: [60, 0], c: [-60, 40], d: [60, 40] }, [
+			{ id: 'taper', from: 'a', to: 'm', lanes: divided() },
+			{ id: 'plain', from: 'm', to: 'b', lanes: plain() },
+			{ id: 'alone', from: 'c', to: 'd', lanes: divided() }
+		])
+	);
+	for (const id of ['taper', 'alone']) {
+		const draw = other.roadDraw(id)!;
+		const yellow = draw.marks.filter((m) => m.colour === 'yellow');
+		expect(yellow.length, id).toBe(2);
+		for (const m of yellow) {
+			expect(m.along![0]).toBeCloseTo(0, 1);
+			expect(m.along![m.along!.length - 1]).toBeCloseTo(draw.path.length, 1);
+		}
+	}
+	expect(check(other)).toEqual([]);
+});
+
+// A stop line runs from the approach's white edge line to the yellow line on
+// its other side, both running up to it: its back edge (away from the
+// junction) has a white line at one end and a yellow one at the other. On a
+// divided road the yellow runs along the median (its nose comes forward past
+// the stop line), on a plain one it is the centre line, and on an avenue the
+// stop line spans both lanes behind its crosswalk.
+test('a stop line meets the edge line and the yellow line', () => {
+	const stops: JunctionData = {
+		connections: [],
+		control: {
+			'west:end': 'stop',
+			'east:start': 'stop',
+			'north:end': 'stop',
+			'south:start': 'stop'
+		}
+	};
+	const plain = (): Lane[] => divided().filter((l) => l.role === 'vehicle');
+	for (const [name, lanes] of [
+		['divided', divided],
+		['plain', plain],
+		['avenue', avenue]
+	] as const) {
+		const { scene } = build(crossroads(lanes, lanes, stops));
+		const marks = scene.place.roads.flatMap((r) => scene.roadDraw(r.id)!.marks);
+		const bars = scene.junctionDraw('c')!.white.filter((p) => p.length === 4);
+		expect(bars.length, name).toBe(4);
+		for (const bar of bars) {
+			// The roads run along the axes: the back edge is the farther one
+			// out along its road.
+			const out = (p: Pt) => Math.max(Math.abs(p.x), Math.abs(p.y));
+			const back = [...bar].sort((p, q) => out(q) - out(p)).slice(0, 2);
+			const colours = back.map(
+				(p) => marks.find((m) => !m.dashed && offLine(p, m.pts) < 0.1)?.colour
+			);
+			expect(colours.sort(), `${name} at ${back[0].x.toFixed(1)}, ${back[0].y.toFixed(1)}`).toEqual(
+				['white', 'yellow']
+			);
+		}
+		expect(check(scene), name).toEqual([]);
+	}
+});

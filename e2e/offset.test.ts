@@ -110,16 +110,16 @@ test('a road from a junction to a dead end shows parallel, the junction staying'
 	await page.mouse.click(toScreen({ x: 0, y: 60 }).x, toScreen({ x: 0, y: 60 }).y);
 	await expect(page.locator('aside')).toBeVisible();
 	await shot('tail-before.png');
-	// Drawn southward, so its right is west: 4 m east is -4.
-	await dragOffset(page, 'tail', { x: 0, y: 60 }, -4);
+	// Drawn southward, so its right is west: 3 m east is -3.
+	await dragOffset(page, 'tail', { x: 0, y: 60 }, -3);
 
-	await expect.poll(async () => nodeOf(await graphOf(page), 't').x).toBeCloseTo(4, 0);
+	await expect.poll(async () => nodeOf(await graphOf(page), 't').x).toBeCloseTo(3, 0);
 	const after = await graphOf(page);
 	expect(nodeOf(after, 'j2')).toMatchObject({ x: 0, y: 20 });
 	expect(nodeOf(after, 't').y).toBe(80);
 	const tail = segmentOf(after, 'tail');
 	// The junction end keeps the shift, the dead end has none.
-	expect(tail.offsetStart).toBeLessThan(-3.5);
+	expect(tail.offsetStart).toBeLessThan(-2.5);
 	expect(tail.offsetEnd ?? 0).toBe(0);
 	// As drawn: straight down x = 4 from the junction to the dead end.
 	const road = (await roadsOf(page)).find((r) => r.id === 'tail')!;

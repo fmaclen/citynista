@@ -7,9 +7,17 @@
 // - at a junction of three or more (or one attaching roads at an edge) the
 //   node stays and that end keeps a shift (`offsetStart`/`offsetEnd`), so
 //   the lanes still line up across the junction.
+// A junction end's shift is held to its road's roadway: the node stays
+// between the outer edges of the road's car lanes there (its outer edges,
+// for a road without any), so the road still opens onto its junction. Past
+// that the road's mouth slides off the node, the junction outline breaks up
+// and the crossing pass would join the road to its neighbour beside the
+// junction. The drag stops where the first junction end reaches its limit,
+// so the road stays parallel; a shift already past it may come back but not
+// grow.
 // With Shift held the drag snaps to where a junction end is centred, or to
 // where its kerb or outer edge on one side lines up with a road carrying on
-// from it there.
+// from it there, among those inside the limit.
 
 import type { Editor } from '../editor.svelte';
 import type { Segment } from '../core/segment.svelte';
@@ -32,6 +40,8 @@ interface EndAtStart {
 	free: boolean;
 	node: Pt;
 	shift: number;
+	// The shifts it may take (a junction end's; unbounded for a free one).
+	range: { lo: number; hi: number };
 	// The drawn line there: its point, its right normal, and the way it
 	// heads into the road (toward the control point).
 	at: Pt;
@@ -48,6 +58,8 @@ export interface OffsetDrag {
 	// Other roads' control points at a moving node, kept in their own frame
 	// (along and across from their start to their end) so they bend with it.
 	frames: Map<string, { u: number; v: number }>;
+	// How far the drag may go either way, every junction end in its range.
+	limit: { lo: number; hi: number };
 	// Shifts of the drag worth snapping to.
 	snaps: number[];
 }
@@ -81,6 +93,13 @@ function edges(segment: Segment) {
 	}
 	const outer = { lo: -total / 2, hi: total / 2 };
 	return { outer, kerb: lo <= hi ? { lo, hi } : outer };
+}
+
+// The shifts a junction end may take: the node (at 0 across the road)
+// stays within the roadway, its kerbs at lo + shift and hi + shift.
+export function shiftRange(segment: Segment) {
+	const { kerb } = edges(segment);
+	return { lo: -kerb.hi, hi: -kerb.lo };
 }
 
 // Shifts worth snapping one junction end to: centred, and those that line
@@ -145,12 +164,16 @@ export function beginOffsetDrag(
 		const at = end === 'start' ? drawn.a : drawn.b;
 		const frame = shownAt(segment, drawn.a, drawn.b, end === 'start' ? 0 : 1);
 		const l = Math.hypot(c.x - at.x, c.y - at.y) || 1;
+		const free = movesWithRoad(editor, nodeId);
+		const shift = offsetAt(segment, end);
+		const range = free ? { lo: -Infinity, hi: Infinity } : shiftRange(segment);
 		ends.push({
 			end,
 			nodeId,
-			free: movesWithRoad(editor, nodeId),
+			free,
 			node: { x: node.x, y: node.y },
-			shift: offsetAt(segment, end),
+			shift,
+			range: { lo: Math.min(range.lo, shift), hi: Math.max(range.hi, shift) },
 			at,
 			n: frame.normal,
 			into: { x: (c.x - at.x) / l, y: (c.y - at.y) / l }
@@ -173,9 +196,14 @@ export function beginOffsetDrag(
 			frames.set(id, { u: (rx * dx + ry * dy) / l2, v: (dx * ry - dy * rx) / l2 });
 		}
 	}
+	const limit = {
+		lo: Math.max(...ends.map((e) => e.range.lo - e.shift)),
+		hi: Math.min(...ends.map((e) => e.range.hi - e.shift))
+	};
 	const snaps = ends
 		.filter((e) => !e.free)
-		.flatMap((e) => snapTargets(editor, segment, e).map((t) => t - e.shift));
+		.flatMap((e) => snapTargets(editor, segment, e).map((t) => t - e.shift))
+		.filter((by) => by >= limit.lo - 1e-9 && by <= limit.hi + 1e-9);
 	return {
 		segmentId: segment.id,
 		grab: { x, y },
@@ -183,6 +211,7 @@ export function beginOffsetDrag(
 		ends,
 		control,
 		frames,
+		limit,
 		snaps
 	};
 }
@@ -234,14 +263,16 @@ function shiftRoad(editor: Editor, drag: OffsetDrag, by: number) {
 	}
 	// A junction end keeps its shift, grown by the drag; where the road turned
 	// (its far end moved and it is straight) it grows a little more, so the
-	// road still shows parallel to where it was.
+	// road still shows parallel to where it was. That growth is held to the
+	// end's range too.
 	const drawn = segmentEnds(editor.graph, segment);
 	for (const e of drag.ends) {
 		let shift = 0;
 		if (!e.free) {
 			const now = drawn && shownAt(segment, drawn.a, drawn.b, e.end === 'start' ? 0 : 1);
 			const cos = now ? now.normal.x * e.n.x + now.normal.y * e.n.y : 1;
-			shift = (e.shift + by) / Math.max(1 / MAX_STRETCH, cos);
+			const grown = (e.shift + by) / Math.max(1 / MAX_STRETCH, cos);
+			shift = Math.max(e.range.lo, Math.min(e.range.hi, grown));
 		}
 		if (e.end === 'start') segment.offsetStart = shift;
 		else segment.offsetEnd = shift;
@@ -251,12 +282,13 @@ function shiftRoad(editor: Editor, drag: OffsetDrag, by: number) {
 
 // Follows the pointer: the road moves across by how far the pointer has
 // moved across it since the drag began (to a tenth of a metre), or, with
-// Shift, by the nearest snap. Returns the nodes moved.
+// Shift, by the nearest snap; never past the drag's limit. Returns the nodes
+// moved.
 export function dragOffset(editor: Editor, drag: OffsetDrag, x: number, y: number, snap: boolean) {
 	const raw = (x - drag.grab.x) * drag.normal.x + (y - drag.grab.y) * drag.normal.y;
 	const by =
 		snap && drag.snaps.length
 			? drag.snaps.reduce((best, t) => (Math.abs(t - raw) < Math.abs(best - raw) ? t : best))
 			: Math.round(raw * 10) / 10;
-	return shiftRoad(editor, drag, by);
+	return shiftRoad(editor, drag, Math.max(drag.limit.lo, Math.min(drag.limit.hi, by)));
 }

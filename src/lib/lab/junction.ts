@@ -194,6 +194,41 @@ function runsOf(pts: Pt[], keep: boolean[]) {
 	return runs.filter((r) => r.length > 1);
 }
 
+// A polyline moved `by` metres to the side of it `toward` lies on, each
+// corner mitred, with the unit normal at each point pointing back across it.
+// Points come at most half a metre apart, so a line cut short where it meets
+// something loses no more than that.
+function insetLine(line: Pt[], toward: Pt, by: number) {
+	const pts = dedupe(line).flatMap((p, k, list) => {
+		if (k === 0) return [p];
+		const q = list[k - 1];
+		const n = Math.ceil(dist(p, q) / 0.5);
+		return Array.from({ length: n }, (_, i) => ({
+			x: q.x + ((p.x - q.x) * (i + 1)) / n,
+			y: q.y + ((p.y - q.y) * (i + 1)) / n
+		}));
+	});
+	if (pts.length < 2) return null;
+	const left = (k: number) => {
+		const l = dist(pts[k], pts[k + 1]) || 1;
+		return { x: -(pts[k + 1].y - pts[k].y) / l, y: (pts[k + 1].x - pts[k].x) / l };
+	};
+	const side = dot({ x: toward.x - pts[0].x, y: toward.y - pts[0].y }, left(0)) < 0 ? -1 : 1;
+	const normals = pts.map((_, k) => {
+		const n0 = left(Math.max(0, k - 1));
+		const n1 = left(Math.min(pts.length - 2, k));
+		const m = { x: n0.x + n1.x, y: n0.y + n1.y };
+		const l = Math.hypot(m.x, m.y) || 1;
+		const n = { x: m.x / l, y: m.y / l };
+		const reach = by / Math.max(0.3, dot(n, n1));
+		return { n: { x: n.x * side, y: n.y * side }, reach };
+	});
+	return {
+		pts: pts.map((p, k) => offsetPoint(p, normals[k].n, normals[k].reach)),
+		out: normals.map((v) => neg(v.n))
+	};
+}
+
 // Road ends running straight on into each other, and whether another such
 // pair crosses them.
 function straightPairs(ends: EndInfo[]) {
@@ -566,6 +601,13 @@ export const NARROW = 8;
 // it, when it starts no further back than this: far enough that it never
 // sits among the turn arrows before a stop line at the end.
 const CROSSING_AT_END = 12;
+// The gap between a crossing at a road's end (or the road's end itself,
+// where there's none) and the stop line behind it.
+const CROSSING_TO_STOP = 1;
+// How far a stop line's back edge sits behind the crossing or road end in
+// front of it: room enough for a median's nose to come forward past the stop
+// line, so the lines along the median run straight beside its end.
+export const STOP_ROOM = CROSSING_TO_STOP + STOP_GAP;
 
 // How far back from a road's end (its `end`, a road of `length`) the crossing
 // at that end reaches, or 0 when none lies there.
@@ -582,8 +624,8 @@ export function crossingReach(road: Road, length: number, end: 'start' | 'end') 
 }
 
 // How far back from a road end its paint stops: behind the crossing at its
-// end, if there is one, and behind the stop line when the approach is
-// controlled.
+// end, if there is one, and at the stop line when the approach is
+// controlled (its back edge, so the lane's lines run up to it).
 export function approachSetback(
 	junction: Junction,
 	road: Road,
@@ -592,8 +634,20 @@ export function approachSetback(
 ) {
 	const reach = crossingReach(road, length, end);
 	const controlled = (junction.control[endKey({ road: road.id, end })] ?? 'none') !== 'none';
-	return (reach ? reach + 1 : 0) + (controlled ? STOP_GAP : 0);
+	if (controlled) return reach + STOP_ROOM;
+	return reach ? reach + CROSSING_TO_STOP : 0;
 }
+
+// How far back along an approach a junction's paint reaches at most, with
+// its crossing where it sits by default: past the crossing and its gap, the
+// stop line (its back edge on the paint's setback) or the give-way teeth
+// (their base half a stop gap short of it, pointing back up the road).
+export const APPROACH_PAINT =
+	CROSSING_FROM_END +
+	CROSSING_DEPTH / 2 +
+	CROSSING_TO_STOP +
+	STOP_GAP / 2 +
+	Math.max(STOP_GAP / 2, YIELD_HEIGHT);
 
 // Roadway (or other) strips of a road end's last few metres.
 // A road end's outer edge on the side facing `toward`, from the end out
@@ -1360,44 +1414,83 @@ export function buildJunction(junction: Junction, roads: Map<string, RoadGeo>): 
 		// lane of the other road that no path uses. The far side, with nothing
 		// joining it (a ring's inner edge along the apron), runs unbroken.
 		if (sameLanes(a, b)) {
+			// A median stopping in its nose has its lines wrapped round the nose
+			// on the road (road.ts), so none carry on from beside it.
+			const nosed = (e: EndInfo, o: number) =>
+				e.geo.road.noses?.[e.ref.end] !== 0 &&
+				e.lanes.some(
+					(l, i) =>
+						isRaised(l.lane) &&
+						(Math.abs(l.left - INSET - o) < 0.02 || Math.abs(l.right + INSET - o) < 0.02) &&
+						e.lanes.slice(0, i).some((x) => isRoadway(x.lane)) &&
+						e.lanes.slice(i + 1).some((x) => isRoadway(x.lane))
+				);
 			const edges = (e: EndInfo) =>
 				rowMarks(e.lanes.map((l) => ({ lane: l.lane, left: l.left, right: l.right })))
-					.filter((m) => !m.dashed)
+					.filter((m) => !m.dashed && !nosed(e, m.o))
 					.map((m) => ({ colour: m.colour, o: m.o, p: offsetPoint(e.frame.p, e.frame.n, m.o) }))
 					.sort((p, q) => lateral(a, p.p) - lateral(a, q.p));
 			const ea = edges(a);
 			const eb = edges(b);
+			const mouths = union(
+				ends.filter((e) => e !== a && e !== b).flatMap((e) => nearEnd(e, 1, isRoadway))
+			);
 			const beside = union([
 				...resolved.filter((r) => !through(r) && r.travel).map((r) => band(r.curve).path),
-				...ends.filter((e) => e !== a && e !== b).flatMap((e) => nearEnd(e, 1, isRoadway))
+				...mouths
 			]);
 			// (The paint is clipped to the asphalt below; a line that leaves
-			// it altogether stops.)
-			const paved = union(asphalt);
+			// it altogether stops. A hair of slack keeps a line's first and
+			// last points, right on the mouths.)
+			const paved = offset(union(asphalt), 0.02);
 			// Sides measured from the middle of the road's own width.
 			const mid =
 				(Math.min(...a.lanes.map((l) => l.left)) + Math.max(...a.lanes.map((l) => l.right))) / 2;
+			// An edge line just inside a curb that runs straight from one end
+			// to the other, nobody joining between, follows that curb at its
+			// inset. A curve guessed from the two ends alone strays off the
+			// asphalt where the curb is long or bends one way then the other.
+			const alongCurb = (p: Pt, q: Pt) => {
+				for (const c of outline.corners) {
+					const pts =
+						c.a === a.key && c.b === b.key
+							? c.pts
+							: c.a === b.key && c.b === a.key
+								? [...c.pts].reverse()
+								: null;
+					if (!pts || pts.length < 2) continue;
+					const near = (curb: Pt, mark: Pt) => Math.abs(dist(curb, mark) - INSET) < 0.05;
+					if (!near(pts[0], p) || !near(pts[pts.length - 1], q)) continue;
+					const line = insetLine(pts, p, INSET);
+					if (line) return line;
+				}
+				return null;
+			};
 			if (ea.length === eb.length)
 				ea.forEach((m, i) => {
 					if (eb[i].colour !== m.colour) return;
-					const pts = curveBetween(
-						m.p,
-						neg(a.frame.out),
-						eb[i].p,
-						b.frame.out,
-						Math.max(12, Math.ceil(dist(m.p, eb[i].p) / 0.5))
-					);
+					const curb = alongCurb(m.p, eb[i].p);
+					const pts =
+						curb?.pts ??
+						curveBetween(
+							m.p,
+							neg(a.frame.out),
+							eb[i].p,
+							b.frame.out,
+							Math.max(12, Math.ceil(dist(m.p, eb[i].p) / 0.5))
+						);
 					// Looking past the line, away from the road.
 					const away = Math.sign(m.o - mid);
 					const bare = pts.map((q, k) => {
 						const p0 = pts[Math.max(0, k - 1)];
 						const p1 = pts[Math.min(pts.length - 1, k + 1)];
 						const l = dist(p0, p1) || 1;
-						let n = { x: -(p1.y - p0.y) / l, y: (p1.x - p0.x) / l };
-						if (dot(n, a.frame.n) * away < 0) n = neg(n);
-						return (
-							inside(paved, q) && !EDGE_PROBES.some((d) => inside(beside, offsetPoint(q, n, d)))
-						);
+						let n = curb?.out[k] ?? { x: -(p1.y - p0.y) / l, y: (p1.x - p0.x) / l };
+						if (!curb && dot(n, a.frame.n) * away < 0) n = neg(n);
+						// Past a curb line lies only the curb: a path that seems to
+						// lie there is a turn guessed wide of the asphalt.
+						const past = curb ? mouths : beside;
+						return inside(paved, q) && !EDGE_PROBES.some((d) => inside(past, offsetPoint(q, n, d)));
 					});
 					for (const run of runsOf(pts, bare)) {
 						const s = [0];
@@ -1744,7 +1837,9 @@ export function buildJunction(junction: Junction, roads: Map<string, RoadGeo>): 
 			p: offsetPoint(fb.p, fb.n, (lo + hi) / 2 > 0 ? hi + 2 : lo - 2),
 			control
 		});
-		// What each lane may do: through, left, right or a U-turn.
+		// What each lane may do: through, left, right or a U-turn. A U-turn
+		// is a path back into its own road; a sharp turn onto another road
+		// is still a left or right, however tight.
 		const movesOf = new Map(
 			incoming.map((l) => {
 				const moves = new Set<Move>();
@@ -1754,7 +1849,7 @@ export function buildJunction(junction: Junction, roads: Map<string, RoadGeo>): 
 					const dOut = r.toEnd.frame.out;
 					const ahead = dot(dIn, dOut);
 					const turn = dIn.x * dOut.y - dIn.y * dOut.x;
-					moves.add(ahead > 0.7 ? 'through' : ahead < -0.7 ? 'u' : turn > 0 ? 'right' : 'left');
+					moves.add(r.toEnd === end ? 'u' : ahead > 0.7 ? 'through' : turn > 0 ? 'right' : 'left');
 				}
 				return [l, moves];
 			})
@@ -1764,14 +1859,16 @@ export function buildJunction(junction: Junction, roads: Map<string, RoadGeo>): 
 		const turnLane = [...movesOf.values()].some((m) => m.size > 0 && !m.has('through'));
 		if (control === 'none' && !turnLane && !junction.arrows?.includes(end.key)) continue;
 		// One bar (or one row of give-way teeth) across each run of incoming
-		// lanes that end at the same place.
+		// lanes that end at the same place. The stop line's back edge is where
+		// the road's paint stops, so the lines either side run into its ends;
+		// the teeth sit half a stop gap short of it.
 		const runs = new Map<number, LaneEnd[]>();
 		for (const l of incoming) {
 			const k = Math.round(l.at.distance * 10);
 			runs.set(k, [...(runs.get(k) ?? []), l]);
 		}
 		for (const run of control === 'none' ? [] : runs.values()) {
-			const f = atL(run[0], setback - STOP_GAP / 2);
+			const f = atL(run[0], setback - (control === 'yield' ? STOP_GAP : STOP_LINE) / 2);
 			const rl = Math.min(...run.map((l) => l.left)) + 0.15;
 			const rh = Math.max(...run.map((l) => l.right)) - 0.15;
 			if (control === 'yield') {

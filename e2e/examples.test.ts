@@ -167,8 +167,10 @@ test.describe('Cities', () => {
 		await page.goto('/?example=neighbourhood&topdown');
 		await expect(cities.getByText('Neighbourhood', { exact: true })).toBeVisible();
 
-		// Its name is read-only: clicking it opens no editor.
+		// Its name is read-only: the menu's Rename is disabled.
 		await cities.getByText('Neighbourhood', { exact: true }).click();
+		await expect(page.getByRole('menuitem', { name: 'Rename…' })).toBeDisabled();
+		await page.keyboard.press('Escape');
 		await expect(cities.getByRole('textbox')).toHaveCount(0);
 
 		// Opening it, and editing it, store nothing.
@@ -217,17 +219,19 @@ test.describe('Cities', () => {
 	}) => {
 		await openScene(page, 'median-corner');
 		const cities = cityBar(page);
-		const name = cities.getByTitle('Rename this city');
+		const name = cities.getByTestId('city-name');
 		const input = cities.getByRole('textbox', { name: 'City name' });
 		await expect(name).toHaveText('median-corner');
 
-		await name.click();
+		await menuItem(page, 'Rename…');
+		await expect(input).toBeFocused();
 		await input.fill('Downtown');
 		await input.press('Escape');
 		await expect(input).toHaveCount(0);
 		await expect(name).toHaveText('median-corner');
 
-		await name.click();
+		await menuItem(page, 'Rename…');
+		await expect(input).toBeFocused();
 		await input.fill('  ');
 		await input.press('Enter');
 		await expect(name).toHaveText('median-corner');
@@ -240,7 +244,8 @@ test.describe('Cities', () => {
 		await page.keyboard.press('Escape');
 		await expect(cities.getByLabel('Unsaved changes')).toBeVisible();
 
-		await name.click();
+		await menuItem(page, 'Rename…');
+		await expect(input).toBeFocused();
 		await input.fill('Downtown');
 		await input.press('Enter');
 		await expect(name).toHaveText('Downtown');
@@ -270,7 +275,7 @@ test.describe('Cities', () => {
 		await expect(dialog.getByRole('textbox')).toHaveValue('median-corner');
 		await dialog.getByRole('textbox').fill('copy');
 		await dialog.getByRole('button', { name: 'Save' }).click();
-		await expect(cities.getByTitle('Rename this city')).toHaveText('copy');
+		await expect(cities.getByTestId('city-name')).toHaveText('copy');
 		await saveCity(page);
 
 		expect(await storedIndex(page)).toEqual([
@@ -283,7 +288,7 @@ test.describe('Cities', () => {
 
 	test('New, Open and Delete work from the city menu', async ({ page }) => {
 		await openScene(page, 'median-corner');
-		const name = cityBar(page).getByTitle('Rename this city');
+		const name = cityBar(page).getByTestId('city-name');
 		const dialog = page.getByRole('dialog');
 
 		// The menu lists your cities, then the examples. The screenshot shows it

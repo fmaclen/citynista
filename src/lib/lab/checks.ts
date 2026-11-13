@@ -216,6 +216,9 @@ export function check(scene: Scene): string[] {
 			return false;
 		};
 		for (const m of draw.marks) {
+			// A line closed round a median with a nose at either end has none.
+			const [first, last] = [m.pts[0], m.pts[m.pts.length - 1]];
+			if (first && Math.hypot(first.x - last.x, first.y - last.y) < 1e-6) continue;
 			for (const k of [0, m.pts.length - 1]) {
 				const p = m.pts[k];
 				if (!p) continue;

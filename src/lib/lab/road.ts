@@ -6,9 +6,11 @@ import {
 	area as areaOf,
 	fromPath,
 	intersect,
+	offset,
 	open,
 	subtract,
 	toPath,
+	toPolygons,
 	union,
 	type Paths
 } from './clip';
@@ -404,6 +406,132 @@ export function paintLine(
 
 const MIN_PAINTED = 4;
 
+// Where a median stops short in its rounded nose, the solid lines along
+// either side of it join round the nose at the same inset, one line. They
+// are cut where the median's sides still run straight (`at`, metres along
+// the road) and joined by the median's outline grown by the inset beyond
+// there. Lines that don't both reach that far along both sides are left be.
+function wrapNose(
+	path: PathSample,
+	road: Road,
+	marks: Mark[],
+	nose: { id: string; shape: Paths },
+	end: 'start' | 'end',
+	at: number
+) {
+	if (at <= 0 || at >= path.length) return;
+	const span = crossSection(road, at).find((s) => s.lane.id === nose.id);
+	if (!span || span.right - span.left < 0.2) return;
+	const f = frameAt(path, at);
+	// Toward the road's end from `at`.
+	const ahead = end === 'end' ? 1 : -1;
+	const beyond = (d: number) => (d - at) * ahead > 0;
+	// A median's nose comes forward past a stop line, past where paint
+	// stops: a line along either side that ends short of `at` runs on
+	// straight beside the median to just past it.
+	for (const o of [span.left - INSET, span.right + INSET]) {
+		for (const m of marks) {
+			if (m.dashed || !m.along) continue;
+			const k = [m.along.length - 1, 0].find((i) => {
+				const s = m.along![i];
+				if (beyond(s) || (at - s) * ahead > 3) return false;
+				const g = frameAt(path, s);
+				const q = offsetPoint(g.p, g.n, o);
+				return Math.hypot(m.pts[i].x - q.x, m.pts[i].y - q.y) < 0.1;
+			});
+			if (k === undefined) continue;
+			const s = m.along[k];
+			const steps = Math.ceil(Math.abs(at - s) / 0.5) + 1;
+			const more = Array.from({ length: steps }, (_, i) =>
+				i === steps - 1 ? at + 0.05 * ahead : s + ((at - s) * (i + 1)) / (steps - 1)
+			);
+			const pts = more.map((d) => {
+				const h = frameAt(path, d);
+				return offsetPoint(h.p, h.n, o);
+			});
+			if (k === 0) {
+				m.pts = [...pts.reverse(), ...m.pts];
+				m.along = [...more.reverse(), ...m.along];
+			} else {
+				m.pts = [...m.pts, ...pts];
+				m.along = [...m.along, ...more];
+			}
+		}
+	}
+	// Each line end on the nose's side of `at`, and where its line crosses
+	// `at`.
+	const ends: { m: Mark; k: number; cut: number; p: Pt }[] = [];
+	for (const m of marks) {
+		if (m.dashed || !m.along) continue;
+		for (const k of [0, m.pts.length - 1]) {
+			if (!beyond(m.along[k])) continue;
+			const step = k === 0 ? 1 : -1;
+			let i = k;
+			while (i + step >= 0 && i + step < m.pts.length && beyond(m.along[i + step])) i += step;
+			const j = i + step;
+			if (j < 0 || j >= m.pts.length) continue;
+			const t = (at - m.along[i]) / (m.along[j] - m.along[i]);
+			const p = {
+				x: m.pts[i].x + (m.pts[j].x - m.pts[i].x) * t,
+				y: m.pts[i].y + (m.pts[j].y - m.pts[i].y) * t
+			};
+			ends.push({ m, k, cut: i, p });
+		}
+	}
+	const near = (o: number) => {
+		const q = offsetPoint(f.p, f.n, o);
+		return ends.find((e) => Math.hypot(e.p.x - q.x, e.p.y - q.y) < 0.1);
+	};
+	const lo = near(span.left - INSET);
+	const hi = near(span.right + INSET);
+	if (!lo || !hi || lo.m.colour !== hi.m.colour || (lo.m === hi.m && lo.k === hi.k)) return;
+	// The grown outline beyond `at`, in the few metres of the nose.
+	const along = (q: Pt) => (q.x - f.p.x) * f.t.x + (q.y - f.p.y) * f.t.y;
+	const across = (q: Pt) => (q.x - f.p.x) * f.n.x + (q.y - f.p.y) * f.n.y;
+	let arc: Pt[] = [];
+	for (const ring of offset(nose.shape, INSET)) {
+		const pts = fromPath(ring);
+		const keep = pts.map((q) => {
+			const a = along(q) * ahead;
+			const o = across(q);
+			return a > 0 && a < 5 && o > span.left - INSET - 0.5 && o < span.right + INSET + 0.5;
+		});
+		const first = keep.findIndex((x, i) => x && !keep[(i - 1 + pts.length) % pts.length]);
+		if (first < 0) continue;
+		const run: Pt[] = [];
+		for (let i = first; keep[i % pts.length] && run.length < pts.length; i++)
+			run.push(pts[i % pts.length]);
+		if (run.length < 2 || keep.filter(Boolean).length !== run.length) continue;
+		arc = run;
+	}
+	if (arc.length < 2) return;
+	const d = (p: Pt, q: Pt) => Math.hypot(p.x - q.x, p.y - q.y);
+	if (d(arc[0], lo.p) > d(arc[0], hi.p)) arc.reverse();
+	const alongArc = arc.map((q) => at + along(q));
+	// Each line up to where it's cut, running toward the nose.
+	const lead = (e: (typeof ends)[number]) => {
+		const pts = e.k === 0 ? e.m.pts.slice(e.cut + 1).reverse() : e.m.pts.slice(0, e.cut);
+		const s = e.k === 0 ? e.m.along!.slice(e.cut + 1).reverse() : e.m.along!.slice(0, e.cut);
+		return { pts: [...pts, e.p], s: [...s, at] };
+	};
+	if (lo.m === hi.m) {
+		// Both sides are already one line, joined round the other end: it
+		// closes into a loop.
+		const m = lo.m;
+		const [first, last] = lo.k === 0 ? [lo, hi] : [hi, lo];
+		const round = last === lo ? arc : [...arc].reverse();
+		const s = last === lo ? alongArc : [...alongArc].reverse();
+		m.pts = [first.p, ...m.pts.slice(first.cut + 1, last.cut), last.p, ...round, first.p];
+		m.along = [at, ...m.along!.slice(first.cut + 1, last.cut), at, ...s, at];
+		return;
+	}
+	const a = lead(lo);
+	const b = lead(hi);
+	marks.splice(marks.indexOf(hi.m), 1);
+	lo.m.pts = [...a.pts, ...arc, ...[...b.pts].reverse()];
+	lo.m.along = [...a.s, ...alongArc, ...[...b.s].reverse()];
+}
+
 // Whether a lane that stops short of the road's end is past where its paint
 // stops.
 function paintCut(
@@ -431,6 +559,7 @@ export function buildRoad(road: Road, cut: { start: EndCut; end: EndCut }): Road
 	const hi = Math.max(...rows.map((r) => r.spans[r.spans.length - 1]?.right ?? 0)) + 1;
 	const roadway: Paths = [];
 	const medians: Paths = [];
+	const noses: { id: string; r: number; from: number; to: number; shape: Paths }[] = [];
 	for (const { lane, polys } of strips.values()) {
 		const paths = union(polys.map(toPath));
 		if (!isRaised(lane)) {
@@ -463,6 +592,7 @@ export function buildRoad(road: Road, cut: { start: EndCut; end: EndCut }): Road
 		const shaped = union([...open(kept, r), ...intersect(kept, square)]);
 		add(fillOf(lane), shaped);
 		medians.push(...shaped);
+		if (kept.length) noses.push({ id: lane.id, r, from, to, shape: shaped });
 		const freed = subtract(paths, shaped);
 		add('asphalt', freed);
 		roadway.push(...freed);
@@ -495,15 +625,23 @@ export function buildRoad(road: Road, cut: { start: EndCut; end: EndCut }): Road
 				}));
 	const white: Pt[][] = [];
 	const yellow: Pt[][] = [];
-	const marks: Mark[] = [];
-	for (const line of chainLines(painted.map((r) => ({ d: r.d, marks: rowMarks(r.spans) })))) {
-		const pts = line.d.map((d, i) => {
-			const row = painted.find((r) => r.d === d)!;
-			return offsetPoint(row.p, row.n, line.o[i]);
-		});
-		paintLine(pts, line.d, line.mark.dashed, line.mark.colour === 'white' ? white : yellow);
-		marks.push({ colour: line.mark.colour, dashed: line.mark.dashed, pts, along: line.d });
+	const marks: Mark[] = chainLines(painted.map((r) => ({ d: r.d, marks: rowMarks(r.spans) }))).map(
+		(line) => ({
+			colour: line.mark.colour,
+			dashed: line.mark.dashed,
+			pts: line.d.map((d, i) => {
+				const row = painted.find((r) => r.d === d)!;
+				return offsetPoint(row.p, row.n, line.o[i]);
+			}),
+			along: line.d
+		})
+	);
+	for (const nose of noses) {
+		if (cut.start.nose) wrapNose(path, road, marks, nose, 'start', nose.from + nose.r + 0.25);
+		if (cut.end.nose) wrapNose(path, road, marks, nose, 'end', nose.to - nose.r - 0.25);
 	}
+	for (const m of marks)
+		paintLine(m.pts, m.along!, m.dashed, m.colour === 'white' ? white : yellow);
 	// Hatched buffers: diagonal bars every 4 m, clipped to the buffer and the
 	// painted length, yellow where the buffer separates opposing traffic.
 	const paintZone = zone(rows, cut.start.paint, length - cut.end.paint, lo, hi);
@@ -592,9 +730,10 @@ export function buildRoad(road: Road, cut: { start: EndCut; end: EndCut }): Road
 	// Paint stays on the road's own surface, however tight a bend folds an
 	// edge line, and off its crosswalks.
 	const surface = subtract(union([...roadway, ...(fills.get('trail') ?? [])]), crossed);
+	// A line closed round a median outlines a hole: cut into simple pieces.
 	const keep = (polys: Pt[][]) =>
-		intersect(union(polys.map(toPath)), surface)
-			.map(fromPath)
+		toPolygons(intersect(union(polys.map(toPath)), surface), 0)
+			.map((piece) => piece.outer)
 			.filter((q) => q.length >= 3);
 	return {
 		path,
