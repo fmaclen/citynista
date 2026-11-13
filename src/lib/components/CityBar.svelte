@@ -72,7 +72,7 @@
 	}
 </script>
 
-<div class="fixed top-4 left-4 z-50">
+<div class="fixed top-4 left-1/2 z-50 -translate-x-1/2">
 	<div
 		class="flex flex-row items-center gap-1 rounded-lg border bg-background p-1.5 shadow-lg"
 		role="toolbar"
@@ -80,7 +80,7 @@
 	>
 		{#if editing}
 			<input
-				class="h-8 w-60 rounded-md border bg-transparent px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+				class="h-8 w-52 rounded-md border bg-transparent px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
 				aria-label="City name"
 				bind:value={draft}
 				use:focusAndSelect
@@ -101,7 +101,7 @@
 					{#snippet child({ props })}
 						<button
 							{...props}
-							class="flex h-8 w-60 items-center gap-1 rounded-md px-2 text-left text-sm hover:bg-accent"
+							class="flex h-8 w-52 items-center gap-1 rounded-md px-2 text-left text-sm hover:bg-accent"
 							aria-label="City menu"
 						>
 							<span class="flex-1 truncate" data-testid="city-name">

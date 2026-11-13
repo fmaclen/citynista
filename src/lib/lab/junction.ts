@@ -405,6 +405,10 @@ function walkOnSide(end: EndInfo, centre: Pt, ascending: boolean) {
 	return c && (c.side === 0 || c.side === (wantRight ? 1 : -1)) ? walk : null;
 }
 
+// Two walk-only road ends face each other when each heads into the node
+// within 25° of the line to the other.
+const FACING = Math.cos((25 * Math.PI) / 180);
+
 // The sidewalks round a junction. Where one runs across the mouth of a
 // driveway (joinsOnly) it is paved across; across any other road's mouth it
 // is a crosswalk.
@@ -442,15 +446,25 @@ export function defaultWalkways(ends: EndInfo[], connections: Connection[]): Wal
 			});
 		}
 	}
-	// Walk-only roads that run straight on into each other cross between.
-	for (const { pair } of pairs) {
-		const [a, b] = pair;
-		const only = (e: EndInfo) => e.lanes.length > 0 && e.lanes.every((l) => isWalk(l.lane));
-		if (!only(a) || !only(b)) continue;
-		const la = a.lanes[Math.floor(a.lanes.length / 2)];
-		const lb = b.lanes[Math.floor(b.lanes.length / 2)];
-		walkways.push({ id: `${a.key}=${b.key}`, a: la.ref, b: lb.ref, on: true, paved: false });
-	}
+	// Walk-only roads that run on into each other cross between: two that
+	// face each other across the node, as a path drawn on a curve through it
+	// does, or that run straight on.
+	const only = (e: EndInfo) => e.lanes.length > 0 && e.lanes.every((l) => isWalk(l.lane));
+	const walks = ends.filter(only);
+	const facing = (a: EndInfo, b: EndInfo) => {
+		const l = dist(a.frame.p, b.frame.p) || 1;
+		const t = { x: (b.frame.p.x - a.frame.p.x) / l, y: (b.frame.p.y - a.frame.p.y) / l };
+		return -dot(a.frame.out, t) > FACING && dot(b.frame.out, t) > FACING;
+	};
+	const inLine = (a: EndInfo, b: EndInfo) =>
+		pairs.some(({ pair }) => pair.includes(a) && pair.includes(b));
+	for (const [i, a] of walks.entries())
+		for (const b of walks.slice(i + 1)) {
+			if (!inLine(a, b) && !facing(a, b)) continue;
+			const la = a.lanes[Math.floor(a.lanes.length / 2)];
+			const lb = b.lanes[Math.floor(b.lanes.length / 2)];
+			walkways.push({ id: `${a.key}=${b.key}`, a: la.ref, b: lb.ref, on: true, paved: false });
+		}
 	return walkways;
 }
 
@@ -1152,6 +1166,10 @@ function hatchBars(a: EndInfo, lo: number, hi: number, length: number): Paths {
 	return out;
 }
 
+// A road carried across that turns by less than this (10°) runs nearly
+// straight on.
+const STRAIGHT_ON = Math.cos((10 * Math.PI) / 180);
+
 // Carrying a road across the junction: from road end A, the roads leaving the
 // far side (facing A, joined to it by connections) are laid side by side
 // across A's line. Where their lanes line up with A's, kind for kind (a run
@@ -1172,9 +1190,45 @@ function carry(
 		const back = facingOf(far[0], ends, junction.connections);
 		if (back.length > 1 || (back.length === 1 && far[0].key < a.key)) return false;
 	}
+	// Lanes are put side by side across A's line, a far road's lanes each at
+	// its place across its own end, lined up with A's: where the road runs
+	// nearly straight on, by where its end lies across A's line; round a
+	// bend (a road on a curve), where its end lies across depends on how the
+	// road curves, so by the lanes that connect across instead, on average.
+	const into = neg(a.frame.out);
+	const turn = dot({ x: -into.y, y: into.x }, a.frame.n) > 0 ? 1 : -1;
+	const frameOf = (end: EndInfo) => {
+		if (end === a) return { shift: 0, sign: 1 };
+		// Across the heading halfway between A's and the far road's.
+		const h = { x: into.x + end.frame.out.x, y: into.y + end.frame.out.y };
+		const l = Math.hypot(h.x, h.y) || 1;
+		const n = { x: (-h.y / l) * turn, y: (h.x / l) * turn };
+		const sign = dot(end.frame.n, n) > 0 ? 1 : -1;
+		const measured = dot({ x: end.frame.p.x - a.frame.p.x, y: end.frame.p.y - a.frame.p.y }, n);
+		if (dot(into, end.frame.out) > STRAIGHT_ON) return { shift: measured, sign };
+		const gaps: number[] = [];
+		for (const c of junction.connections) {
+			const from = laneEndOf(ends, c.from);
+			const to = laneEndOf(ends, c.to);
+			if (!from || !to || !isTravel(from.lane.lane)) continue;
+			const [near, there] =
+				from.end === a && to.end === end
+					? [from, to]
+					: to.end === a && from.end === end
+						? [to, from]
+						: [];
+			if (near && there)
+				gaps.push(lateral(a, near.lane.point) - sign * lateral(end, there.lane.point));
+		}
+		return {
+			shift: gaps.length ? gaps.reduce((s, g) => s + g, 0) / gaps.length : measured,
+			sign
+		};
+	};
 	const inFrame = (end: EndInfo) =>
 		end.lanes.map((l) => {
-			const c = lateral(a, l.point);
+			const { shift, sign } = frameOf(end);
+			const c = shift + sign * lateral(end, l.point);
 			const w = l.right - l.left;
 			const flow = end === a ? l.flow : l.flow === 'in' ? 'out' : l.flow === 'out' ? 'in' : l.flow;
 			const dir: Lane['dir'] = isTravel(l.lane)
@@ -1211,7 +1265,6 @@ function carry(
 	const ga = group(roadwayOnly(near));
 	const gb = group(roadwayOnly(other));
 	if (ga.length !== gb.length || ga.some((g, i) => g.kind !== gb[i].kind)) return false;
-	const into = neg(a.frame.out);
 	// Nothing is carried across if another road's mouth reaches into the
 	// carried roadway (a driveway pushed into the street).
 	const edgeL = offsetPoint(a.frame.p, a.frame.n, ga[0].items[0].left);
@@ -1308,11 +1361,8 @@ function carry(
 		const p = offsetPoint(a.frame.p, a.frame.n, m.o);
 		// The far mark sits on whichever far road spans its offset.
 		const host = other.find((s) => o >= s.left - 0.3 && o <= s.right + 0.3)?.end ?? far[0];
-		const q = offsetPoint(
-			host.frame.p,
-			host.frame.n,
-			(o - lateral(a, host.frame.p)) / dot(host.frame.n, a.frame.n)
-		);
+		const { shift, sign } = frameOf(host);
+		const q = offsetPoint(host.frame.p, host.frame.n, sign * (o - shift));
 		const pts = along(p, q, host.frame.out);
 		// A line only carries on where no turning traffic crosses it.
 		if (crossesAny(pts, others)) continue;
@@ -1369,8 +1419,15 @@ export function buildJunction(junction: Junction, roads: Map<string, RoadGeo>): 
 			(e) => e !== a && !facing.includes(e) && dot(e.frame.out, a.frame.out) <= 0.7
 		);
 		if (rest.some((e) => !joinsOnly(e, ends, junction.connections))) continue;
+		// Traffic turning across it; the road's own, following it round a
+		// bend, isn't.
+		const own = (r: (typeof resolved)[number]) =>
+			(r.fromEnd === a && facing.includes(r.toEnd)) ||
+			(r.toEnd === a && facing.includes(r.fromEnd));
 		const turning = resolved
-			.filter((r) => dot(neg(r.fromEnd.frame.out), r.toEnd.frame.out) < Math.cos(Math.PI / 6))
+			.filter(
+				(r) => !own(r) && dot(neg(r.fromEnd.frame.out), r.toEnd.frame.out) < Math.cos(Math.PI / 6)
+			)
 			.map((r) => r.curve);
 		if (carry(a, ends, junction, turning, out)) {
 			carriedEnds.add(a.key);
@@ -1693,12 +1750,46 @@ export function buildJunction(junction: Junction, roads: Map<string, RoadGeo>): 
 				centre = chain.pts;
 			} else {
 				walkOnly = true;
-				// A walk-only road at either end: straight on between them.
-				// Straight across: a curve between two trail ends that don't
-				// quite line up would kink into a chevron.
-				centre = [ea.lane.point, eb.lane.point];
+				// A walk-only road at either end: on between them, leaving each
+				// square to its end, so a path drawn on a curve through the node
+				// carries on along it (straight where the two ends line up).
+				const a = ea.lane.point;
+				const b = eb.lane.point;
+				centre = curveBetween(
+					a,
+					neg(ea.end.frame.out),
+					b,
+					eb.end.frame.out,
+					Math.max(2, Math.ceil(dist(a, b) / 1.5))
+				);
 				width = Math.max(ea.lane.right - ea.lane.left, eb.lane.right - eb.lane.left);
 				body = offsetLine(centre, width / 2);
+				// Its zebra stripes run along the road it crosses (that road's
+				// ends' headings, averaged), one on the middle of the crossing,
+				// each long enough for any angle: clipped to the path over the
+				// roadway, the zebra is as wide as the path and spans just the
+				// roadway, however the path meets the road or curves.
+				const along = ends
+					.filter((e) => e !== ea.end && e !== eb.end && e.lanes.some((l) => isRoadway(l.lane)))
+					.reduce(
+						(d, e) => {
+							const s = dot(d, e.frame.out) < 0 ? -1 : 1;
+							return { x: d.x + s * e.frame.out.x, y: d.y + s * e.frame.out.y };
+						},
+						{ x: 0, y: 0 }
+					);
+				const l = Math.hypot(along.x, along.y);
+				if (l > 1e-6) {
+					const across = { x: -along.y / l, y: along.x / l };
+					const m = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+					const reach = Math.ceil(dist(a, b) / 2 + width) + 0.5;
+					stripes = union(
+						bars(
+							[offsetPoint(m, across, -reach), offsetPoint(m, across, reach)],
+							2 * (dist(a, b) + width)
+						)
+					);
+				}
 			}
 		}
 		const solid = crossableFor(ea.end, eb.end);
@@ -1748,11 +1839,13 @@ export function buildJunction(junction: Junction, roads: Map<string, RoadGeo>): 
 		const refuge = intersect(body, refuges);
 		// Sidewalk paving never covers a road; roads draw their own lanes.
 		const plain = subtract(subtract(body, solid), blockers);
-		if (ea.end !== eb.end && !w.bare)
-			(ea.lane.lane.kind === 'trail' || eb.lane.lane.kind === 'trail' ? trail : pavement).push(
-				...plain
-			);
+		const trailed = ea.lane.lane.kind === 'trail' || eb.lane.lane.kind === 'trail';
+		if (ea.end !== eb.end && !w.bare) (trailed ? trail : pavement).push(...plain);
 		if (over.length === 0 && refuge.length === 0) continue;
+		// A walk-only road crossing a road runs on over that road's sidewalk
+		// and verge right up to its zebra, in its own surface: a trail's, or
+		// sidewalk paving for a footpath.
+		const approach = walkOnly ? subtract(body, union([...solid, ...islandPaths, ...refuge])) : [];
 		// A walkway laid across another road's mouth pushes that road's stop
 		// line back behind it.
 		if (w.on && ea.end !== eb.end) {
@@ -1773,10 +1866,8 @@ export function buildJunction(junction: Junction, roads: Map<string, RoadGeo>): 
 			zebra: w.paved
 				? []
 				: intersect(stripes ?? union(bars(centre, width)), subtract(over, refuge)),
-			paving: w.paved ? over : [],
-			// A trail crossing a road runs on over that road's sidewalk and
-			// verge right up to its zebra.
-			trail: walkOnly ? subtract(body, union([...solid, ...islandPaths, ...refuge])) : [],
+			paving: w.paved ? over : trailed ? [] : approach,
+			trail: trailed ? approach : [],
 			refuge,
 			hit: union([...over, ...refuge])
 		});

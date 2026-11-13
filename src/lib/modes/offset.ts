@@ -1,27 +1,36 @@
 // The lateral offset handle: with one road selected, a handle sits on the
 // road as it shows, a quarter of the way along. Dragging it across slides
 // the road sideways, parallel to where it was. Each end goes its own way:
-// - at a node of one or two roads the node itself moves (as if the road were
-//   dragged there, so a road carrying on bends to follow) and that end's
+// - at a dead end, or a node of two roads carrying the same lanes (a plain
+//   bend or continuation), the node itself moves (as if the road were
+//   dragged there, so the road carrying on bends to follow) and that end's
 //   shift folds into it, leaving 0;
-// - at a junction of three or more (or one attaching roads at an edge) the
-//   node stays and that end keeps a shift (`offsetStart`/`offsetEnd`), so
-//   the lanes still line up across the junction.
-// A junction end's shift is held to its road's roadway: the node stays
-// between the outer edges of the road's car lanes there (its outer edges,
-// for a road without any), so the road still opens onto its junction. Past
-// that the road's mouth slides off the node, the junction outline breaks up
-// and the crossing pass would join the road to its neighbour beside the
-// junction. The drag stops where the first junction end reaches its limit,
-// so the road stays parallel; a shift already past it may come back but not
-// grow.
-// With Shift held the drag snaps to where a junction end is centred, or to
-// where its kerb or outer edge on one side lines up with a road carrying on
-// from it there, among those inside the limit.
+// - at a node of two roads whose lanes differ (a taper), a junction of
+//   three or more, or one attaching roads at an edge, the node stays and
+//   that end keeps a shift (`offsetStart`/`offsetEnd`), so the other roads
+//   stay where they are and the lanes line up across the node as shifted.
+// A kept shift is held so the road still meets what is there. At a taper
+// one road's roadway (between the outer edges of its car lanes) stays
+// within the other's, so the narrower road's lanes run on into lanes of the
+// wider. At a junction the node stays within the road's roadway, so the
+// road still opens onto its junction; past that the road's mouth slides off
+// the node, the junction outline breaks up and the crossing pass would join
+// the road to its neighbour beside the junction. A road without car lanes (a
+// footpath) only has to reach the side of the roads it meets, so it slides
+// further: its whole width stays within the widest of them there, sidewalks
+// included (or the node within its own width, if that reaches further). The
+// drag stops where the first end reaches its limit, so the road stays
+// parallel; a shift already past it may come back but not grow.
+// With Shift held the drag snaps to where a kept end is centred, or to where
+// its kerb or outer edge on one side lines up with a road carrying on from
+// it there, and at a taper to where its kerb on one side lines up with the
+// same side of one of the other road's car lanes, among those inside the
+// limit.
 
 import type { Editor } from '../editor.svelte';
 import type { Segment } from '../core/segment.svelte';
 import { segmentEnds } from '../core/attach';
+import { carriesOn } from '../core/place';
 import { offsetAt, roadAt, shownAt, type Pt } from '../core/road-line';
 
 export interface OffsetHandle {
@@ -36,11 +45,13 @@ type EndName = 'start' | 'end';
 interface EndAtStart {
 	end: EndName;
 	nodeId: string;
-	// Whether the node moves with the road (one or two roads there).
+	// Whether the node moves with the road (a dead end or a plain bend).
 	free: boolean;
+	// The other road where only two meet with different lanes (a taper).
+	taper: { segment: Segment; end: EndName } | null;
 	node: Pt;
 	shift: number;
-	// The shifts it may take (a junction end's; unbounded for a free one).
+	// The shifts it may take (a kept shift's; unbounded for a free end).
 	range: { lo: number; hi: number };
 	// The drawn line there: its point, its right normal, and the way it
 	// heads into the road (toward the control point).
@@ -58,7 +69,7 @@ export interface OffsetDrag {
 	// Other roads' control points at a moving node, kept in their own frame
 	// (along and across from their start to their end) so they bend with it.
 	frames: Map<string, { u: number; v: number }>;
-	// How far the drag may go either way, every junction end in its range.
+	// How far the drag may go either way, every kept end in its range.
 	limit: { lo: number; hi: number };
 	// Shifts of the drag worth snapping to.
 	snaps: number[];
@@ -66,7 +77,7 @@ export interface OffsetDrag {
 
 // Where along the line the handle sits (the curvature handle has the middle).
 const AT = 0.25;
-// A junction end's shift grows by 1 / cos of how far its road turned, so the
+// A kept end's shift grows by 1 / cos of how far its road turned, so the
 // road stays parallel; never by more than this.
 const MAX_STRETCH = 2;
 
@@ -78,31 +89,65 @@ export function offsetHandle(editor: Editor): OffsetHandle | null {
 	return { segmentId: segment.id, point: at.point, normal: at.normal };
 }
 
-// A segment's outer edges and kerbs, across it from its own centre.
+// A segment's outer edges, kerbs and car lanes, across it from its own
+// centre.
 function edges(segment: Segment) {
 	const total = segment.lanes.reduce((sum, l) => sum + l.width, 0);
 	let x = -total / 2;
 	let lo = Infinity;
 	let hi = -Infinity;
+	const lanes: { lo: number; hi: number }[] = [];
 	for (const lane of segment.lanes) {
 		if (lane.role === 'vehicle') {
 			lo = Math.min(lo, x);
 			hi = Math.max(hi, x + lane.width);
+			lanes.push({ lo: x, hi: x + lane.width });
 		}
 		x += lane.width;
 	}
 	const outer = { lo: -total / 2, hi: total / 2 };
-	return { outer, kerb: lo <= hi ? { lo, hi } : outer };
+	return { outer, kerb: lo <= hi ? { lo, hi } : outer, lanes };
 }
 
-// The shifts a junction end may take: the node (at 0 across the road)
-// stays within the roadway, its kerbs at lo + shift and hi + shift.
-export function shiftRange(segment: Segment) {
-	const { kerb } = edges(segment);
-	return { lo: -kerb.hi, hi: -kerb.lo };
+// Reads the other road's edges across this one at their node: shifted by its
+// own shift there, and flipped when the two are drawn opposite ways through
+// the node (both start or both end there).
+function acrossAt(end: EndName, other: Segment, otherEnd: EndName) {
+	const sign = end === otherEnd ? -1 : 1;
+	const shift = offsetAt(other, otherEnd);
+	return (x: number) => (x + shift) * sign;
 }
 
-// Shifts worth snapping one junction end to: centred, and those that line
+// The shifts a taper end may take: its roadway stays within the other road's
+// there, or theirs within its own when it is the wider.
+function taperRange(segment: Segment, end: EndName, other: Segment, otherEnd: EndName) {
+	const at = acrossAt(end, other, otherEnd);
+	const theirs = edges(other).kerb;
+	const [lo, hi] = [at(theirs.lo), at(theirs.hi)].sort((p, q) => p - q);
+	const mine = edges(segment).kerb;
+	const a = lo - mine.lo;
+	const b = hi - mine.hi;
+	return { lo: Math.min(a, b), hi: Math.max(a, b) };
+}
+
+// The shifts a junction end may take. A road with car lanes keeps the node
+// (at 0 across the road) within its roadway, its kerbs at lo + shift and
+// hi + shift. A road without any keeps its whole width within the widest
+// road it meets there, sidewalks included, or at least the node within its
+// own width.
+function junctionRange(editor: Editor, segment: Segment, nodeId: string) {
+	const { outer, kerb, lanes } = edges(segment);
+	if (lanes.length) return { lo: -kerb.hi, hi: -kerb.lo };
+	let widest = 0;
+	for (const id of editor.graph.nodes.get(nodeId)?.connectedSegments ?? []) {
+		const other = id !== segment.id && editor.graph.segments.get(id);
+		if (other) widest = Math.max(widest, edges(other).outer.hi);
+	}
+	const reach = Math.max(outer.hi, widest - outer.hi);
+	return { lo: -reach, hi: reach };
+}
+
+// Shifts worth snapping one kept end to: centred, and those that line
 // this road's kerb or outer edge up with the same edge of a road carrying on
 // from it there, on either side.
 function snapTargets(editor: Editor, segment: Segment, end: EndAtStart) {
@@ -130,17 +175,29 @@ function snapTargets(editor: Editor, segment: Segment, end: EndAtStart) {
 			const e = across(theirs[key].lo, theirs[key].hi);
 			targets.push(e.lo - mine[key].lo, e.hi - mine[key].hi);
 		}
+		if (end.taper?.segment !== other) continue;
+		const at = acrossAt(end.end, other, end.taper.end);
+		for (const lane of theirs.lanes) {
+			const [lo, hi] = [at(lane.lo), at(lane.hi)].sort((p, q) => p - q);
+			targets.push(lo - mine.kerb.lo, hi - mine.kerb.hi);
+		}
 	}
 	return targets;
 }
 
-// A node moves with the road unless it is a junction of three or more, or
-// attaches roads at an edge.
-function movesWithRoad(editor: Editor, nodeId: string) {
-	const node = editor.graph.nodes.get(nodeId);
-	if (!node) return false;
-	const sides = Object.keys(node.junction?.sides ?? {}).length;
-	return node.connectedSegments.length <= 2 && !sides;
+// What a road's end meets at its node: nothing else or a road carrying the
+// same lanes on (the node moves with the road), a road with other lanes (a
+// taper), or a junction of three or more or one attaching roads at an edge.
+function endAt(editor: Editor, segment: Segment, end: EndName) {
+	const node = editor.graph.nodes.get(end === 'start' ? segment.startNodeId : segment.endNodeId);
+	const sides = Object.keys(node?.junction?.sides ?? {}).length;
+	if (!node || sides || node.connectedSegments.length > 2) return { free: false, taper: null };
+	const otherId = node.connectedSegments.find((id) => id !== segment.id);
+	const other = otherId ? editor.graph.segments.get(otherId) : undefined;
+	if (!other) return { free: true, taper: null };
+	const otherEnd: EndName = other.startNodeId === node.id ? 'start' : 'end';
+	if (carriesOn(segment, end, other, otherEnd)) return { free: true, taper: null };
+	return { free: false, taper: { segment: other, end: otherEnd } };
 }
 
 // Takes hold of the handle: what the road and its ends were at the start, so
@@ -164,13 +221,18 @@ export function beginOffsetDrag(
 		const at = end === 'start' ? drawn.a : drawn.b;
 		const frame = shownAt(segment, drawn.a, drawn.b, end === 'start' ? 0 : 1);
 		const l = Math.hypot(c.x - at.x, c.y - at.y) || 1;
-		const free = movesWithRoad(editor, nodeId);
+		const { free, taper } = endAt(editor, segment, end);
 		const shift = offsetAt(segment, end);
-		const range = free ? { lo: -Infinity, hi: Infinity } : shiftRange(segment);
+		const range = free
+			? { lo: -Infinity, hi: Infinity }
+			: taper
+				? taperRange(segment, end, taper.segment, taper.end)
+				: junctionRange(editor, segment, nodeId);
 		ends.push({
 			end,
 			nodeId,
 			free,
+			taper,
 			node: { x: node.x, y: node.y },
 			shift,
 			range: { lo: Math.min(range.lo, shift), hi: Math.max(range.hi, shift) },
@@ -261,7 +323,7 @@ function shiftRoad(editor: Editor, drag: OffsetDrag, by: number) {
 		const dy = b.y - a.y;
 		other.setControlPoint(a.x + f.u * dx - f.v * dy, a.y + f.u * dy + f.v * dx);
 	}
-	// A junction end keeps its shift, grown by the drag; where the road turned
+	// A kept end keeps its shift, grown by the drag; where the road turned
 	// (its far end moved and it is straight) it grows a little more, so the
 	// road still shows parallel to where it was. That growth is held to the
 	// end's range too.

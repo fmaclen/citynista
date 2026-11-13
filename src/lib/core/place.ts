@@ -162,8 +162,10 @@ interface Arm {
 	full: { lo: number; hi: number };
 	roadway: { lo: number; hi: number };
 	half: number;
-	// Whether the road has sidewalks or verges beyond its roadway.
+	// Whether the road has sidewalks or verges beyond its roadway, and
+	// whether it has no car lanes at all (a footpath).
 	walks: boolean;
+	foot: boolean;
 	// The lanes read outward from the node, for telling whether two arms
 	// carry the same road on.
 	key: string;
@@ -173,7 +175,8 @@ interface Arm {
 const CORNER_ROOM = 3;
 // A road without sidewalks of its own (a driveway) stops on the crossing
 // road's curb line (just inside it), so that road's sidewalk runs straight
-// on across its mouth.
+// on across its mouth. A footpath stops right on a car road's curb line:
+// its paving never laps over that road's asphalt.
 const CURB_GAP = -0.1;
 // A road with sidewalks stops this far past the mouth of a driveway: its curb
 // turns straight into the driveway's edge.
@@ -195,6 +198,10 @@ const MIN_SIN = 0.3;
 // A taper set by hand is never steeper than this many metres along for each
 // metre across.
 const LEAST_TAPER_PER_SHIFT = 4;
+// A footpath easing sideways off a sidewalk (or onto one) does so over this
+// many metres along for each metre across, and may be set as steep as 1:1.
+const WALK_TAPER_PER_SHIFT = 3;
+const LEAST_WALK_TAPER_PER_SHIFT = 1;
 // A taper never eats the last of its road: at least this much is left beyond
 // it before the road's far end (or the far node's own setback).
 const ROAD_LEFT = 5;
@@ -212,8 +219,9 @@ function curbOf(lanes: EditorLane[]) {
 		}
 		x += lane.width;
 	}
-	if (lo > hi) return { total, lo: -total / 2, hi: total / 2, walks: false };
-	return { total, lo, hi, walks: lo > -total / 2 + 0.05 || hi < total / 2 - 0.05 };
+	if (lo > hi) return { total, lo: -total / 2, hi: total / 2, walks: false, foot: true };
+	const walks = lo > -total / 2 + 0.05 || hi < total / 2 - 0.05;
+	return { total, lo, hi, walks, foot: false };
 }
 
 const laneSig = (lane: EditorLane, flip: boolean) => {
@@ -233,6 +241,11 @@ const mirror = (key: string) =>
 		.reverse()
 		.map((s) => s.replace(/:o$/, ':x').replace(/:i$/, ':o').replace(/:x$/, ':i'))
 		.join(',');
+
+// Whether two roads meeting at a node carry the same lanes on through it (a
+// plain bend or continuation rather than a change of cross-section).
+export const carriesOn = (a: Segment, aEnd: End, b: Segment, bEnd: End) =>
+	mirror(armKey(a, aEnd)) === armKey(b, bEnd);
 
 const dot = (a: Pt, b: Pt) => a.x * b.x + a.y * b.y;
 
@@ -297,7 +310,9 @@ function setbacks(arms: Arm[]) {
 				? CORNER_ROOM
 				: arm.walks && driveway(other)
 					? MOUTH_ROOM
-					: CURB_GAP;
+					: arm.foot && !other.foot
+						? 0
+						: CURB_GAP;
 			const edge = side >= 0 ? span.hi : -span.lo;
 			const clear = Math.max(0, edge + room);
 			const need = cos > 0 ? (clear + arm.half * cos) / sin : clear;
@@ -330,33 +345,41 @@ function linkGroups(arms: Arm[], sides: Record<string, string> | undefined): [Ar
 }
 
 // The taper a node of two roads needs (long enough for the furthest any
-// connection shifts sideways), and the shortest it may be set to.
+// connection shifts sideways), and the shortest it may be set to. Sidewalks
+// follow the roadway's taper; where only walks carry on (a footpath leaving
+// a road) the furthest a walk shifts sets it, at a walker's steeper rate.
 function taperFor(junction: Junction, geos: Map<string, RoadGeo>) {
 	const ends = endsOf(junction, geos);
 	let shift = 0;
+	let walkShift = 0;
+	let roadway = false;
 	for (const c of junction.connections) {
 		const a = laneEndOf(ends, c.from);
 		const b = laneEndOf(ends, c.to);
-		if (!a || !b || a.end === b.end || a.lane.lane.kind === 'walk') continue;
+		if (!a || !b || a.end === b.end) continue;
+		const walk = a.lane.lane.kind === 'walk';
+		roadway ||= !walk;
 		// Lanes of a road attached at an edge are read across the road it
 		// joins (its own frame leans by the angle it joins at), at the point
 		// it joins, so the taper's own trim never changes the shift.
 		const attached = junction.sides?.includes(a.end.key) || junction.sides?.includes(b.end.key);
 		const ref = ends.find((e) => !junction.sides?.includes(e.key)) ?? ends[0];
 		const across = (p: Pt) => p.x * ref.frame.n.x + p.y * ref.frame.n.y;
-		shift = Math.max(
-			shift,
-			attached
-				? Math.abs(
-						across(sidePoint(a.end, a.lane, junction.anchors ?? {})) -
-							across(sidePoint(b.end, b.lane, junction.anchors ?? {}))
-					)
-				: Math.abs(lateral(a.end, a.lane, true) - lateral(b.end, b.lane, false))
-		);
+		const moved = attached
+			? Math.abs(
+					across(sidePoint(a.end, a.lane, junction.anchors ?? {})) -
+						across(sidePoint(b.end, b.lane, junction.anchors ?? {}))
+				)
+			: Math.abs(lateral(a.end, a.lane, true) - lateral(b.end, b.lane, false));
+		if (walk) walkShift = Math.max(walkShift, moved);
+		else shift = Math.max(shift, moved);
 	}
+	const [s, along, least] = roadway
+		? [shift, TAPER_PER_SHIFT, LEAST_TAPER_PER_SHIFT]
+		: [walkShift, WALK_TAPER_PER_SHIFT, LEAST_WALK_TAPER_PER_SHIFT];
 	return {
-		need: shift < NO_SHIFT ? 0 : Math.max(MIN_TAPER, shift * TAPER_PER_SHIFT),
-		least: Math.max(THROUGH_GAP * 2, shift * LEAST_TAPER_PER_SHIFT)
+		need: s < NO_SHIFT ? 0 : Math.max(MIN_TAPER, s * along),
+		least: Math.max(THROUGH_GAP * 2, s * least)
 	};
 }
 
@@ -417,7 +440,15 @@ export class PlaceBuilder {
 	// Per cross-section: its curb and the arm key at each end, read once.
 	private sections = new Map<
 		string,
-		{ total: number; lo: number; hi: number; walks: boolean; start: string; end: string }
+		{
+			total: number;
+			lo: number;
+			hi: number;
+			walks: boolean;
+			foot: boolean;
+			start: string;
+			end: string;
+		}
 	>();
 	// Each segment's curve, and its road's shape (with the path sampled
 	// along it), kept while what they're made from stays the same; junction
@@ -565,6 +596,7 @@ export class PlaceBuilder {
 					roadway: { lo: section.lo + off, hi: section.hi + off },
 					half: section.total / 2 + Math.abs(off),
 					walks: section.walks,
+					foot: section.foot,
 					key: section[end]
 				});
 			}

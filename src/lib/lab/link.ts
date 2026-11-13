@@ -308,7 +308,9 @@ export function buildLink(
 	// between it and the lanes carrying on stays ground), or where roads
 	// attached at an edge part from the others, only where car lanes and
 	// medians run, and sidewalks lie under any road beside them (a slip lane
-	// cuts across the sidewalk it passes).
+	// cuts across the sidewalk it passes). Where nothing but walks carries on
+	// (a footpath leaving a road's sidewalks) there is no paving: the walks
+	// cross on their own and ground lies between them.
 	const parted = sa.length > 1 || sb.length > 1;
 	const travel = new Set(
 		ends.flatMap((e) => e.lanes.filter((l) => isTravel(l.lane)).map((l) => laneKey(l.ref)))
@@ -318,9 +320,11 @@ export function buildLink(
 		...[...cars, ...others].flatMap((c) => [laneKey(c.from.ref), laneKey(c.to.ref)])
 	]);
 	const counts = (l: LaneEnd) => carriedOn.has(laneKey(l.ref));
-	const hull = [sa, sb].every((side) => side.some((e) => e.lanes.some(counts)))
-		? sideCurves(sa, sb, false, counts)
-		: null;
+	const paved = ends.some((e) => e.lanes.some((l) => counts(l) && !isWalk(l.lane)));
+	const hull =
+		paved && [sa, sb].every((side) => side.some((e) => e.lanes.some(counts)))
+			? sideCurves(sa, sb, false, counts)
+			: null;
 	const paving = parted
 		? union([
 				...roadway,

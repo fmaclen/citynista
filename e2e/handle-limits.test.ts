@@ -105,6 +105,35 @@ test.describe('a junction end shifted past its roadway', () => {
 	});
 });
 
+// A footpath has no roadway to hold: its end at a junction slides until its
+// whole width lies within the road it meets, sidewalks included. The scene,
+// footpath-junction: a divided boulevard (27 m: 3 m sidewalks, 1 m verges,
+// two lanes, a 5 m median, two lanes) runs north–south through junction k at
+// the origin, and `path`, a 2 m footpath, runs east from a dead end w
+// (-80, 0) to k. It may slide 13.5 - 1 = 12.5 m either way; it used to stop
+// at its own edges, 1 m.
+test.describe('a footpath end at a junction', () => {
+	for (const by of [20, -20]) {
+		test(`dragged ${by} m slides to the boulevard's edge and stays one clean junction`, async ({
+			page
+		}, testInfo) => {
+			await openGraph(page, readScene('footpath-junction'), VIEW);
+			await expect.poll(async () => (await placeOf(page))?.roads.length).toBe(3);
+			await dragOffset(page, 'path', by);
+
+			await expect
+				.poll(async () => Math.abs(segmentOf(await graphOf(page), 'path').offsetEnd ?? 0))
+				.toBeGreaterThan(1);
+			const after = await graphOf(page);
+			expect(segmentOf(after, 'path').offsetEnd).toBeCloseTo(Math.sign(by) * 12.5, 3);
+			expect(after.segments.map((s) => s.id).sort()).toEqual(['north', 'path', 'south']);
+			expect(after.nodes).toHaveLength(4);
+			expect(check(new Scene((await placeOf(page))!))).toEqual([]);
+			await page.screenshot({ path: testInfo.outputPath(`footpath${by}.png`) });
+		});
+	}
+});
+
 // Junction k of the setbacks scene: kw and ke run west and east, ks leaves
 // south for 50 m to a dead end, drawn 14 m to its west. Its setback arrow
 // grows the junction down ks, but always leaves the road room for the paint
