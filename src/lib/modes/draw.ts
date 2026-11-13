@@ -3,12 +3,12 @@ import type { Editor } from '../editor.svelte';
 import type { Segment } from '../core/segment.svelte';
 import type { Node } from '../core/node.svelte';
 import type { Graph } from '../core/graph.svelte';
-import type { GraphData } from '../core/types';
-import { cloneLanes } from '../core/lane-template';
+import type { GraphData, Lane } from '../core/types';
+import { cloneLanes, reverseLanes } from '../core/lane-template';
 import { splitSegment } from '../core/crossings';
 import { getQuadraticBezierTangent } from '../geometry/bezier';
 import { closestOnRoad, nodePoint, roadAt } from '../core/road-line';
-import { attachShift, roadwayOf } from '../core/attach';
+import { attachShift, roadwayOf, sideToward } from '../core/attach';
 import { attachDots, ghostCursor, roadGhost } from './ghost';
 
 const MIN_PREVIEW_LENGTH = 1;
@@ -33,9 +33,19 @@ interface SegmentSnap {
 // A road's edge picked to attach a new road at (a ramp, a slip lane, one
 // half of a split): where it is, and the road's direction there.
 interface Edge {
-	point: { x: number; y: number };
-	tangent: { x: number; y: number };
+	point: Pt;
+	tangent: Pt;
+	// The way across the road from its middle to this edge.
+	across: Pt;
+	// The way traffic runs in the road's outermost lane on this side; null
+	// unless that lane is one-way.
+	flow: Pt | null;
+	// At a road's end (a node only it reaches), the way into the road.
+	inward: Pt | null;
 }
+
+// Which way a new road's traffic runs at one of its nodes.
+type Way = 'leave' | 'arrive';
 
 // The three places across a road a new road can attach at — one roadway
 // edge, the middle, the other edge — and which one the cursor is over.
@@ -69,6 +79,32 @@ const EDGE_REACH = 0.25;
 // apart: only its middle attaches until you zoom in.
 const EDGE_MIN_PX = 16;
 
+const dot = (a: Pt, b: Pt) => a.x * b.x + a.y * b.y;
+const unit = (from: Pt, to: Pt) => {
+	const l = Math.hypot(to.x - from.x, to.y - from.y);
+	return l > 1e-9 ? { x: (to.x - from.x) / l, y: (to.y - from.y) / l } : null;
+};
+
+// The way a new road's traffic must run at an edge to go with the lane
+// there, `out` being its direction out of the node; null if the lane runs
+// both ways. At a road's end: away from the node if the lane runs out of
+// the road there, toward it if the lane runs in. Along a road (a node it
+// carries on through): leaving the way the lane runs (a diverge), arriving
+// against it (a merge).
+const wayAt = (edge: Edge, out: Pt): Way | null => {
+	if (!edge.flow) return null;
+	const k = edge.inward ? -dot(edge.flow, edge.inward) : dot(edge.flow, out);
+	return k >= 0 ? 'leave' : 'arrive';
+};
+
+// The one way a cross-section's vehicle lanes all run, if they all run one.
+const oneWay = (lanes: Lane[]) => {
+	const vehicles = lanes.filter((lane) => lane.role === 'vehicle');
+	const dir = vehicles[0]?.direction;
+	if (dir === 'bidirectional' || !vehicles.every((lane) => lane.direction === dir)) return null;
+	return dir ?? null;
+};
+
 // Intersection of ray (a + j·u) and ray (b + k·v), j,k > 0; null if parallel,
 // behind a ray, or unreasonably far (a near-straight join curves gently instead).
 const tangentIntersection = (
@@ -100,6 +136,9 @@ export function setupDrawMode(editor: Editor): ModeHandlers {
 	let cutForStart = false;
 	// The edge the pending road starts from, if it attaches at one.
 	let startEdge: Edge | null = null;
+	// Whether the last road laid in this chain runs forward (one-way only):
+	// the next one carries its traffic on.
+	let chainForward: boolean | null = null;
 	let shiftHeld = false;
 	// Cmd (Ctrl elsewhere) held: no node, road or grid snapping.
 	let freeHeld = false;
@@ -316,22 +355,46 @@ export function setupDrawMode(editor: Editor): ModeHandlers {
 	// The attach points across a road at line parameter t, `middle` being
 	// where its middle shows there; the live one is the part the cursor is
 	// over (an edge within the outer quarter of the roadway on that side).
-	const attachAt = (segment: Segment, t: number, middle: Pt, x: number, y: number) => {
+	const attachAt = (
+		segment: Segment,
+		t: number,
+		middle: Pt,
+		x: number,
+		y: number,
+		inward: Pt | null = null
+	) => {
 		const at = roadAt(editor.graph, segment, t);
 		if (!at) return null;
 		const r = roadwayOf(segment.lanes);
 		if (r.hi - r.lo < EDGE_MIN_PX * worldPerPixel()) return null;
-		const edge = (o: number): Edge => ({
+		const vehicles = segment.lanes.filter((lane) => lane.role === 'vehicle');
+		const edge = (o: number, k: 1 | -1, lane: Lane | undefined): Edge => ({
 			point: { x: at.point.x + at.normal.x * o, y: at.point.y + at.normal.y * o },
-			tangent: at.tangent
+			tangent: at.tangent,
+			across: { x: at.normal.x * k, y: at.normal.y * k },
+			flow:
+				lane?.direction === 'forward'
+					? at.tangent
+					: lane?.direction === 'backward'
+						? { x: -at.tangent.x, y: -at.tangent.y }
+						: null,
+			inward
 		});
-		const lo = edge(r.lo);
-		const hi = edge(r.hi);
+		const lo = edge(r.lo, -1, vehicles[0]);
+		const hi = edge(r.hi, 1, vehicles.at(-1));
 		const across = (x - at.point.x) * at.normal.x + (y - at.point.y) * at.normal.y;
 		const reach = (r.hi - r.lo) * EDGE_REACH;
 		const live = across <= r.lo + reach ? 0 : across >= r.hi - reach ? 2 : 1;
 		const result: Attach = { points: [lo.point, middle, hi.point], live, edges: [lo, hi] };
 		return result;
+	};
+
+	// The direction a road's shown line leaves one of its nodes in.
+	const outOfNode = (segment: Segment, nodeId: string) => {
+		const atStart = segment.startNodeId === nodeId;
+		const at = roadAt(editor.graph, segment, atStart ? 0 : 1);
+		if (!at) return null;
+		return atStart ? at.tangent : { x: -at.tangent.x, y: -at.tangent.y };
 	};
 
 	const edgeOf = (attach: Attach | null) =>
@@ -346,7 +409,8 @@ export function setupDrawMode(editor: Editor): ModeHandlers {
 		const segment = editor.graph.segments.get(mains[0]);
 		if (!segment) return null;
 		const t = segment.startNodeId === node.id ? 0 : 1;
-		return attachAt(segment, t, nodePoint(editor.graph, node), x, y);
+		const inward = mains.length === 1 ? (outOfNode(segment, node.id) ?? null) : null;
+		return attachAt(segment, t, nodePoint(editor.graph, node), x, y, inward);
 	};
 
 	// A node snaps inside its ring, the same fixed circle on screen that
@@ -426,43 +490,100 @@ export function setupDrawMode(editor: Editor): ModeHandlers {
 		return node.id;
 	};
 
-	// Records a new road's end as attached at an edge of the road at that
-	// node: on which side of it the road sits, looking out of the node along
-	// the new road (toward its other end).
-	const attach = (
-		graph: Graph,
-		nodeId: string,
-		segmentId: string,
-		edge: Edge | null,
-		otherId: string
-	) => {
+	// Records a new road's end as attached at the edge picked there. The side
+	// is stored against the road's own direction out of the node, curve and
+	// all (core/attach.ts), so it is worked out once that curve is set.
+	const attach = (graph: Graph, nodeId: string, segment: Segment, edge: Edge | null) => {
 		const node = graph.nodes.get(nodeId);
-		const other = graph.nodes.get(otherId);
-		if (!edge || !node || !other) return;
-		const out = { x: other.x - node.x, y: other.y - node.y };
-		const centre = nodePoint(graph, node);
-		const across = (edge.point.x - centre.x) * -out.y + (edge.point.y - centre.y) * out.x;
-		const sides = {
-			...(node.junction?.sides ?? {}),
-			[segmentId]: across > 0 ? 'right' : 'left'
-		} as const;
+		if (!edge || !node) return;
+		const side = sideToward(graph, segment, nodeId, edge.across);
+		if (!side) return;
+		const sides = { ...(node.junction?.sides ?? {}), [segment.id]: side } as const;
 		node.junction = { ...(node.junction ?? { connections: [] }), sides };
+	};
+
+	// Whether a node can take a one-way road's traffic arriving at it (or
+	// feed traffic leaving it): some vehicle lane there runs out of it (into
+	// it), or both ways. A node with no vehicle lanes takes anything.
+	const nodeTakes = (nodeId: string, way: Way) => {
+		const node = editor.graph.nodes.get(nodeId);
+		let any = false;
+		for (const id of node?.connectedSegments ?? []) {
+			const segment = editor.graph.segments.get(id);
+			for (const lane of segment?.lanes ?? []) {
+				if (lane.role !== 'vehicle') continue;
+				any = true;
+				if (lane.direction === 'bidirectional') return true;
+				const out = (segment!.startNodeId === nodeId) === (lane.direction === 'forward');
+				if (out === (way === 'arrive')) return true;
+			}
+		}
+		return !any;
+	};
+
+	// Which way the traffic at a node runs: all of its vehicle lanes into it
+	// ('arrive'), all out of it ('leave'), or null for both ways or none.
+	const nodeFlow = (nodeId: string): Way | null => {
+		let arrive = false;
+		let leave = false;
+		for (const id of editor.graph.nodes.get(nodeId)?.connectedSegments ?? []) {
+			const segment = editor.graph.segments.get(id);
+			for (const lane of segment?.lanes ?? []) {
+				if (lane.role !== 'vehicle') continue;
+				if (lane.direction === 'bidirectional') return null;
+				if ((segment!.startNodeId === nodeId) === (lane.direction === 'forward')) leave = true;
+				else arrive = true;
+			}
+		}
+		return arrive === leave ? null : arrive ? 'arrive' : 'leave';
+	};
+
+	// The pending road's lanes and whether its traffic runs forward (null:
+	// both ways). A one-way preset started at an edge runs with the lane it
+	// starts on, turned round for this road if it must; one carrying a chain
+	// on runs as the road before it; one started at a node whose traffic all
+	// runs one way carries it on (away if it arrives, toward if it leaves);
+	// anywhere else it runs the way it is drawn.
+	// `blocked`: it ends at an edge or node whose traffic would meet it
+	// head-on, and the click lays nothing.
+	const plan = (startNode: Node, target: SnapResult, control: Pt | null) => {
+		const preset = editor.activeBrush?.lanes ?? [];
+		const dir = oneWay(preset);
+		if (!dir) return { lanes: cloneLanes(preset), forward: null, blocked: false };
+		const outStart = unit(startNode, control ?? target);
+		const outEnd = unit(target, control ?? startNode);
+		const start = startEdge && outStart ? wayAt(startEdge, outStart) : null;
+		const flow = start === null && chainForward === null ? nodeFlow(startNode.id) : null;
+		const forward =
+			start !== null
+				? start === 'leave'
+				: (chainForward ?? (flow ? flow === 'arrive' : dir === 'forward'));
+		// At its end node, traffic arrives if it runs forward, else leaves.
+		const way: Way = forward ? 'arrive' : 'leave';
+		const endEdge = target.kind !== 'free' ? target.edge : null;
+		const blocked = endEdge
+			? !!outEnd && (wayAt(endEdge, outEnd) ?? way) !== way
+			: target.kind === 'node' && !nodeTakes(target.nodeId, way);
+		const lanes = forward === (dir === 'forward') ? cloneLanes(preset) : reverseLanes(preset);
+		return { lanes, forward, blocked };
 	};
 
 	// Lays the pending road into `graph` as a click lays it: its end node
 	// (cutting a road under it), the road, the edges its ends attach at, and
 	// its curve. Null for the road where it would start and end on one node.
-	const layRoad = (graph: Graph, startId: string, target: SnapResult, control: Pt | null) => {
+	const layRoad = (
+		graph: Graph,
+		startId: string,
+		target: SnapResult,
+		control: Pt | null,
+		lanes: Lane[]
+	) => {
 		const endId = anchorIn(graph, target);
 		if (startId === endId) return { endId, segment: null };
-		const segment = graph.createSegment(
-			startId,
-			endId,
-			cloneLanes(editor.activeBrush?.lanes ?? [])
-		);
+		const segment = graph.createSegment(startId, endId, lanes);
 		if (control) segment.setControlPoint(control.x, control.y);
-		attach(graph, startId, segment.id, startEdge, endId);
-		attach(graph, endId, segment.id, target.kind !== 'free' ? target.edge : null, startId);
+		attach(graph, startId, segment, startEdge);
+		attach(graph, endId, segment, target.kind !== 'free' ? target.edge : null);
 		// An end moved to the edge it attaches at takes the curve's handle
 		// with it, so the road still leaves that edge along it.
 		if (control) {
@@ -493,6 +614,7 @@ export function setupDrawMode(editor: Editor): ModeHandlers {
 
 	const discardOrphanStart = () => {
 		startEdge = null;
+		chainForward = null;
 		if (startNodeId === null) return;
 		// A road cut to start from, with nothing drawn from it: uncut it.
 		if (cutForStart) {
@@ -550,14 +672,23 @@ export function setupDrawMode(editor: Editor): ModeHandlers {
 		}
 
 		const control = solveControl(startNode, target);
+		const { lanes, forward, blocked } = plan(startNode, target, control);
 		const startId = startNodeId;
+		let arrow: { at: Pt; dir: Pt } | null = null;
 		ghost.show(
 			(graph) => {
-				const { endId, segment } = layRoad(graph, startId, target, control);
+				const { endId, segment } = layRoad(graph, startId, target, control, cloneLanes(lanes));
+				const mid = segment && forward !== null ? roadAt(graph, segment, 0.5) : null;
+				if (mid) {
+					const k = forward ? 1 : -1;
+					arrow = { at: mid.point, dir: { x: mid.tangent.x * k, y: mid.tangent.y * k } };
+				}
 				return { roads: segment ? [segment.id] : [], nodes: [startId, endId] };
 			},
 			touched(startId, target)
 		);
+		ghost.point(arrow);
+		ghost.block(blocked);
 	};
 
 	const onMouseDown = (event: MouseEvent) => {
@@ -573,6 +704,7 @@ export function setupDrawMode(editor: Editor): ModeHandlers {
 		if (startNodeId === null) {
 			startNodeId = anchorIn(editor.graph, target);
 			startEdge = target.kind !== 'free' ? target.edge : null;
+			chainForward = null;
 			cutForStart = target.kind === 'segment';
 			if (cutForStart) {
 				editor.rebuildRoads();
@@ -580,14 +712,24 @@ export function setupDrawMode(editor: Editor): ModeHandlers {
 			}
 		} else {
 			const startNode = editor.graph.nodes.get(startNodeId);
-			const control = startNode ? solveControl(startNode, target) : null;
-			const { endId: endNodeId, segment } = layRoad(editor.graph, startNodeId, target, control);
+			if (!startNode) return;
+			const control = solveControl(startNode, target);
+			const { lanes, forward, blocked } = plan(startNode, target, control);
+			if (blocked) return;
+			const { endId: endNodeId, segment } = layRoad(
+				editor.graph,
+				startNodeId,
+				target,
+				control,
+				lanes
+			);
 			if (segment) editor.resolveSegmentCrossings([segment.id]);
 
 			editor.rebuildRoads();
 			editor.graph.save();
 			startNodeId = endNodeId;
 			startEdge = null;
+			chainForward = forward;
 			cutForStart = false;
 			ghost.clear();
 		}

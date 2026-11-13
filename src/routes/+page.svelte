@@ -49,11 +49,16 @@
 						__graph?: () => unknown;
 						__ghostGraph?: () => unknown;
 						__ghostModel?: () => unknown;
+						__ghostLook?: () => unknown;
 					};
 					w.__roadModel = () => editor.roadRenderer.derived?.place;
 					w.__graph = () => editor.graph.toJSON();
 					w.__ghostGraph = () => editor.ghost?.graph.toJSON();
 					w.__ghostModel = () => editor.ghost?.renderer.derived?.place;
+					w.__ghostLook = () => ({
+						arrow: editor.ghost?.arrow ?? null,
+						blocked: editor.ghost?.blocked ?? false
+					});
 				}
 
 				// ?cam=x,z,zoom is a headless-screenshot override (top-down, no persist).

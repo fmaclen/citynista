@@ -54,6 +54,8 @@ const SURFACES = new Set<Layer>([
 	'island',
 	'refuge'
 ]);
+// How far a tint (a blocked preview) pulls each colour toward it.
+const TINT = 0.7;
 const BASE_Y = 0.05;
 const STEP = 0.02;
 const yOf = (layer: Layer) => BASE_Y + ORDER.indexOf(layer) * STEP;
@@ -136,6 +138,7 @@ export class LabRenderer {
 	private materials = new Map<string, THREE.MeshBasicMaterial>();
 	private lastKeys = new Map<string, string>();
 	private overlayKey = '';
+	private tinted: number | null = null;
 	showConnections = false;
 
 	constructor(
@@ -182,6 +185,18 @@ export class LabRenderer {
 			this.pieces.delete(id);
 		}
 		this.refreshOverlay();
+	}
+
+	// Washes every surface and paint toward one colour (null: their own).
+	tint(colour: number | null) {
+		if (colour === this.tinted) return;
+		this.tinted = colour;
+		for (const [key, m] of this.materials) m.color.copy(this.colourOf(key.split('|')[1]));
+	}
+
+	private colourOf(colour: string) {
+		const own = new THREE.Color(colour);
+		return this.tinted === null ? own : own.lerp(new THREE.Color(this.tinted), TINT);
 	}
 
 	// Holds a node's taper where it is (while its connections are edited);
@@ -240,7 +255,7 @@ export class LabRenderer {
 		if (!m) {
 			const bias = -ORDER.indexOf(layer);
 			m = new THREE.MeshBasicMaterial({
-				color: new THREE.Color(colour),
+				color: this.colourOf(colour),
 				side: THREE.DoubleSide,
 				transparent: this.look.opacity < 1,
 				opacity: this.look.opacity,

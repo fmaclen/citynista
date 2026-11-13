@@ -248,8 +248,14 @@ export class Editor {
 	drawStyle = $state<DrawStyle>('curve');
 	private pendingDrawAnchor: string | null = null;
 	// The roads a drawing mode would lay on the next click and their
-	// drawing, while it shows them (read by ?model scripts).
-	ghost: { graph: Graph; renderer: LabRenderer } | null = null;
+	// drawing, while it shows them (read by ?model scripts): the arrow for the
+	// way a one-way road runs, and whether the click would lay nothing.
+	ghost: {
+		graph: Graph;
+		renderer: LabRenderer;
+		arrow: { at: { x: number; y: number }; dir: { x: number; y: number } } | null;
+		blocked: boolean;
+	} | null = null;
 	fps = $state(0);
 	canUndo = $state(false);
 	canRedo = $state(false);

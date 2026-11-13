@@ -3,9 +3,14 @@ import type { Editor } from '../editor.svelte';
 import { Graph } from '../core/graph.svelte';
 import type { GraphData } from '../core/types';
 import { LabRenderer } from '../rendering/lab-renderer';
-import { HOVER_COLOR, SELECT_COLOR } from '../rendering/editor-palette';
+import { DANGER_COLOR, HOVER_COLOR, SELECT_COLOR } from '../rendering/editor-palette';
 import { nodeRingGeometry } from '../rendering/node-renderer';
-import { disposeHandleObject, dotShape, handleObject } from '../rendering/handle-shapes';
+import {
+	DIRECTION_HANDLE,
+	disposeHandleObject,
+	dotShape,
+	handleObject
+} from '../rendering/handle-shapes';
 import { getTotalWidth } from '../core/lane-template';
 
 // What the drawing modes show before a click: the roads it would lay, drawn
@@ -14,19 +19,50 @@ import { getTotalWidth } from '../core/lane-template';
 const GHOST_OPACITY = 0.45;
 const GHOST_ELEVATION = 0.06;
 const CURSOR_Y = 0.3;
+const ARROW_Y = 0.32;
+const ARROW_ORDER = 8;
+
+interface Pt {
+	x: number;
+	y: number;
+}
 
 // The pending roads: `show` lays them into a scratch graph and draws it. Given
 // a copy of the roads they touch (`around`), it lays them in among those and
 // draws only what `lay` names: the pending roads and the joints at the nodes
 // they touch, built as the click will build them. The copied roads are already
-// on the map and aren't drawn again.
+// on the map and aren't drawn again. `point` shows an arrow for the way a
+// one-way road runs; `block` turns the roads red where the click would lay
+// nothing.
 export function roadGhost(editor: Editor) {
 	const renderer = new LabRenderer(editor.sceneManager.scene, {
 		opacity: GHOST_OPACITY,
 		lift: GHOST_ELEVATION
 	});
 	const graph = new Graph();
-	editor.ghost = { graph, renderer };
+	const state: NonNullable<Editor['ghost']> = { graph, renderer, arrow: null, blocked: false };
+	editor.ghost = state;
+	let arrow: THREE.Object3D | null = null;
+
+	const point = (to: { at: Pt; dir: Pt } | null) => {
+		if (arrow) {
+			editor.sceneManager.screenSized.delete(arrow);
+			editor.sceneManager.scene.remove(arrow);
+			disposeHandleObject(arrow);
+			arrow = null;
+		}
+		state.arrow = to;
+		if (!to) return;
+		arrow = handleObject(DIRECTION_HANDLE, to.at, to.dir, ARROW_Y, ARROW_ORDER);
+		editor.sceneManager.screenSized.set(arrow, Infinity);
+		editor.sceneManager.scene.add(arrow);
+	};
+
+	const block = (on: boolean) => {
+		state.blocked = on;
+		renderer.tint(on ? DANGER_COLOR : null);
+	};
+
 	return {
 		show(lay: (graph: Graph) => Shown | void, around?: GraphData) {
 			graph.clear();
@@ -37,13 +73,18 @@ export function roadGhost(editor: Editor) {
 				shown ? { roads: new Set(shown.roads), nodes: new Set(shown.nodes) } : undefined
 			);
 		},
+		point,
+		block,
 		clear() {
 			graph.clear();
 			renderer.clear();
+			point(null);
+			block(false);
 		},
 		destroy() {
+			point(null);
 			renderer.destroy();
-			if (editor.ghost?.graph === graph) editor.ghost = null;
+			if (editor.ghost === state) editor.ghost = null;
 		}
 	};
 }
