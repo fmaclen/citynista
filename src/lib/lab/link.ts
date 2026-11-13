@@ -23,7 +23,7 @@ import {
 	type JunctionDraw,
 	type LaneEnd
 } from './junction';
-import { laneKey, type Junction, type Pt } from './model';
+import { laneKey, type Junction, type Pt, type Surface } from './model';
 import {
 	INSET,
 	LINE,
@@ -34,7 +34,6 @@ import {
 	type Mark,
 	type RowMark
 } from './road';
-import { lateral } from './connect';
 
 const neg = (a: Pt) => ({ x: -a.x, y: -a.y });
 
@@ -51,7 +50,7 @@ const SHARED = 0.4;
 
 // A band along a curve, as wide as the curve's widths, between two fractions
 // of its length.
-function band(curve: Curve, from = 0, to = 1) {
+export function band(curve: Curve, from = 0, to = 1) {
 	const pts = curve.points;
 	const last = pts.length - 1;
 	const left: Pt[] = [];
@@ -86,6 +85,34 @@ function at(curve: Curve, u: number) {
 	};
 }
 
+// A curve's direction at each of its points: square to the road end it
+// meets at either end, and between them along its neighbours.
+function headings(curve: Curve, from: EndInfo, to: EndInfo) {
+	const pts = curve.points;
+	const last = pts.length - 1;
+	return pts.map((_, i) => {
+		if (i === 0) return neg(from.frame.out);
+		if (i === last) return to.frame.out;
+		const a = pts[i - 1];
+		const b = pts[i + 1];
+		const l = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+		return { x: (b.x - a.x) / l, y: (b.y - a.y) / l };
+	});
+}
+
+// A direction a fraction of the way along a curve's headings.
+function headingAt(dirs: Pt[], u: number) {
+	const x = Math.max(0, Math.min(dirs.length - 1, u * (dirs.length - 1)));
+	const i = Math.min(dirs.length - 2, Math.floor(x));
+	const f = x - i;
+	const t = {
+		x: dirs[i].x + (dirs[i + 1].x - dirs[i].x) * f,
+		y: dirs[i].y + (dirs[i + 1].y - dirs[i].y) * f
+	};
+	const l = Math.hypot(t.x, t.y) || 1;
+	return { x: t.x / l, y: t.y / l };
+}
+
 // A solid line from a to b, as one quad.
 function bar(a: Pt, b: Pt): Pt[] {
 	const l = Math.hypot(b.x - a.x, b.y - a.y) || 1;
@@ -105,26 +132,6 @@ function along(pts: Pt[], u: number) {
 		x: pts[i].x + (pts[i + 1].x - pts[i].x) * f,
 		y: pts[i].y + (pts[i + 1].y - pts[i].y) * f
 	};
-}
-
-// Whether a sidewalk connection runs from one side of the carriageway to the
-// other (an old way of storing a crossing; see place.ts).
-export function crossesRoadway(a: EndInfo, la: LaneEnd, b: EndInfo, lb: LaneEnd) {
-	const span = (e: EndInfo, into: boolean) => {
-		const lats = e.lanes
-			.filter((l) => isTravel(l.lane))
-			.flatMap((l) => [
-				lateral(e, { ...l, left: l.left, right: l.left }, into),
-				lateral(e, { ...l, left: l.right, right: l.right }, into)
-			]);
-		return lats.length ? { lo: Math.min(...lats), hi: Math.max(...lats) } : null;
-	};
-	const sa = span(a, true);
-	const sb = span(b, false);
-	if (!sa || !sb) return false;
-	const pa = lateral(a, la, true);
-	const pb = lateral(b, lb, false);
-	return (pa < sa.lo && pb > sb.hi) || (pa > sa.hi && pb < sb.lo);
 }
 
 // A node's two sides, when its lanes find their way across it from one to
@@ -151,8 +158,15 @@ export function linkSides(junction: Junction, ends: EndInfo[]): [EndInfo[], EndI
 
 // The outer edges of the paving between two sides (looking from a to b),
 // each the outermost lane edge of any of a side's roads, across its leading
-// road.
-function sideCurves(sa: EndInfo[], sb: EndInfo[]) {
+// road, of the lanes `counts` keeps. With `onLead`, each edge starts level
+// with the leading road's end, however far along the road the road reaching
+// furthest out ends.
+function sideCurves(
+	sa: EndInfo[],
+	sb: EndInfo[],
+	onLead = false,
+	counts: (lane: LaneEnd) => boolean = () => true
+) {
 	const [a, b] = [sa[0], sb[0]];
 	const edge = (side: EndInfo[], right: boolean, into: boolean) => {
 		const ref = side[0];
@@ -160,7 +174,7 @@ function sideCurves(sa: EndInfo[], sb: EndInfo[]) {
 		let best = ref.frame.p;
 		let reach = -Infinity;
 		for (const e of side)
-			for (const l of e.lanes)
+			for (const l of e.lanes.filter(counts))
 				for (const o of [l.left, l.right]) {
 					const p = offsetPoint(e.frame.p, e.frame.n, o);
 					const s =
@@ -170,7 +184,7 @@ function sideCurves(sa: EndInfo[], sb: EndInfo[]) {
 						best = p;
 					}
 				}
-		return best;
+		return onLead ? offsetPoint(ref.frame.p, ref.frame.n, sign * reach) : best;
 	};
 	const side = (right: boolean) =>
 		curveBetween(edge(sa, right, true), neg(a.frame.out), edge(sb, right, false), b.frame.out, 16);
@@ -181,7 +195,7 @@ function sideCurves(sa: EndInfo[], sb: EndInfo[]) {
 // junction from one road end to another and back: a road carrying on
 // through it keeps its lane lines.
 export function throughDashes(junction: Junction, ends: EndInfo[], a: EndInfo, b: EndInfo) {
-	const cars: { fromEnd: EndInfo; curve: Curve }[] = [];
+	const cars: { fromEnd: EndInfo; toEnd: EndInfo; curve: Curve }[] = [];
 	for (const c of junction.connections) {
 		const from = laneEndOf(ends, c.from);
 		const to = laneEndOf(ends, c.to);
@@ -190,6 +204,7 @@ export function throughDashes(junction: Junction, ends: EndInfo[], a: EndInfo, b
 		if (across)
 			cars.push({
 				fromEnd: from.end,
+				toEnd: to.end,
 				curve: connectionCurve(from.lane, from.end, to.lane, to.end)
 			});
 	}
@@ -202,14 +217,18 @@ export function buildLink(
 	junction: Junction,
 	ends: EndInfo[],
 	// Lanes (by lane key) that carry on into roads drawn apart from this one.
-	elsewhere: Set<string> = new Set()
+	elsewhere: Set<string> = new Set(),
+	// False when the caller paints the lines between the car paths itself.
+	lines = true
 ): JunctionDraw {
 	const [sa, sb] = linkSides(junction, ends) ?? [[ends[0]], ends.slice(1)];
 	const [a, b] = [sa[0], sb[0]];
 	const attached = new Set(junction.sides ?? []);
 	// A road carrying on through with roads attached beside it: the road is
 	// drawn as any two road ends are, and each attached road's lanes join it
-	// as bands of their own, edge lines and all.
+	// as bands of their own. The lines are painted once over every car path
+	// across the node, the road's and the attached roads' together, so lines
+	// from one never run across the lanes of another.
 	if ((sa.length > 1 || sb.length > 1) && !attached.has(a.key) && !attached.has(b.key)) {
 		const pair = (r: { road: string; end: string }) =>
 			[a, b].some((e) => e.ref.road === r.road && e.ref.end === r.end);
@@ -224,31 +243,38 @@ export function buildLink(
 				junction.connections
 					.filter((c) => !(pair(c.from) && pair(c.to)))
 					.flatMap((c) => [laneKey(c.from), laneKey(c.to)])
-			)
+			),
+			false
 		);
-		const side: { fromEnd: EndInfo; curve: Curve }[] = [];
+		const all: { fromEnd: EndInfo; toEnd: EndInfo; curve: Curve; side: boolean }[] = [];
 		for (const c of junction.connections) {
-			if (pair(c.from) && pair(c.to)) continue;
 			const from = laneEndOf(ends, c.from);
 			const to = laneEndOf(ends, c.to);
 			if (!from || !to || from.end === to.end || !isTravel(from.lane.lane)) continue;
-			side.push({
+			all.push({
 				fromEnd: from.end,
-				curve: connectionCurve(from.lane, from.end, to.lane, to.end)
+				toEnd: to.end,
+				curve: connectionCurve(from.lane, from.end, to.lane, to.end),
+				side: !(pair(c.from) && pair(c.to))
 			});
 		}
-		if (!side.length) return main;
-		const { left, right } = sideCurves(sa, sb);
-		// Its lines are white: where it parts from the road it parts from
-		// traffic going its way.
-		const paths = paint(side, (e) => sa.includes(e), false, a, b, left, right);
-		paths.white.push(...paths.yellow);
-		paths.yellow = [];
-		for (const m of paths.lines) m.colour = 'white';
+		const side = all.filter((c) => c.side);
+		// The paths are read across the node between the roads with car lanes
+		// on either side, each side led as before where its leading road has
+		// any (a footpath leaving one side has no paths to read across). The
+		// frame spans every such road but starts and ends level with the two
+		// leading roads' ends, so their lines meet the roads' own at the seam.
+		const cars = (s: EndInfo[]) => {
+			const withCars = s.filter((e) => e.lanes.some((l) => isTravel(l.lane)));
+			return withCars.length ? withCars : s;
+		};
+		const [ca, cb] = [cars(sa), cars(sb)];
+		const { left, right } = sideCurves(ca, cb, true);
+		const paths = paint(all, (e) => sa.includes(e), false, ca[0], cb[0], left, right);
 		const keys = ends.map((e) => e.key);
 		return {
 			...main,
-			asphalt: union([...main.asphalt, ...side.map((c) => band(c.curve).path)]),
+			asphalt: union([...main.asphalt, ...side.map((c) => band(c.curve).path), ...paths.seams]),
 			white: [...main.white, ...paths.white],
 			yellow: [...main.yellow, ...paths.yellow],
 			marks: [...main.marks, ...paths.lines],
@@ -275,47 +301,71 @@ export function buildLink(
 		else others.push({ from: from.lane, to: to.lane, curve });
 	}
 
-	const carBands = cars.map((c) => band(c.curve));
-	const roadway = union(carBands.map((x) => x.path));
-	// The paving: the full width from one side to the other, or where roads
-	// attached at an edge part from the others, wherever a lane runs.
-	// Where roads attached at an edge part from the others, the paving is
-	// only where car lanes and medians run, and sidewalks lie under any road
-	// beside them (a slip lane cuts across the sidewalk it passes).
+	const roadway = union(cars.map((c) => band(c.curve).path));
+	// The paving: from one side to the other across the lanes that carry on
+	// (a lane ending here leaves ground beyond it; a car lane leaving into a
+	// road attached beside this one is paved by its own band, so the ground
+	// between it and the lanes carrying on stays ground), or where roads
+	// attached at an edge part from the others, only where car lanes and
+	// medians run, and sidewalks lie under any road beside them (a slip lane
+	// cuts across the sidewalk it passes). Where nothing but walks carries on
+	// (a footpath leaving a road's sidewalks) there is no paving: the walks
+	// cross on their own and ground lies between them.
 	const parted = sa.length > 1 || sb.length > 1;
+	const travel = new Set(
+		ends.flatMap((e) => e.lanes.filter((l) => isTravel(l.lane)).map((l) => laneKey(l.ref)))
+	);
+	const carriedOn = new Set([
+		...[...elsewhere].filter((k) => !travel.has(k)),
+		...[...cars, ...others].flatMap((c) => [laneKey(c.from.ref), laneKey(c.to.ref)])
+	]);
+	const counts = (l: LaneEnd) => carriedOn.has(laneKey(l.ref));
+	const paved = ends.some((e) => e.lanes.some((l) => counts(l) && !isWalk(l.lane)));
+	const hull =
+		paved && [sa, sb].every((side) => side.some((e) => e.lanes.some(counts)))
+			? sideCurves(sa, sb, false, counts)
+			: null;
 	const paving = parted
 		? union([
 				...roadway,
 				...others.filter((o) => !isWalk(o.from.lane)).map((o) => band(o.curve).path)
 			])
-		: union([toPath([...right, ...[...left].reverse()])]);
+		: hull
+			? union([toPath([...hull.right, ...[...hull.left].reverse()])])
+			: [];
 
 	// A band takes its lane's surface on the way out of one road and the other
-	// lane's on the way into the next (a median running into hatching).
-	const surfaces = new Map<string, Paths>();
+	// lane's on the way into the next (a median running into hatching, an
+	// asphalt car lane into a concrete one). Car lanes lie over the rest.
 	const surfaceOf = (lane: LaneEnd['lane']) =>
 		lane.kind === 'walk' ? 'pavement' : lane.kind === 'trail' ? 'trail' : lane.surface;
-	for (const o of others) {
-		for (const [lane, f0, f1] of [
-			[o.from.lane, 0, 0.5],
-			[o.to.lane, 0.5, 1]
-		] as const) {
-			const surface = surfaceOf(lane);
-			const paths = subtract([band(o.curve, f0, f1).path], roadway);
-			surfaces.set(surface, [...(surfaces.get(surface) ?? []), ...paths]);
-		}
-	}
+	const bySurface = (list: { from: LaneEnd; to: LaneEnd; curve: Curve }[], under: Paths) => {
+		const surfaces = new Map<string, Paths>();
+		for (const o of list)
+			for (const [lane, f0, f1] of [
+				[o.from.lane, 0, 0.5],
+				[o.to.lane, 0.5, 1]
+			] as const) {
+				const surface = surfaceOf(lane);
+				const paths = subtract([band(o.curve, f0, f1).path], under);
+				surfaces.set(surface, [...(surfaces.get(surface) ?? []), ...paths]);
+			}
+		return surfaces;
+	};
+	const surfaces = bySurface(others, roadway);
 	const fill = (surface: string) => union(surfaces.get(surface) ?? []);
+	const carLanes = [...bySurface(cars, []).entries()].map(([surface, paths]) => ({
+		surface: surface as Surface,
+		paths: union(paths)
+	}));
 
-	const { white, yellow, lines } = paint(
-		cars,
-		(e) => sa.includes(e),
-		sa.length === 1 && sb.length === 1,
-		a,
-		b,
-		left,
-		right
-	);
+	const {
+		white,
+		yellow,
+		lines: marks
+	} = lines
+		? paint(cars, (e) => sa.includes(e), sa.length === 1 && sb.length === 1, a, b, left, right)
+		: { white: [] as Pt[][], yellow: [] as Pt[][], lines: [] as Mark[] };
 
 	// A car lane whose traffic goes nowhere across the node ends there: a
 	// line across its end says so.
@@ -330,7 +380,8 @@ export function buildLink(
 	const keys = ends.map((e) => e.key);
 	return {
 		outline: [],
-		asphalt: paving,
+		asphalt: subtract(paving, roadway),
+		lanes: carLanes,
 		islands: parted
 			? []
 			: [
@@ -347,7 +398,7 @@ export function buildLink(
 		crossings: [],
 		white,
 		yellow,
-		marks: lines,
+		marks,
 		curves: cars.map((c) => c.curve),
 		badges: [],
 		laneDots: ends.flatMap((e) =>
@@ -361,7 +412,7 @@ export function buildLink(
 
 // The paint between neighbouring car paths (see the top of this file).
 function paint(
-	cars: { fromEnd: EndInfo; curve: Curve }[],
+	cars: { fromEnd: EndInfo; toEnd: EndInfo; curve: Curve }[],
 	onA: (e: EndInfo) => boolean,
 	smooth: boolean,
 	a: EndInfo,
@@ -372,6 +423,11 @@ function paint(
 	const white: Pt[][] = [];
 	const yellow: Pt[][] = [];
 	const lines: Mark[] = [];
+	// The road between two paths side by side (each pair's edges facing
+	// each other at the last station), so where two paths part, the ground
+	// between them starts only once something lies between them.
+	const seams: Paths = [];
+	let facing = new Map<string, [Pt, Pt]>();
 	// Every path read from end a to end b, with which way its traffic runs.
 	const paths = cars.map((c, id) => {
 		const forward = onA(c.fromEnd);
@@ -384,7 +440,14 @@ function paint(
 			const l = Math.hypot(hi.x - lo.x, hi.y - lo.y) || 1;
 			return ((p.x - lo.x) * (hi.x - lo.x) + (p.y - lo.y) * (hi.y - lo.y)) / l;
 		};
-		return { id, curve: c.curve, forward, start: across(0), part: across(1) };
+		return {
+			id,
+			curve: c.curve,
+			dirs: headings(c.curve, c.fromEnd, c.toEnd),
+			forward,
+			start: across(0),
+			part: across(1)
+		};
 	});
 	// Two paths that change places across the node cross each other.
 	const swap = (p: (typeof paths)[number], q: (typeof paths)[number]) =>
@@ -398,9 +461,17 @@ function paint(
 		const across = { x: (hi.x - lo.x) / span, y: (hi.y - lo.y) / span };
 		const project = (p: Pt) => (p.x - lo.x) * across.x + (p.y - lo.y) * across.y;
 		const here = paths.map((path) => {
-			const { p, w } = at(path.curve, path.forward ? u : 1 - u);
+			const f = path.forward ? u : 1 - u;
+			const { p, w } = at(path.curve, f);
 			const c = project(p);
-			return { path, lo: c - w / 2, hi: c + w / 2 };
+			// A path leaving the node at an angle (a ramp curving away) is
+			// read across the frame, but its lines go across the path itself:
+			// each at its offset from the path's middle, square to the path.
+			const t = headingAt(path.dirs, f);
+			const k = t.x * across.y - t.y * across.x >= 0 ? 1 : -1;
+			const n = { x: -t.y * k, y: t.x * k };
+			const on = (o: number) => offsetPoint(p, n, o - c);
+			return { path, lo: c - w / 2, hi: c + w / 2, on };
 		});
 		return { lo, across, project, here };
 	};
@@ -427,6 +498,7 @@ function paint(
 		// Paths on top of each other go in the order they part.
 		const here = unsorted.sort((x, y) => x.lo + x.hi - (y.lo + y.hi) || x.path.part - y.path.part);
 		const marks: RowMark[] = [];
+		const now = new Map<string, [Pt, Pt]>();
 		// Where paths that cross each other overlap, nothing is painted
 		// between any of the paths overlapping there.
 		const crossing = new Set<number>();
@@ -449,7 +521,13 @@ function paint(
 				driverRight || (beyond && beyond.path.forward === q.path.forward) ? 'white' : 'yellow';
 			const outer = !beyond && kerbs ? project(along(side === 1 ? kerbs.hi : kerbs.lo, u)) : null;
 			const o = side === 1 ? (outer ?? q.hi) - INSET : (outer ?? q.lo) + INSET;
-			marks.push({ o, colour, dashed: false });
+			marks.push({
+				o,
+				colour,
+				dashed: false,
+				p: outer === null ? q.on(o) : undefined,
+				key: outer === null ? `${q.path.id}:${side}` : undefined
+			});
 		};
 		here.forEach((q, i) => {
 			const next = here[i + 1];
@@ -459,6 +537,14 @@ function paint(
 				return;
 			}
 			const gap = next.lo - q.hi;
+			const key = `${q.path.id}:${next.path.id}`;
+			if (gap <= BESIDE) {
+				const m = (q.hi + next.lo) / 2;
+				const pair: [Pt, Pt] = gap > 0 ? [q.on(q.hi), next.on(next.lo)] : [q.on(m), next.on(m)];
+				const before = facing.get(key);
+				if (before) seams.push(toPath([before[0], pair[0], pair[1], before[1]]));
+				now.set(key, pair);
+			}
 			if (gap < -SHARED) return;
 			if (gap > BESIDE) {
 				edge(i, 1);
@@ -467,24 +553,41 @@ function paint(
 			}
 			if (crossing.has(q.path.id) || crossing.has(next.path.id)) return;
 			const mid = (q.hi + next.lo) / 2;
-			if (q.path.forward === next.path.forward)
-				marks.push({ o: mid, colour: 'white', dashed: true });
-			else {
+			if (q.path.forward === next.path.forward) {
+				const [p, r] = [q.on(mid), next.on(mid)];
+				marks.push({
+					o: mid,
+					colour: 'white',
+					dashed: true,
+					p: { x: (p.x + r.x) / 2, y: (p.y + r.y) / 2 },
+					key
+				});
+			} else {
 				// The double yellow, each line at its own path's edge while the
 				// two are apart, so it runs on unbroken as they come together.
 				const a = gap > 0 ? q.hi : mid;
 				const b = gap > 0 ? next.lo : mid;
-				marks.push({ o: a - INSET, colour: 'yellow', dashed: false });
-				marks.push({ o: b + INSET, colour: 'yellow', dashed: false });
+				for (const [o, at, side] of [
+					[a - INSET, q, 1],
+					[b + INSET, next, -1]
+				] as const)
+					marks.push({
+						o,
+						colour: 'yellow',
+						dashed: false,
+						p: at.on(o),
+						key: `${at.path.id}:${side}`
+					});
 			}
 		});
 		stations.push({ d: k * step, marks, lo, across });
+		facing = now;
 	}
 	// However short the node, its lines join the roads' either side.
 	for (const line of chainLines(stations, Math.min(1, step * STATIONS * 0.5))) {
 		const pts = line.d.map((d, i) => {
 			const s = stations[Math.round(d / step)];
-			return offsetPoint(s.lo, s.across, line.o[i]);
+			return line.marks[i].p ?? offsetPoint(s.lo, s.across, line.o[i]);
 		});
 		const along = [0];
 		for (let i = 1; i < pts.length; i++)
@@ -493,5 +596,5 @@ function paint(
 		paintLine(pts, along, dashed, colour === 'white' ? white : yellow);
 		lines.push({ colour, dashed, pts });
 	}
-	return { white, yellow, lines };
+	return { white, yellow, lines, seams: union(seams) };
 }

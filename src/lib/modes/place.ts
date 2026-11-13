@@ -7,14 +7,12 @@ import { Graph } from '../core/graph.svelte';
 import { findCrossingsBetweenSegments } from '../core/crossings';
 import { LabRenderer } from '../rendering/lab-renderer';
 import { mapJunction } from '../core/junction-data';
-import { NODE_Y_OFFSET } from '../rendering/node-renderer';
-import { SELECT_COLOR, RING_THICKNESS } from '../rendering/editor-palette';
+import { NODE_Y_OFFSET, nodeRingGeometry } from '../rendering/node-renderer';
+import { SELECT_COLOR } from '../rendering/editor-palette';
 
 const GHOST_OPACITY = 0.45;
 const GHOST_ELEVATION = 0.06;
-const NODE_SNAP_PX = 20;
 const MARKER_COLOR = SELECT_COLOR;
-const MARKER_THICKNESS = RING_THICKNESS;
 const MARKER_Y = NODE_Y_OFFSET;
 
 interface Translation {
@@ -47,10 +45,10 @@ export function setupPlaceMode(editor: Editor) {
 		transparent: true,
 		opacity: 0.9
 	});
+	// Crossing markers preview the nodes a paste makes: node rings, one shape.
+	const markerGeometry = nodeRingGeometry();
 	const crossingMarkers: THREE.Mesh[] = [];
 	let lastPlacement: Placement | null = null;
-
-	const worldPerPixel = () => editor.sceneManager.worldPerPixel();
 
 	const translatedNode = (node: ClipboardNodeSnapshot, translation: Translation) => ({
 		x: node.x + translation.dx,
@@ -58,13 +56,13 @@ export function setupPlaceMode(editor: Editor) {
 	});
 
 	const findNodeSnap = (translation: Translation) => {
-		const floor = NODE_SNAP_PX * worldPerPixel();
+		// A pasted node snaps inside an existing node's ring.
+		const radius = editor.nodeRingRadius();
 		let best: (PlacementSnap & { distance: number; correction: Translation }) | null = null;
 
 		for (const clipboardNode of clipboard.nodes) {
 			const translated = translatedNode(clipboardNode, translation);
 			for (const existingNode of editor.graph.nodes.values()) {
-				const radius = Math.max(editor.nodeRingRadius(existingNode), floor);
 				const distance = Math.hypot(existingNode.x - translated.x, existingNode.y - translated.y);
 				if (distance >= radius) continue;
 				if (best && distance >= best.distance) continue;
@@ -104,7 +102,7 @@ export function setupPlaceMode(editor: Editor) {
 	const clearCrossingMarkers = () => {
 		for (const marker of crossingMarkers) {
 			editor.sceneManager.scene.remove(marker);
-			marker.geometry.dispose();
+			editor.sceneManager.screenSized.delete(marker);
 		}
 		crossingMarkers.length = 0;
 	};
@@ -119,17 +117,11 @@ export function setupPlaceMode(editor: Editor) {
 		);
 
 		for (const crossing of crossings) {
-			const radius = Math.max(
-				4,
-				editor.nodeRingRadius({ connectedSegments: [crossing.segmentB.id] })
-			);
-			const marker = new THREE.Mesh(
-				new THREE.RingGeometry(radius - MARKER_THICKNESS, radius, 48),
-				markerMaterial
-			);
+			const marker = new THREE.Mesh(markerGeometry, markerMaterial);
 			marker.rotation.x = -Math.PI / 2;
 			marker.position.set(crossing.x, MARKER_Y, crossing.y);
 			editor.sceneManager.scene.add(marker);
+			editor.sceneManager.screenSized.set(marker, Infinity);
 			crossingMarkers.push(marker);
 		}
 	};
@@ -154,7 +146,8 @@ export function setupPlaceMode(editor: Editor) {
 				endNodeId,
 				cloneLanes(snapshot.lanes)
 			);
-			segment.offset = snapshot.offset;
+			segment.offsetStart = snapshot.offsetStart;
+			segment.offsetEnd = snapshot.offsetEnd;
 			if (snapshot.controlX !== undefined && snapshot.controlY !== undefined) {
 				segment.setControlPoint(
 					snapshot.controlX + placement.translation.dx,
@@ -203,7 +196,8 @@ export function setupPlaceMode(editor: Editor) {
 				cloneLanes(snapshot.lanes)
 			);
 			segmentIds.set(snapshot.id, segment.id);
-			segment.offset = snapshot.offset;
+			segment.offsetStart = snapshot.offsetStart;
+			segment.offsetEnd = snapshot.offsetEnd;
 			if (snapshot.controlX !== undefined && snapshot.controlY !== undefined) {
 				segment.setControlPoint(
 					snapshot.controlX + placement.translation.dx,
@@ -224,7 +218,7 @@ export function setupPlaceMode(editor: Editor) {
 			});
 		}
 
-		editor.resolveSegmentCrossings();
+		editor.resolveSegmentCrossings(segmentIds.values());
 		editor.rebuildRoads();
 		editor.graph.save();
 		editor.pendingPlacement = null;
@@ -260,6 +254,7 @@ export function setupPlaceMode(editor: Editor) {
 		editor.setHoveredNode(null);
 		ghostRenderer.destroy();
 		clearCrossingMarkers();
+		markerGeometry.dispose();
 		markerMaterial.dispose();
 	};
 

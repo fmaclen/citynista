@@ -1,13 +1,13 @@
 import type { ModeHandlers } from './types';
-import type { Editor, TaperHandleInfo } from '../editor.svelte';
-import { offsetFromPointer, type OffsetHandle } from './offset';
+import type { Editor, HandleRef, TaperHandleInfo } from '../editor.svelte';
+import { beginOffsetDrag, dragOffset, type OffsetDrag } from './offset';
 import { segmentEnds } from '../core/attach';
 import { controlHandle } from '../rendering/selection-renderer';
 import type { Segment } from '../core/segment.svelte';
 import type { Node } from '../core/node.svelte';
 import { getQuadraticBezierTangent } from '../geometry/bezier';
-import { CURVE_HANDLE, HOVER_COLOR, RING_THICKNESS } from '../rendering/editor-palette';
-import { hitsHandle } from '../rendering/handle-shapes';
+import { HOVER_COLOR } from '../rendering/editor-palette';
+import { CURVE_HANDLE, hitsHandle } from '../rendering/handle-shapes';
 import { nodeHitAt, segmentHitAt } from './picking';
 import { createMarquee } from './marquee';
 
@@ -30,13 +30,15 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 	// Shift+click on a selected node means "deselect" only if no drag
 	// follows — a shift+drag instead smooths the node's tangent live.
 	let pendingShiftToggle: string | null = null;
-	// Dragging a taper handle of the selected node sets its taper.
+	// Dragging a setback handle of the selected node sets that road's setback.
 	let taperDrag: TaperHandleInfo | null = null;
-	// Dragging the selected road's lateral offset handle.
-	let offsetDrag: OffsetHandle | null = null;
+	// Dragging the selected road's lateral offset handle, and the nodes it
+	// has moved.
+	let offsetDrag: OffsetDrag | null = null;
+	let offsetMoved: string[] = [];
 	let dragDistance = 0;
 
-	const marquee = createMarquee(editor, MARQUEE_COLOR, 0.4, RING_THICKNESS);
+	const marquee = createMarquee(editor, MARQUEE_COLOR, 0.4);
 	// Control points expressed in their segment's local frame at drag start,
 	// so curves scale and rotate proportionally with their moving endpoints.
 	const controlFrames = new Map<string, { u: number; v: number }>();
@@ -121,6 +123,15 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 			}
 		}
 		return null;
+	};
+
+	// The handle a press here would grab, in the order onMouseDown tries them.
+	const handleAt = (worldX: number, worldZ: number): HandleRef | null => {
+		const taper = editor.selectedNodes.size === 1 && editor.taperHandleAt(worldX, worldZ);
+		if (taper) return { kind: 'taper', index: taper.index };
+		if (editor.offsetHandleAt(worldX, worldZ)) return { kind: 'offset', index: 0 };
+		const curve = findControlPointAt(worldX, worldZ);
+		return curve ? { kind: 'curve', segmentId: curve.id } : null;
 	};
 
 	const moveControlPoint = (segmentId: string, dx: number, dz: number, factor: number) => {
@@ -418,11 +429,13 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 		dragStartZ = worldPos.z;
 
 		// The hover highlight would go stale while dragging; selection visuals
-		// take over from here.
+		// take over from here. A handle pressed is in hand.
 		editor.setHoveredSegment(null);
+		editor.lightHandle(handleAt(worldPos.x, worldPos.z), 'active');
 
-		// Dragging a taper handle of the selected node. The handles sit out
-		// where the taper ends, so node dragging still works at the centre.
+		// Dragging a setback handle of the selected node (Shift moves every
+		// road's together). The handles sit out where each road stops short,
+		// so node dragging still works at the centre.
 		if (editor.selectedNodes.size === 1) {
 			const handle = editor.taperHandleAt(worldPos.x, worldPos.z);
 			if (handle) {
@@ -433,7 +446,8 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 
 		const offset = editor.offsetHandleAt(worldPos.x, worldPos.z);
 		if (offset) {
-			offsetDrag = offset;
+			offsetDrag = beginOffsetDrag(editor, offset, worldPos.x, worldPos.z);
+			offsetMoved = [];
 			return;
 		}
 
@@ -492,22 +506,17 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 		const worldPos = editor.sceneManager.screenToWorld(event.clientX, event.clientY);
 
 		if (taperDrag) {
-			editor.setTaperFromDrag(taperDrag, worldPos.x, worldPos.z);
+			editor.setTaperFromDrag(taperDrag, worldPos.x, worldPos.z, event.shiftKey);
 			return;
 		}
 
 		if (offsetDrag) {
-			const segment = editor.graph.segments.get(offsetDrag.segmentId);
-			if (segment) {
-				segment.offset = offsetFromPointer(
-					editor,
-					offsetDrag,
-					worldPos.x,
-					worldPos.z,
-					event.shiftKey
-				);
-				scheduleApply();
+			offsetMoved = dragOffset(editor, offsetDrag, worldPos.x, worldPos.z, event.shiftKey);
+			for (const id of offsetMoved) {
+				const node = editor.graph.nodes.get(id);
+				if (node) editor.nodeRenderer.updateNode(node);
 			}
+			scheduleApply();
 			return;
 		}
 
@@ -517,6 +526,7 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 		}
 
 		if (!isDragging || !dragTarget) {
+			editor.lightHandle(handleAt(worldPos.x, worldPos.z));
 			const { node, segment } = pickAt(worldPos.x, worldPos.z);
 			editor.setHoveredNode(node?.id ?? null);
 			// With a node selected, stay focused on it — don't light up other
@@ -528,8 +538,8 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 		const dx = worldPos.x - dragStartX;
 		const dz = worldPos.z - dragStartZ;
 
+		dragDistance += Math.hypot(dx, dz);
 		if (dragTarget.type === 'nodes') {
-			dragDistance += Math.hypot(dx, dz);
 			if (dragDistance > 1) pendingShiftToggle = null;
 
 			for (const nodeId of editor.selectedNodes) {
@@ -592,7 +602,7 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 		dragStartZ = worldPos.z;
 	};
 
-	const onMouseUp = (event: MouseEvent) => {
+	const release = (event: MouseEvent) => {
 		if (taperDrag) {
 			editor.finishTaper();
 			taperDrag = null;
@@ -602,6 +612,12 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 		if (offsetDrag) {
 			offsetDrag = null;
 			flushApply();
+			// Moved nodes may have carried roads over others: they join there.
+			const roads = offsetMoved.flatMap(
+				(id) => editor.graph.nodes.get(id)?.connectedSegments ?? []
+			);
+			if (roads.length) editor.resolveSegmentCrossings(new Set(roads));
+			offsetMoved = [];
 			editor.graph.save();
 			return;
 		}
@@ -626,15 +642,37 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 			pendingShiftToggle = null;
 		}
 
-		// Moving things never splits segments — crossings only become
-		// intersections while drawing.
+		// Roads moved over a node or across another road join it there.
 		if (isDragging) {
 			flushApply();
+			if (dragTarget && dragDistance > 0) editor.resolveSegmentCrossings(movedRoads(dragTarget));
 			editor.graph.save();
 		}
 		isDragging = false;
 		dragTarget = null;
+		dragDistance = 0;
 		controlFrames.clear();
+	};
+
+	// The roads a drag reshaped: every road at a moved node, or the one
+	// whose curve was dragged.
+	const movedRoads = (target: NonNullable<DragTarget>) => {
+		if (target.type === 'controlPoint') return [target.segmentId];
+		const nodes =
+			target.type === 'nodes'
+				? [...editor.selectedNodes]
+				: target.segmentIds.flatMap((id) => {
+						const segment = editor.graph.segments.get(id);
+						return segment ? [segment.startNodeId, segment.endNodeId] : [];
+					});
+		return new Set(nodes.flatMap((id) => editor.graph.nodes.get(id)?.connectedSegments ?? []));
+	};
+
+	// Out of hand, a handle still under the pointer goes back to hover.
+	const onMouseUp = (event: MouseEvent) => {
+		release(event);
+		const worldPos = editor.sceneManager.screenToWorld(event.clientX, event.clientY);
+		editor.lightHandle(handleAt(worldPos.x, worldPos.z));
 	};
 
 	// Double-clicking a node (≥2 arms, junctions and transitions) opens the lane
@@ -674,6 +712,7 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 		controlFrames.clear();
 		editor.setHoveredNode(null);
 		editor.setHoveredSegment(null);
+		editor.lightHandle(null);
 		marquee.dispose();
 	};
 

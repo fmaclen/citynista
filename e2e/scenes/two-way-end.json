@@ -1,0 +1,43 @@
+{
+	"nodes": [
+		{ "id": "a", "x": 0, "y": 0 },
+		{ "id": "b", "x": 60, "y": 0 }
+	],
+	"segments": [
+		{
+			"id": "street",
+			"startNodeId": "a",
+			"endNodeId": "b",
+			"lanes": [
+				{
+					"role": "pedestrian",
+					"material": "concrete",
+					"width": 2,
+					"direction": "bidirectional",
+					"id": "w0"
+				},
+				{
+					"role": "vehicle",
+					"material": "asphalt",
+					"width": 3.5,
+					"direction": "backward",
+					"id": "back"
+				},
+				{
+					"role": "vehicle",
+					"material": "asphalt",
+					"width": 3.5,
+					"direction": "forward",
+					"id": "fwd"
+				},
+				{
+					"role": "pedestrian",
+					"material": "concrete",
+					"width": 2,
+					"direction": "bidirectional",
+					"id": "w1"
+				}
+			]
+		}
+	]
+}

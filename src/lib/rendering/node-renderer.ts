@@ -1,53 +1,64 @@
 import * as THREE from 'three';
 import type { Node } from '../core/node.svelte';
-import { HOVER_COLOR, SELECT_COLOR, DANGER_COLOR, RING_THICKNESS } from './editor-palette';
+import {
+	HOVER_COLOR,
+	SELECT_COLOR,
+	DANGER_COLOR,
+	NODE_RING_PX,
+	RING_THICKNESS_PX
+} from './editor-palette';
+import type { ScreenSized } from './handle-shapes';
 
-// Node markers: outline rings sized to the widest
-// road meeting at the node (the editor keeps radii in sync on rebuild).
+// Node markers: outline rings of one fixed size on screen (NODE_RING_PX),
+// modelled in pixels and scaled to world units per pixel each frame by the
+// scene manager. Only revealed rings are registered for that scaling.
 // Cyan means hover, yellow means selected — rings revealed as part of a
 // selection take the selected tone, rings revealed by hover the hover one.
-const DEFAULT_RADIUS = 6;
 const NODE_OPACITY = 0.9;
 
 export type NodeTone = 'hover' | 'selected' | 'danger';
 const NODE_SEGMENTS = 48;
+
+// A node ring in pixel units, for anything that previews one (the draw ghost,
+// split and paste markers); register the mesh in `screenSized` to size it.
+export function nodeRingGeometry() {
+	return new THREE.RingGeometry(NODE_RING_PX - RING_THICKNESS_PX, NODE_RING_PX, NODE_SEGMENTS);
+}
 // Above the whole lane-layer stack (which now reaches ~0.31 with composite
 // material layers) so hover/selection rings are never hidden under the road.
 export const NODE_Y_OFFSET = 0.4;
 
 export class NodeRenderer {
 	private scene: THREE.Scene;
+	private screenSized: ScreenSized;
+	// Every ring is the same shape, so they share one geometry.
+	private geometry = nodeRingGeometry();
 	private meshes = new Map<string, THREE.Mesh>();
-	private radii = new Map<string, number>();
 	private selectedNodes = new Set<string>();
 	private hoveredNode: string | null = null;
 	private revealed = new Map<string, NodeTone>();
 
-	constructor(scene: THREE.Scene) {
+	constructor(scene: THREE.Scene, screenSized: ScreenSized) {
 		this.scene = scene;
-	}
-
-	private ringGeometry(radius: number) {
-		return new THREE.RingGeometry(radius - RING_THICKNESS, radius, NODE_SEGMENTS);
+		this.screenSized = screenSized;
 	}
 
 	createNode(node: Node) {
-		const geometry = this.ringGeometry(DEFAULT_RADIUS);
 		const material = new THREE.MeshBasicMaterial({
 			color: HOVER_COLOR,
 			transparent: true,
 			opacity: NODE_OPACITY
 		});
-		const mesh = new THREE.Mesh(geometry, material);
+		const mesh = new THREE.Mesh(this.geometry, material);
 
 		mesh.rotation.x = -Math.PI / 2;
 		mesh.position.set(node.x, NODE_Y_OFFSET, node.y);
 		mesh.userData = { type: 'node', id: node.id };
-		mesh.visible = this.revealed.has(node.id);
+		mesh.visible = false;
 
 		this.scene.add(mesh);
 		this.meshes.set(node.id, mesh);
-		this.radii.set(node.id, DEFAULT_RADIUS);
+		this.applyVisibility(node.id);
 
 		return mesh;
 	}
@@ -66,24 +77,14 @@ export class NodeRenderer {
 			mesh.position.set(p.x, NODE_Y_OFFSET, p.y);
 	}
 
-	setRadius(nodeId: string, radius: number) {
-		const mesh = this.meshes.get(nodeId);
-		if (!mesh || this.radii.get(nodeId) === radius) return;
-
-		mesh.geometry.dispose();
-		mesh.geometry = this.ringGeometry(radius);
-		this.radii.set(nodeId, radius);
-	}
-
 	removeNode(nodeId: string) {
 		const mesh = this.meshes.get(nodeId);
 		if (mesh) {
 			this.scene.remove(mesh);
-			mesh.geometry.dispose();
+			this.screenSized.delete(mesh);
 			(mesh.material as THREE.Material).dispose();
 			this.meshes.delete(nodeId);
 		}
-		this.radii.delete(nodeId);
 		this.selectedNodes.delete(nodeId);
 		this.revealed.delete(nodeId);
 		if (this.hoveredNode === nodeId) {
@@ -148,9 +149,10 @@ export class NodeRenderer {
 
 	private applyVisibility(nodeId: string) {
 		const mesh = this.meshes.get(nodeId);
-		if (mesh) {
-			mesh.visible = this.revealed.has(nodeId);
-		}
+		if (!mesh) return;
+		mesh.visible = this.revealed.has(nodeId);
+		if (mesh.visible) this.screenSized.set(mesh, Infinity);
+		else this.screenSized.delete(mesh);
 	}
 
 	clear() {

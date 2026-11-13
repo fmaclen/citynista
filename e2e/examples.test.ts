@@ -1,6 +1,8 @@
 import { expect, test, type Page } from '@playwright/test';
 import { readFileSync } from 'node:fs';
-import { openScene } from './scenes';
+import { EXAMPLES, SCHEMA_VERSION } from '../src/lib/core/city-store';
+import { openScene, readScene } from './scenes';
+import { saveCity } from './save';
 
 // A loaded scene lands in the current city of the localStorage city library.
 const CURRENT_KEY = 'citynista:current-city';
@@ -23,6 +25,16 @@ const storedCity = (page: Page, id: string) =>
 async function bulldozeStub(page: Page) {
 	await page.mouse.click(TOP_STREET_STUB.x, TOP_STREET_STUB.y);
 }
+
+const cityBar = (page: Page) => page.getByRole('toolbar', { name: 'Cities' });
+
+async function menuItem(page: Page, name: string) {
+	await cityBar(page).getByLabel('City menu').click();
+	await page.getByRole('menuitem', { name, exact: true }).click();
+}
+
+const storedIndex = (page: Page) =>
+	page.evaluate(() => JSON.parse(localStorage.getItem('citynista:cities') ?? '[]'));
 
 test.describe('Cities', () => {
 	test('booting into a stored city loads its graph', async ({ page }) => {
@@ -51,11 +63,115 @@ test.describe('Cities', () => {
 		expect(graph.segments[0].lanes.length).toBeGreaterThan(0);
 	});
 
+	test('cities saved with another schema version, or none, are ignored and cleared', async ({
+		page
+	}) => {
+		const graph = readScene('median-corner');
+		const stale = { nodes: [], segments: [] };
+		await page.goto('/robots.txt');
+		await page.evaluate(
+			({ graph, stale, version }) => {
+				localStorage.clear();
+				const put = (key: string, value: unknown) =>
+					localStorage.setItem(key, JSON.stringify(value));
+				put('citynista:cities', [
+					{ id: 'current', name: 'current', version },
+					{ id: 'unversioned', name: 'unversioned' },
+					{ id: 'newer', name: 'newer', version: version + 1 },
+					// Listed at this version, but the record itself is older.
+					{ id: 'old-record', name: 'old-record', version }
+				]);
+				put('citynista:city:current', {
+					id: 'current',
+					name: 'current',
+					graph,
+					camera: null,
+					version
+				});
+				put('citynista:city:unversioned', {
+					id: 'unversioned',
+					name: 'unversioned',
+					graph: stale,
+					camera: null
+				});
+				put('citynista:cam:unversioned', { zoom: 1, targetX: 0, targetZ: 0, azimuth: 0, polar: 0 });
+				put('citynista:city:newer', {
+					id: 'newer',
+					name: 'newer',
+					graph: stale,
+					camera: null,
+					version: version + 1
+				});
+				put('citynista:city:old-record', {
+					id: 'old-record',
+					name: 'old-record',
+					graph: stale,
+					camera: null
+				});
+				localStorage.setItem('citynista:current-city', 'current');
+			},
+			{ graph, stale, version: SCHEMA_VERSION }
+		);
+		await page.goto('/?topdown');
+		await expect(cityBar(page).getByText('current', { exact: true })).toBeVisible();
+
+		// The current city loads as stored.
+		await saveCity(page);
+		expect((await storedCity(page, 'current')).graph.segments).toHaveLength(graph.segments.length);
+
+		// The others drop out of the library, their keys gone with them.
+		await cityBar(page).getByLabel('City menu').click();
+		for (const id of ['unversioned', 'newer', 'old-record'])
+			await expect(page.getByRole('menuitem', { name: id, exact: true })).toHaveCount(0);
+		await page.keyboard.press('Escape');
+		expect(await storedIndex(page)).toEqual([
+			{ id: 'current', name: 'current', version: SCHEMA_VERSION }
+		]);
+		const left = await page.evaluate(() =>
+			Object.keys(localStorage).filter((k) => k.startsWith('citynista:'))
+		);
+		expect(left.sort()).toEqual([
+			'citynista:cities',
+			'citynista:city:current',
+			'citynista:current-city'
+		]);
+	});
+
+	test('a stale current city boots a fresh empty one instead', async ({ page }) => {
+		await page.goto('/robots.txt');
+		await page.evaluate((graph) => {
+			localStorage.clear();
+			localStorage.setItem('citynista:cities', JSON.stringify([{ id: 'old', name: 'old' }]));
+			localStorage.setItem(
+				'citynista:city:old',
+				JSON.stringify({ id: 'old', name: 'old', graph, camera: null })
+			);
+			localStorage.setItem('citynista:current-city', 'old');
+		}, readScene('median-corner'));
+		await page.goto('/?topdown');
+		await expect(cityBar(page).getByText('untitled', { exact: true })).toBeVisible();
+		expect(await storedCity(page, 'old')).toBeNull();
+		expect((await storedCity(page, 'untitled')).graph).toEqual({ nodes: [], segments: [] });
+	});
+
+	test('every example carries the current schema version', () => {
+		for (const { id } of EXAMPLES) {
+			const example = JSON.parse(readFileSync(`static/examples/${id}.json`, 'utf8'));
+			expect(example.version, id).toBe(SCHEMA_VERSION);
+		}
+	});
+
 	test('an example opens untouched; Save makes a city of your own from it', async ({ page }) => {
 		const cities = page.getByRole('toolbar', { name: 'Cities' });
 		const saveAs = page.getByRole('dialog');
 		await page.goto('/?example=neighbourhood&topdown');
 		await expect(cities.getByText('Neighbourhood', { exact: true })).toBeVisible();
+
+		// Its name is read-only: the menu's Rename is disabled.
+		await cities.getByText('Neighbourhood', { exact: true }).click();
+		await expect(page.getByRole('menuitem', { name: 'Rename…' })).toBeDisabled();
+		await page.keyboard.press('Escape');
+		await expect(cities.getByRole('textbox')).toHaveCount(0);
 
 		// Opening it, and editing it, store nothing.
 		await page.getByTitle('Bulldoze (click or drag to demolish)').click();
@@ -78,8 +194,7 @@ test.describe('Cities', () => {
 
 		// Reopening the example starts from the original again: the same edit
 		// saves a second city with one segment fewer than the example, not two.
-		await cities.locator('[data-slot="select-trigger"]').click();
-		await page.getByRole('option', { name: 'Neighbourhood', exact: true }).click();
+		await menuItem(page, 'Neighbourhood');
 		await expect(cities.getByText('Neighbourhood', { exact: true })).toBeVisible();
 		await bulldozeStub(page);
 		await page.keyboard.press('ControlOrMeta+s');
@@ -97,5 +212,108 @@ test.describe('Cities', () => {
 			fetch('/examples/neighbourhood.json').then((response) => response.json())
 		);
 		expect(served.graph.segments.length).toBe(EXAMPLE_SEGMENTS);
+	});
+
+	test('renaming the current city is stored at once; Escape and empty names cancel', async ({
+		page
+	}) => {
+		await openScene(page, 'median-corner');
+		const cities = cityBar(page);
+		const name = cities.getByTestId('city-name');
+		const input = cities.getByRole('textbox', { name: 'City name' });
+		await expect(name).toHaveText('median-corner');
+
+		await menuItem(page, 'Rename…');
+		await expect(input).toBeFocused();
+		await input.fill('Downtown');
+		await input.press('Escape');
+		await expect(input).toHaveCount(0);
+		await expect(name).toHaveText('median-corner');
+
+		await menuItem(page, 'Rename…');
+		await expect(input).toBeFocused();
+		await input.fill('  ');
+		await input.press('Enter');
+		await expect(name).toHaveText('median-corner');
+
+		// An unsaved road stays unsaved through the rename.
+		await page.getByRole('button', { name: 'Street' }).click();
+		await page.mouse.click(300, 500);
+		await page.mouse.click(700, 500);
+		await page.keyboard.press('Escape');
+		await page.keyboard.press('Escape');
+		await expect(cities.getByLabel('Unsaved changes')).toBeVisible();
+
+		await menuItem(page, 'Rename…');
+		await expect(input).toBeFocused();
+		await input.fill('Downtown');
+		await input.press('Enter');
+		await expect(name).toHaveText('Downtown');
+		await expect(cities.getByLabel('Unsaved changes')).toBeVisible();
+
+		page.once('dialog', (dialog) => dialog.accept());
+		await page.reload();
+		await expect(name).toHaveText('Downtown');
+		expect(await storedIndex(page)).toEqual([
+			{ id: 'median-corner', name: 'Downtown', version: SCHEMA_VERSION }
+		]);
+		expect((await storedCity(page, 'median-corner')).graph.segments).toHaveLength(2);
+	});
+
+	test('Duplicate saves the map, unsaved edits included, as a second city', async ({ page }) => {
+		await openScene(page, 'median-corner');
+		const cities = cityBar(page);
+		const dialog = page.getByRole('dialog');
+
+		await page.getByRole('button', { name: 'Street' }).click();
+		await page.mouse.click(300, 500);
+		await page.mouse.click(700, 500);
+		await page.keyboard.press('Escape');
+		await page.keyboard.press('Escape');
+
+		await menuItem(page, 'Duplicate…');
+		await expect(dialog.getByRole('textbox')).toHaveValue('median-corner');
+		await dialog.getByRole('textbox').fill('copy');
+		await dialog.getByRole('button', { name: 'Save' }).click();
+		await expect(cities.getByTestId('city-name')).toHaveText('copy');
+		await saveCity(page);
+
+		expect(await storedIndex(page)).toEqual([
+			{ id: 'median-corner', name: 'median-corner', version: SCHEMA_VERSION },
+			{ id: 'copy', name: 'copy', version: SCHEMA_VERSION }
+		]);
+		expect((await storedCity(page, 'copy')).graph.segments).toHaveLength(3);
+		expect((await storedCity(page, 'median-corner')).graph.segments).toHaveLength(2);
+	});
+
+	test('New, Open and Delete work from the city menu', async ({ page }) => {
+		await openScene(page, 'median-corner');
+		const name = cityBar(page).getByTestId('city-name');
+		const dialog = page.getByRole('dialog');
+
+		// The menu lists your cities, then the examples. The screenshot shows it
+		// open beside a selected road's lane panel.
+		const road = toScreen(-75, 0);
+		await page.mouse.click(road.x, road.y);
+		await expect(page.locator('aside')).toBeVisible();
+		await cityBar(page).getByLabel('City menu').click();
+		await expect(
+			page.getByRole('menuitem').filter({ hasText: /median-corner|Neighbourhood/ })
+		).toHaveText(['median-corner', 'Neighbourhood']);
+		await page.screenshot({ path: 'test-results/city-menu.png' });
+		await page.getByRole('menuitem', { name: 'New city…' }).click();
+		await dialog.getByRole('textbox').fill('fresh');
+		await dialog.getByRole('button', { name: 'Create' }).click();
+		await expect(name).toHaveText('fresh');
+
+		await menuItem(page, 'median-corner');
+		await expect(name).toHaveText('median-corner');
+
+		await menuItem(page, 'Delete this city');
+		await expect(name).toHaveText('fresh');
+		expect(await storedIndex(page)).toEqual([
+			{ id: 'fresh', name: 'fresh', version: SCHEMA_VERSION }
+		]);
+		expect(await storedCity(page, 'median-corner')).toBeNull();
 	});
 });

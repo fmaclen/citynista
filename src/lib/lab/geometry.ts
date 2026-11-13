@@ -164,7 +164,7 @@ function sectionAt(road: Road, i: number, distance: number): LaneSpan[] {
 			(leftEdge(cur.align, total) + shift(cur)) * f
 		: leftEdge(cur.align, total) + shift(cur);
 	const spans: LaneSpan[] = [];
-	let x = anchor;
+	let x = anchor + (road.lean ?? 0) * distance;
 	for (const row of rows) {
 		spans.push({ lane: row.lane, left: x, right: x + row.width });
 		x += row.width;
@@ -225,11 +225,11 @@ export function curveBetween(p0: Pt, inDir: Pt, p3: Pt, outDir: Pt, samples: num
 	const chord = Math.hypot(p3.x - p0.x, p3.y - p0.y);
 	// Handles of a circular arc turning through the angle between the two
 	// directions, so a lane path through a bend follows the bend's curvature.
+	// As the turn shrinks they lengthen smoothly to a third of the chord, so
+	// ends nearly in line (a lane easing sideways) get an even S, never a
+	// straight run with sharp ends.
 	const turn = Math.acos(Math.max(-1, Math.min(1, inDir.x * outDir.x + inDir.y * outDir.y)));
-	const k =
-		turn < 1e-3
-			? chord / 3
-			: (chord * (2 / 3) * Math.tan(turn / 4)) / Math.sin(Math.max(turn / 2, 0.2));
+	const k = turn < 1e-3 ? chord / 3 : (chord * (2 / 3) * Math.tan(turn / 4)) / Math.sin(turn / 2);
 	const p1 = { x: p0.x + inDir.x * k, y: p0.y + inDir.y * k };
 	const p2 = { x: p3.x - outDir.x * k, y: p3.y - outDir.y * k };
 	const points: Pt[] = [];

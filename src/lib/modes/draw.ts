@@ -1,34 +1,21 @@
-import * as THREE from 'three';
 import type { ModeHandlers } from './types';
 import type { Editor } from '../editor.svelte';
 import type { Segment } from '../core/segment.svelte';
 import type { Node } from '../core/node.svelte';
-import { Graph } from '../core/graph.svelte';
-import { cloneLanes, getTotalWidth } from '../core/lane-template';
+import type { Graph } from '../core/graph.svelte';
+import type { GraphData, Lane } from '../core/types';
+import { cloneLanes, reverseLanes } from '../core/lane-template';
 import { splitSegment } from '../core/crossings';
 import { getQuadraticBezierTangent } from '../geometry/bezier';
 import { closestOnRoad, nodePoint, roadAt } from '../core/road-line';
-import { attachShift, roadwayOf } from '../core/attach';
-import { LabRenderer } from '../rendering/lab-renderer';
-import { HOVER_COLOR, SELECT_COLOR, RING_THICKNESS } from '../rendering/editor-palette';
+import { attachShift, roadwayOf, sideToward } from '../core/attach';
+import { attachDots, ghostCursor, roadGhost } from './ghost';
 
-const GHOST_OPACITY = 0.45;
-const GHOST_ELEVATION = 0.06;
-// Matches NodeRenderer's ring style and palette — cyan while free (hover),
-// yellow once snapped (committed) — sized to the active preset's width.
-const GHOST_RING_THICKNESS = RING_THICKNESS;
-const GHOST_NODE_COLOR = HOVER_COLOR;
-const GHOST_NODE_SNAPPED_COLOR = SELECT_COLOR;
-const GHOST_NODE_Y = 0.3;
 const MIN_PREVIEW_LENGTH = 1;
 // Snap radii are sized in screen pixels and converted to world units at the
 // current zoom, so snapping feels the same at any zoom and zooming in lets
 // clicks land between close nodes.
-const NODE_SNAP_PX = 20;
 const SEGMENT_SNAP_PX = 17;
-// A segment snap this close to one of its endpoints uses the node instead of
-// splitting off a sliver.
-const SEGMENT_END_SNAP_PX = 14;
 // Shift snaps the pending direction to 22.5° increments — or exactly onto
 // the tangent of the road being extended when that is closer.
 const ANGLE_SNAP_INCREMENT = Math.PI / 8;
@@ -46,18 +33,77 @@ interface SegmentSnap {
 // A road's edge picked to attach a new road at (a ramp, a slip lane, one
 // half of a split): where it is, and the road's direction there.
 interface Edge {
-	point: { x: number; y: number };
-	tangent: { x: number; y: number };
+	point: Pt;
+	tangent: Pt;
+	// The way across the road from its middle to this edge.
+	across: Pt;
+	// The way traffic runs in the road's outermost lane on this side; null
+	// unless that lane is one-way.
+	flow: Pt | null;
+	// At a road's end (a node only it reaches), the way into the road.
+	inward: Pt | null;
+}
+
+// Which way a new road's traffic runs at one of its nodes.
+type Way = 'leave' | 'arrive';
+
+// The three places across a road a new road can attach at — one roadway
+// edge, the middle, the other edge — and which one the cursor is over.
+interface Attach {
+	points: [Pt, Pt, Pt];
+	live: 0 | 1 | 2;
+	edges: [Edge, Edge];
+}
+
+interface Pt {
+	x: number;
+	y: number;
 }
 
 type SnapResult =
-	| { kind: 'node'; nodeId: string; x: number; y: number; edge: Edge | null }
-	| { kind: 'segment'; snap: SegmentSnap; x: number; y: number; edge: Edge | null }
+	| { kind: 'node'; nodeId: string; x: number; y: number; edge: Edge | null; attach: Attach | null }
+	| {
+			kind: 'segment';
+			snap: SegmentSnap;
+			x: number;
+			y: number;
+			edge: Edge | null;
+			attach: Attach | null;
+	  }
 	| { kind: 'free'; x: number; y: number };
 
 // Near either edge of a road (its outer quarter on that side), a new road
 // attaches at that edge; in between, at its middle.
 const EDGE_REACH = 0.25;
+// A roadway narrower than this on screen puts its edges too close to tell
+// apart: only its middle attaches until you zoom in.
+const EDGE_MIN_PX = 16;
+
+const dot = (a: Pt, b: Pt) => a.x * b.x + a.y * b.y;
+const unit = (from: Pt, to: Pt) => {
+	const l = Math.hypot(to.x - from.x, to.y - from.y);
+	return l > 1e-9 ? { x: (to.x - from.x) / l, y: (to.y - from.y) / l } : null;
+};
+
+// The way a new road's traffic must run at an edge to go with the lane
+// there, `out` being its direction out of the node; null if the lane runs
+// both ways. At a road's end: away from the node if the lane runs out of
+// the road there, toward it if the lane runs in. Along a road (a node it
+// carries on through): leaving the way the lane runs (a diverge), arriving
+// against it (a merge).
+const wayAt = (edge: Edge, out: Pt): Way | null => {
+	if (!edge.flow) return null;
+	const k = edge.inward ? -dot(edge.flow, edge.inward) : dot(edge.flow, out);
+	return k >= 0 ? 'leave' : 'arrive';
+};
+
+// The one way a cross-section's vehicle lanes all run, if they all run one.
+const oneWay = (lanes: Lane[]) => {
+	const vehicles = lanes.filter((lane) => lane.role === 'vehicle');
+	const dir = vehicles[0]?.direction;
+	if (dir === 'bidirectional' || !vehicles.every((lane) => lane.direction === dir)) return null;
+	return dir ?? null;
+};
 
 // Intersection of ray (a + j·u) and ray (b + k·v), j,k > 0; null if parallel,
 // behind a ray, or unreasonably far (a near-straight join curves gently instead).
@@ -90,46 +136,35 @@ export function setupDrawMode(editor: Editor): ModeHandlers {
 	let cutForStart = false;
 	// The edge the pending road starts from, if it attaches at one.
 	let startEdge: Edge | null = null;
+	// Whether the last road laid in this chain runs forward (one-way only):
+	// the next one carries its traffic on.
+	let chainForward: boolean | null = null;
 	let shiftHeld = false;
+	// Cmd (Ctrl elsewhere) held: no node, road or grid snapping.
+	let freeHeld = false;
+	// F mirrors the pending road's curve to the other side of its chord,
+	// until the next click.
+	let flipped = false;
 	let lastWorld: { x: number; z: number } | null = null;
 
-	const ghostRenderer = new LabRenderer(editor.sceneManager.scene, {
-		opacity: GHOST_OPACITY,
-		lift: GHOST_ELEVATION
-	});
-	const previewGraph = new Graph();
-
-	const cursorMaterial = new THREE.MeshBasicMaterial({
-		color: GHOST_NODE_COLOR,
-		transparent: true,
-		opacity: 0.8
-	});
-	const cursorNode = new THREE.Mesh(new THREE.BufferGeometry(), cursorMaterial);
-	cursorNode.rotation.x = -Math.PI / 2;
-	cursorNode.visible = false;
-	editor.sceneManager.scene.add(cursorNode);
-
-	let cursorRadius = 0;
-	const updateCursorRadius = () => {
-		const brush = editor.activeBrush;
-		const radius = (brush ? getTotalWidth(brush.lanes) / 2 : 4) + 2;
-		if (radius === cursorRadius) return;
-
-		cursorRadius = radius;
-		cursorNode.geometry.dispose();
-		cursorNode.geometry = new THREE.RingGeometry(radius - GHOST_RING_THICKNESS, radius, 48);
-	};
-	updateCursorRadius();
+	const ghost = roadGhost(editor);
+	const cursor = ghostCursor(editor);
+	const dots = attachDots(editor);
 
 	const worldPerPixel = () => editor.sceneManager.worldPerPixel();
 
-	const findSegmentSnap = (worldX: number, worldZ: number): SegmentSnap | null => {
+	// The road body under the cursor, or the node at its end when the cursor
+	// is over the road's last stretch (within a node ring of the end, along
+	// it): the whole width of a road's end reaches that node, so its edge
+	// attach points are as easy to hit as its middle, and no sliver is cut.
+	const findSegmentSnap = (worldX: number, worldZ: number) => {
 		let best: SegmentSnap | null = null;
+		let end: Node | null = null;
 		// The road's whole width snaps, pixel-floored: a driveway can start
 		// anywhere on the road it joins.
 		let bestScore = 1;
 		const floor = SEGMENT_SNAP_PX * worldPerPixel();
-		const endSnapDistance = SEGMENT_END_SNAP_PX * worldPerPixel();
+		const endSnapDistance = editor.nodeRingRadius();
 
 		for (const segment of editor.graph.segments.values()) {
 			const startNode = editor.graph.nodes.get(segment.startNodeId);
@@ -145,19 +180,19 @@ export function setupDrawMode(editor: Editor): ModeHandlers {
 			const score = closest.distance / Math.max(floor, segment.totalWidth / 2);
 			if (score >= bestScore) continue;
 
-			// Too close to an endpoint: treat as a node snap on that endpoint.
-			if (
-				Math.hypot(closest.x - startNode.x, closest.y - startNode.y) < endSnapDistance ||
-				Math.hypot(closest.x - endNode.x, closest.y - endNode.y) < endSnapDistance
-			) {
+			bestScore = score;
+			const toStart = Math.hypot(closest.x - startNode.x, closest.y - startNode.y);
+			const toEnd = Math.hypot(closest.x - endNode.x, closest.y - endNode.y);
+			if (Math.min(toStart, toEnd) < endSnapDistance) {
+				best = null;
+				end = toStart <= toEnd ? startNode : endNode;
 				continue;
 			}
-
-			bestScore = score;
+			end = null;
 			best = { segment, x: closest.x, y: closest.y, t: closest.t, shown: on.point };
 		}
 
-		return best;
+		return { snap: best, end };
 	};
 
 	// The direction a smooth continuation of the roads already attached to
@@ -262,8 +297,21 @@ export function setupDrawMode(editor: Editor): ModeHandlers {
 		return { x: sx + tangent.x * reach, y: sy + tangent.y * reach };
 	};
 
+	// The curve's control point, mirrored across the chord when flipped.
 	const solveControl = (startNode: { x: number; y: number }, target: SnapResult) => {
-		if (shiftHeld) return null;
+		const control = autoControl(startNode, target);
+		if (!control || !flipped) return control;
+		const dx = target.x - startNode.x;
+		const dy = target.y - startNode.y;
+		const k =
+			((control.x - startNode.x) * dx + (control.y - startNode.y) * dy) / (dx * dx + dy * dy);
+		const foot = { x: startNode.x + dx * k, y: startNode.y + dy * k };
+		return { x: 2 * foot.x - control.x, y: 2 * foot.y - control.y };
+	};
+
+	function autoControl(startNode: { x: number; y: number }, target: SnapResult) {
+		// The straight style lays every road straight, and so does Shift.
+		if (shiftHeld || editor.drawStyle === 'straight') return null;
 		// A road attached at an edge leaves it along the road it joins, the way
 		// it is heading.
 		const along = (
@@ -302,42 +350,76 @@ export function setupDrawMode(editor: Editor): ModeHandlers {
 			return smoothControl(startNode.x, startNode.y, startTangent, target.x, target.y);
 		if (endTangent) return smoothControl(target.x, target.y, endTangent, startNode.x, startNode.y);
 		return null;
-	};
+	}
 
-	// Which part of a road the cursor is over, across it at line parameter
-	// t: one of its roadway edges, or its middle (null).
-	const edgeAt = (segment: Segment, t: number, x: number, y: number): Edge | null => {
+	// The attach points across a road at line parameter t, `middle` being
+	// where its middle shows there; the live one is the part the cursor is
+	// over (an edge within the outer quarter of the roadway on that side).
+	const attachAt = (
+		segment: Segment,
+		t: number,
+		middle: Pt,
+		x: number,
+		y: number,
+		inward: Pt | null = null
+	) => {
 		const at = roadAt(editor.graph, segment, t);
 		if (!at) return null;
 		const r = roadwayOf(segment.lanes);
+		if (r.hi - r.lo < EDGE_MIN_PX * worldPerPixel()) return null;
+		const vehicles = segment.lanes.filter((lane) => lane.role === 'vehicle');
+		const edge = (o: number, k: 1 | -1, lane: Lane | undefined): Edge => ({
+			point: { x: at.point.x + at.normal.x * o, y: at.point.y + at.normal.y * o },
+			tangent: at.tangent,
+			across: { x: at.normal.x * k, y: at.normal.y * k },
+			flow:
+				lane?.direction === 'forward'
+					? at.tangent
+					: lane?.direction === 'backward'
+						? { x: -at.tangent.x, y: -at.tangent.y }
+						: null,
+			inward
+		});
+		const lo = edge(r.lo, -1, vehicles[0]);
+		const hi = edge(r.hi, 1, vehicles.at(-1));
 		const across = (x - at.point.x) * at.normal.x + (y - at.point.y) * at.normal.y;
 		const reach = (r.hi - r.lo) * EDGE_REACH;
-		const o = across <= r.lo + reach ? r.lo : across >= r.hi - reach ? r.hi : null;
-		if (o === null) return null;
-		return {
-			point: { x: at.point.x + at.normal.x * o, y: at.point.y + at.normal.y * o },
-			tangent: at.tangent
-		};
+		const live = across <= r.lo + reach ? 0 : across >= r.hi - reach ? 2 : 1;
+		const result: Attach = { points: [lo.point, middle, hi.point], live, edges: [lo, hi] };
+		return result;
 	};
 
-	// The edge of the road a node ends or carries on, under the cursor; none
-	// at a junction of three or more.
-	const nodeEdge = (node: Node, x: number, y: number) => {
+	// The direction a road's shown line leaves one of its nodes in.
+	const outOfNode = (segment: Segment, nodeId: string) => {
+		const atStart = segment.startNodeId === nodeId;
+		const at = roadAt(editor.graph, segment, atStart ? 0 : 1);
+		if (!at) return null;
+		return atStart ? at.tangent : { x: -at.tangent.x, y: -at.tangent.y };
+	};
+
+	const edgeOf = (attach: Attach | null) =>
+		!attach || attach.live === 1 ? null : attach.edges[attach.live === 0 ? 0 : 1];
+
+	// The attach points of the road a node ends or carries on; none at a
+	// junction of three or more.
+	const nodeAttach = (node: Node, x: number, y: number) => {
 		const sides = node.junction?.sides ?? {};
 		const mains = node.connectedSegments.filter((id) => !sides[id]);
 		if (mains.length < 1 || mains.length > 2) return null;
 		const segment = editor.graph.segments.get(mains[0]);
-		return segment ? edgeAt(segment, segment.startNodeId === node.id ? 0 : 1, x, y) : null;
+		if (!segment) return null;
+		const t = segment.startNodeId === node.id ? 0 : 1;
+		const inward = mains.length === 1 ? (outOfNode(segment, node.id) ?? null) : null;
+		return attachAt(segment, t, nodePoint(editor.graph, node), x, y, inward);
 	};
 
-	// Node snapping covers the node's visible ring, pixel-floored — over a
-	// wide junction the whole disc snaps, zoomed out a minimum remains.
+	// A node snaps inside its ring, the same fixed circle on screen that
+	// select mode clicks; outside it the road body under the cursor snaps.
 	const findNodeSnap = (worldX: number, worldZ: number) => {
-		const floor = NODE_SNAP_PX * worldPerPixel();
+		const radius = editor.nodeRingRadius();
 		let best: Node | null = null;
 		let bestScore = 1;
 		for (const node of editor.graph.nodes.values()) {
-			const radius = Math.max(editor.nodeRingRadius(node), floor);
 			const p = nodePoint(editor.graph, node);
 			const score = Math.hypot(p.x - worldX, p.y - worldZ) / radius;
 			if (score < bestScore) {
@@ -349,16 +431,22 @@ export function setupDrawMode(editor: Editor): ModeHandlers {
 	};
 
 	const resolveSnap = (worldX: number, worldZ: number): SnapResult => {
+		if (freeHeld) return { kind: 'free', x: worldX, y: worldZ };
+
 		const node = findNodeSnap(worldX, worldZ);
 		if (node) {
-			const edge = nodeEdge(node, worldX, worldZ);
-			return { kind: 'node', nodeId: node.id, x: node.x, y: node.y, edge };
+			const attach = nodeAttach(node, worldX, worldZ);
+			return { kind: 'node', nodeId: node.id, x: node.x, y: node.y, edge: edgeOf(attach), attach };
 		}
 
-		const snap = findSegmentSnap(worldX, worldZ);
+		const { snap, end } = findSegmentSnap(worldX, worldZ);
+		if (end) {
+			const attach = nodeAttach(end, worldX, worldZ);
+			return { kind: 'node', nodeId: end.id, x: end.x, y: end.y, edge: edgeOf(attach), attach };
+		}
 		if (snap) {
-			const edge = edgeAt(snap.segment, snap.t, worldX, worldZ);
-			return { kind: 'segment', snap, x: snap.x, y: snap.y, edge };
+			const attach = attachAt(snap.segment, snap.t, snap.shown, worldX, worldZ);
+			return { kind: 'segment', snap, x: snap.x, y: snap.y, edge: edgeOf(attach), attach };
 		}
 
 		// Grid snap is the lowest-priority positional snap: nodes and segments win,
@@ -385,41 +473,148 @@ export function setupDrawMode(editor: Editor): ModeHandlers {
 		return { kind: 'free', x: snapped.x, y: snapped.y };
 	};
 
-	// Turn the snap into a real node to anchor the drawn segment: existing
-	// node, a new node splitting the snapped segment (a T junction), or a
-	// fresh node in open ground.
-	const anchorNodeId = (snap: SnapResult): string => {
+	// Turn the snap into a node of `graph` to anchor the drawn segment:
+	// existing node, a new node splitting the snapped segment (a T junction),
+	// or a fresh node in open ground.
+	const anchorIn = (graph: Graph, snap: SnapResult): string => {
 		if (snap.kind === 'node') return snap.nodeId;
 
-		const node = editor.graph.createNode(snap.x, snap.y);
-		editor.nodeRenderer.createNode(node);
+		const node = graph.createNode(snap.x, snap.y);
+		if (graph === editor.graph) editor.nodeRenderer.createNode(node);
 
 		if (snap.kind === 'segment') {
-			splitSegment(editor.graph, snap.snap.segment, snap.snap.t, node.id);
+			const segment = graph.segments.get(snap.snap.segment.id);
+			if (segment) splitSegment(graph, segment, snap.snap.t, node.id);
 		}
 
 		return node.id;
 	};
 
-	// Records a new road's end as attached at an edge of the road at that
-	// node: on which side of it the road sits, looking out of the node along
-	// the new road (toward its other end).
-	const attach = (nodeId: string, segmentId: string, edge: Edge | null, otherId: string) => {
-		const node = editor.graph.nodes.get(nodeId);
-		const other = editor.graph.nodes.get(otherId);
-		if (!edge || !node || !other) return;
-		const out = { x: other.x - node.x, y: other.y - node.y };
-		const centre = nodePoint(editor.graph, node);
-		const across = (edge.point.x - centre.x) * -out.y + (edge.point.y - centre.y) * out.x;
-		const sides = {
-			...(node.junction?.sides ?? {}),
-			[segmentId]: across > 0 ? 'right' : 'left'
-		} as const;
+	// Records a new road's end as attached at the edge picked there. The side
+	// is stored against the road's own direction out of the node, curve and
+	// all (core/attach.ts), so it is worked out once that curve is set.
+	const attach = (graph: Graph, nodeId: string, segment: Segment, edge: Edge | null) => {
+		const node = graph.nodes.get(nodeId);
+		if (!edge || !node) return;
+		const side = sideToward(graph, segment, nodeId, edge.across);
+		if (!side) return;
+		const sides = { ...(node.junction?.sides ?? {}), [segment.id]: side } as const;
 		node.junction = { ...(node.junction ?? { connections: [] }), sides };
+	};
+
+	// Whether a node can take a one-way road's traffic arriving at it (or
+	// feed traffic leaving it): some vehicle lane there runs out of it (into
+	// it), or both ways. A node with no vehicle lanes takes anything.
+	const nodeTakes = (nodeId: string, way: Way) => {
+		const node = editor.graph.nodes.get(nodeId);
+		let any = false;
+		for (const id of node?.connectedSegments ?? []) {
+			const segment = editor.graph.segments.get(id);
+			for (const lane of segment?.lanes ?? []) {
+				if (lane.role !== 'vehicle') continue;
+				any = true;
+				if (lane.direction === 'bidirectional') return true;
+				const out = (segment!.startNodeId === nodeId) === (lane.direction === 'forward');
+				if (out === (way === 'arrive')) return true;
+			}
+		}
+		return !any;
+	};
+
+	// Which way the traffic at a node runs: all of its vehicle lanes into it
+	// ('arrive'), all out of it ('leave'), or null for both ways or none.
+	const nodeFlow = (nodeId: string): Way | null => {
+		let arrive = false;
+		let leave = false;
+		for (const id of editor.graph.nodes.get(nodeId)?.connectedSegments ?? []) {
+			const segment = editor.graph.segments.get(id);
+			for (const lane of segment?.lanes ?? []) {
+				if (lane.role !== 'vehicle') continue;
+				if (lane.direction === 'bidirectional') return null;
+				if ((segment!.startNodeId === nodeId) === (lane.direction === 'forward')) leave = true;
+				else arrive = true;
+			}
+		}
+		return arrive === leave ? null : arrive ? 'arrive' : 'leave';
+	};
+
+	// The pending road's lanes and whether its traffic runs forward (null:
+	// both ways). A one-way preset started at an edge runs with the lane it
+	// starts on, turned round for this road if it must; one carrying a chain
+	// on runs as the road before it; one started at a node whose traffic all
+	// runs one way carries it on (away if it arrives, toward if it leaves);
+	// anywhere else it runs the way it is drawn.
+	// `blocked`: it ends at an edge or node whose traffic would meet it
+	// head-on, and the click lays nothing.
+	const plan = (startNode: Node, target: SnapResult, control: Pt | null) => {
+		const preset = editor.activeBrush?.lanes ?? [];
+		const dir = oneWay(preset);
+		if (!dir) return { lanes: cloneLanes(preset), forward: null, blocked: false };
+		const outStart = unit(startNode, control ?? target);
+		const outEnd = unit(target, control ?? startNode);
+		const start = startEdge && outStart ? wayAt(startEdge, outStart) : null;
+		const flow = start === null && chainForward === null ? nodeFlow(startNode.id) : null;
+		const forward =
+			start !== null
+				? start === 'leave'
+				: (chainForward ?? (flow ? flow === 'arrive' : dir === 'forward'));
+		// At its end node, traffic arrives if it runs forward, else leaves.
+		const way: Way = forward ? 'arrive' : 'leave';
+		const endEdge = target.kind !== 'free' ? target.edge : null;
+		const blocked = endEdge
+			? !!outEnd && (wayAt(endEdge, outEnd) ?? way) !== way
+			: target.kind === 'node' && !nodeTakes(target.nodeId, way);
+		const lanes = forward === (dir === 'forward') ? cloneLanes(preset) : reverseLanes(preset);
+		return { lanes, forward, blocked };
+	};
+
+	// Lays the pending road into `graph` as a click lays it: its end node
+	// (cutting a road under it), the road, the edges its ends attach at, and
+	// its curve. Null for the road where it would start and end on one node.
+	const layRoad = (
+		graph: Graph,
+		startId: string,
+		target: SnapResult,
+		control: Pt | null,
+		lanes: Lane[]
+	) => {
+		const endId = anchorIn(graph, target);
+		if (startId === endId) return { endId, segment: null };
+		const segment = graph.createSegment(startId, endId, lanes);
+		if (control) segment.setControlPoint(control.x, control.y);
+		attach(graph, startId, segment, startEdge);
+		attach(graph, endId, segment, target.kind !== 'free' ? target.edge : null);
+		// An end moved to the edge it attaches at takes the curve's handle
+		// with it, so the road still leaves that edge along it.
+		if (control) {
+			const a = attachShift(graph, segment, segment.startNodeId);
+			const b = attachShift(graph, segment, segment.endNodeId);
+			segment.setControlPoint(control.x + a.x + b.x, control.y + a.y + b.y);
+		}
+		return { endId, segment };
+	};
+
+	// The part of the map the pending road touches: the nodes it starts and
+	// ends at, the road it would cut, and every road at those nodes, so the
+	// preview builds the joints there as the click will.
+	const touched = (startId: string, target: SnapResult): GraphData => {
+		const graph = editor.graph;
+		const nodeIds = new Set([startId]);
+		if (target.kind === 'node') nodeIds.add(target.nodeId);
+		const segmentIds = new Set(target.kind === 'segment' ? [target.snap.segment.id] : []);
+		for (const id of nodeIds)
+			for (const s of graph.nodes.get(id)?.connectedSegments ?? []) segmentIds.add(s);
+		const segments = [...segmentIds].flatMap((id) => graph.segments.get(id) ?? []);
+		for (const s of segments) nodeIds.add(s.startNodeId).add(s.endNodeId);
+		return {
+			nodes: [...nodeIds].flatMap((id) => graph.nodes.get(id)?.toJSON() ?? []),
+			segments: segments.map((s) => s.toJSON())
+		};
 	};
 
 	const discardOrphanStart = () => {
 		startEdge = null;
+		chainForward = null;
 		if (startNodeId === null) return;
 		// A road cut to start from, with nothing drawn from it: uncut it.
 		if (cutForStart) {
@@ -441,8 +636,6 @@ export function setupDrawMode(editor: Editor): ModeHandlers {
 	const updatePreview = (worldX: number, worldZ: number) => {
 		const target = resolveTarget(worldX, worldZ);
 
-		updateCursorRadius();
-		cursorNode.visible = true;
 		// On a node the cursor sits where the node shows; a new road still
 		// starts from the node itself.
 		const node = target.kind === 'node' ? editor.graph.nodes.get(target.nodeId) : undefined;
@@ -454,13 +647,19 @@ export function setupDrawMode(editor: Editor): ModeHandlers {
 					: target.kind === 'segment'
 						? target.snap.shown
 						: target;
-		cursorNode.position.set(shown.x, GHOST_NODE_Y, shown.y);
-		cursorMaterial.color.setHex(
-			target.kind === 'free' ? GHOST_NODE_COLOR : GHOST_NODE_SNAPPED_COLOR
-		);
+		cursor.place(shown, target.kind !== 'free');
+		// What the click attaches to: the node or road lit as if hovered, and
+		// across the road the three attach points with the live one filled.
+		editor.setHoveredNode(target.kind === 'node' ? target.nodeId : null);
+		editor.setHoveredSegment(target.kind === 'segment' ? target.snap.segment.id : null);
+		if (target.kind !== 'free' && target.attach) {
+			dots.show(target.attach.points, target.attach.live);
+		} else {
+			dots.hide();
+		}
 
 		if (startNodeId === null) {
-			ghostRenderer.clear();
+			ghost.clear();
 			return;
 		}
 
@@ -468,39 +667,44 @@ export function setupDrawMode(editor: Editor): ModeHandlers {
 		if (!startNode) return;
 
 		if (Math.hypot(target.x - startNode.x, target.y - startNode.y) < MIN_PREVIEW_LENGTH) {
-			ghostRenderer.clear();
+			ghost.clear();
 			return;
 		}
 
-		previewGraph.clear();
-		const from = startEdge?.point ?? startNode;
-		const to = target.kind !== 'free' && target.edge ? target.edge.point : target;
-		const previewStart = previewGraph.createNode(from.x, from.y);
-		const previewEnd = previewGraph.createNode(to.x, to.y);
-		const preview = previewGraph.createSegment(
-			previewStart.id,
-			previewEnd.id,
-			cloneLanes(editor.activeBrush?.lanes ?? [])
+		const control = solveControl(startNode, target);
+		const { lanes, forward, blocked } = plan(startNode, target, control);
+		const startId = startNodeId;
+		let arrow: { at: Pt; dir: Pt } | null = null;
+		ghost.show(
+			(graph) => {
+				const { endId, segment } = layRoad(graph, startId, target, control, cloneLanes(lanes));
+				const mid = segment && forward !== null ? roadAt(graph, segment, 0.5) : null;
+				if (mid) {
+					const k = forward ? 1 : -1;
+					arrow = { at: mid.point, dir: { x: mid.tangent.x * k, y: mid.tangent.y * k } };
+				}
+				return { roads: segment ? [segment.id] : [], nodes: [startId, endId] };
+			},
+			touched(startId, target)
 		);
-		const control = startNodeId ? solveControl(startNode, target) : null;
-		if (control) {
-			preview.setControlPoint(control.x, control.y);
-		}
-		ghostRenderer.update(previewGraph);
+		ghost.point(arrow);
+		ghost.block(blocked);
 	};
 
 	const onMouseDown = (event: MouseEvent) => {
 		if (event.button !== 0) return;
 		if (event.altKey) return;
 		shiftHeld = event.shiftKey;
+		freeHeld = event.metaKey || event.ctrlKey;
 
 		const worldPos = editor.sceneManager.screenToWorld(event.clientX, event.clientY);
 		lastWorld = { x: worldPos.x, z: worldPos.z };
 		const target = resolveTarget(worldPos.x, worldPos.z);
 
 		if (startNodeId === null) {
-			startNodeId = anchorNodeId(target);
+			startNodeId = anchorIn(editor.graph, target);
 			startEdge = target.kind !== 'free' ? target.edge : null;
+			chainForward = null;
 			cutForStart = target.kind === 'segment';
 			if (cutForStart) {
 				editor.rebuildRoads();
@@ -508,43 +712,35 @@ export function setupDrawMode(editor: Editor): ModeHandlers {
 			}
 		} else {
 			const startNode = editor.graph.nodes.get(startNodeId);
-			const control = startNode ? solveControl(startNode, target) : null;
-			const endNodeId = anchorNodeId(target);
-
-			if (startNodeId !== endNodeId) {
-				const segment = editor.graph.createSegment(
-					startNodeId,
-					endNodeId,
-					cloneLanes(editor.activeBrush?.lanes ?? [])
-				);
-				if (control) {
-					segment.setControlPoint(control.x, control.y);
-				}
-				attach(startNodeId, segment.id, startEdge, endNodeId);
-				attach(endNodeId, segment.id, target.kind !== 'free' ? target.edge : null, startNodeId);
-				// An end moved to the edge it attaches at takes the curve's handle
-				// with it, so the road still leaves that edge along it.
-				if (control) {
-					const a = attachShift(editor.graph, segment, segment.startNodeId);
-					const b = attachShift(editor.graph, segment, segment.endNodeId);
-					segment.setControlPoint(control.x + a.x + b.x, control.y + a.y + b.y);
-				}
-				editor.resolveSegmentCrossings();
-			}
+			if (!startNode) return;
+			const control = solveControl(startNode, target);
+			const { lanes, forward, blocked } = plan(startNode, target, control);
+			if (blocked) return;
+			const { endId: endNodeId, segment } = layRoad(
+				editor.graph,
+				startNodeId,
+				target,
+				control,
+				lanes
+			);
+			if (segment) editor.resolveSegmentCrossings([segment.id]);
 
 			editor.rebuildRoads();
 			editor.graph.save();
 			startNodeId = endNodeId;
 			startEdge = null;
+			chainForward = forward;
 			cutForStart = false;
-			ghostRenderer.clear();
+			ghost.clear();
 		}
+		flipped = false;
 
 		updatePreview(worldPos.x, worldPos.z);
 	};
 
 	const onMouseMove = (event: MouseEvent) => {
 		shiftHeld = event.shiftKey;
+		freeHeld = event.metaKey || event.ctrlKey;
 		const worldPos = editor.sceneManager.screenToWorld(event.clientX, event.clientY);
 		lastWorld = { x: worldPos.x, z: worldPos.z };
 		updatePreview(worldPos.x, worldPos.z);
@@ -557,11 +753,23 @@ export function setupDrawMode(editor: Editor): ModeHandlers {
 			updatePreview(lastWorld.x, lastWorld.z);
 			return;
 		}
+		if ((event.key === 'Meta' || event.key === 'Control') && lastWorld) {
+			freeHeld = true;
+			updatePreview(lastWorld.x, lastWorld.z);
+			return;
+		}
+		if (event.key.toLowerCase() === 'f' && !event.metaKey && !event.ctrlKey) {
+			if (startNodeId === null || !lastWorld || editor.drawStyle === 'straight') return;
+			flipped = !flipped;
+			updatePreview(lastWorld.x, lastWorld.z);
+			return;
+		}
 		if (event.key !== 'Escape') return;
 
+		flipped = false;
 		if (startNodeId !== null) {
 			discardOrphanStart();
-			ghostRenderer.clear();
+			ghost.clear();
 		} else {
 			editor.mode = 'select';
 		}
@@ -569,16 +777,20 @@ export function setupDrawMode(editor: Editor): ModeHandlers {
 
 	const cleanup = () => {
 		discardOrphanStart();
-		ghostRenderer.destroy();
-		editor.sceneManager.scene.remove(cursorNode);
-		cursorNode.geometry.dispose();
-		cursorMaterial.dispose();
+		ghost.destroy();
+		cursor.destroy();
+		dots.destroy();
+	};
+
+	const refresh = () => {
+		if (lastWorld) updatePreview(lastWorld.x, lastWorld.z);
 	};
 
 	return {
 		onMouseDown,
 		onMouseMove,
 		onKeyDown,
+		refresh,
 		cleanup
 	};
 }

@@ -27,7 +27,7 @@ import type { LaneConnection } from './core/lane-connections';
 import { CROSSING_DEPTH, CROSSING_FROM_END, endsOf, type EndInfo } from './lab/junction';
 import { crossingAt } from './core/place';
 import { mapJunction } from './core/junction-data';
-import { nodePoint, roadLine } from './core/road-line';
+import { nodePoint, offsetOutOf, roadLine } from './core/road-line';
 import { segmentEnds } from './core/attach';
 import { kindOf } from './lab/connect';
 import { isTravel } from './lab/road';
@@ -40,20 +40,27 @@ import { LabRenderer } from './rendering/lab-renderer';
 import { COLOURS } from './lab/scene';
 import { SelectionRenderer } from './rendering/selection-renderer';
 import { HandleRenderer } from './rendering/handle-renderer';
+import { GuideRenderer } from './rendering/guide-renderer';
 import { offsetHandle, type OffsetHandle } from './modes/offset';
 import { ConnectionRenderer } from './rendering/connection-renderer';
-import { hitsHandle } from './rendering/handle-shapes';
 import {
 	CROSSING_HANDLE,
+	OFFSET_HANDLE,
+	TAPER_HANDLE,
+	hitsHandle
+} from './rendering/handle-shapes';
+import {
 	HANDLE_HIT_SLACK_PX,
 	LANE_DOT_PX,
-	OFFSET_HANDLE,
-	TAPER_HANDLE
+	NODE_RING_PX,
+	type HandleState
 } from './rendering/editor-palette';
 
-// A taper handle on a selected node where two roads meet: it sits where the
-// transition ends on one of them.
+// A setback handle on a selected node: it sits where one of its roads stops
+// short of it (where two roads meet, where that side of the taper ends).
 export interface TaperHandleInfo {
+	// Its place among the node's handles.
+	index: number;
 	nodeId: string;
 	segmentId: string;
 	atStart: boolean;
@@ -65,8 +72,15 @@ export interface TaperHandleInfo {
 	// along it.
 	centerline: Point[];
 }
-import type { ModeHandlers, Mode } from './modes/types';
+
+// One handle on the map, for tinting it by its state: a road's curvature
+// handle, or a taper, offset or crossing handle by its place in the list shown.
+export type HandleRef =
+	| { kind: 'curve'; segmentId: string }
+	| { kind: 'taper' | 'offset' | 'crossing'; index: number };
+import { DRAW_STYLES, type DrawStyle, type ModeHandlers, type Mode } from './modes/types';
 import { setupDrawMode } from './modes/draw';
+import { setupCircleMode } from './modes/circle';
 import { setupSelectMode } from './modes/select';
 import { setupBulldozeMode } from './modes/bulldoze';
 import { setupSplitMode } from './modes/split';
@@ -77,7 +91,7 @@ import { setupPlaceMode } from './modes/place';
 const NEW_CROSSING_BEYOND = 3;
 // Lane dots of two road ends that nearly meet sit at least this far apart.
 const CONNECTOR_SPREAD = 10;
-// Taper handles sit at least this far from their node, so the node itself
+// Setback handles sit at least this far from their node, so the node itself
 // can always be grabbed.
 const TAPER_HANDLE_REACH = 4;
 
@@ -134,7 +148,8 @@ export interface ClipboardSegmentSnapshot {
 	endNodeId: string;
 	controlX?: number;
 	controlY?: number;
-	offset: number;
+	offsetStart: number;
+	offsetEnd: number;
 	lanes: Lane[];
 }
 
@@ -180,7 +195,8 @@ export class Editor {
 	currentCityId = $state('');
 	currentCityName = $state('');
 	// Set while an example is open. Saving it asks for a name (saveAsOpen) and
-	// creates a city of your own; the example file never changes.
+	// creates a city of your own; the example file never changes. Duplicate
+	// opens the same dialog for your own cities.
 	currentExampleId = $state<string | null>(null);
 	saveAsOpen = $state(false);
 	// Edits live in memory until Save; dirty means the graph differs from what
@@ -201,6 +217,7 @@ export class Editor {
 	showConnections = $state(false);
 	selectionRenderer!: SelectionRenderer;
 	taperRenderer!: HandleRenderer;
+	guideRenderer!: GuideRenderer;
 	// The selected road's lateral offset handle.
 	offsetRenderer!: HandleRenderer;
 	// In the connector, a handle on each crosswalk to slide it along its road.
@@ -226,7 +243,19 @@ export class Editor {
 	// active hotbar slot until you leave draw mode or pick another brush.
 	continuationBrush = $state<Brush | null>(null);
 	activeBrush = $derived(this.continuationBrush ?? this.hotbar[this.activeSlot]);
+	// How an armed preset lays roads: straight pieces, pieces that curve on
+	// from the road they continue, or a ring. Kept across preset picks.
+	drawStyle = $state<DrawStyle>('curve');
 	private pendingDrawAnchor: string | null = null;
+	// The roads a drawing mode would lay on the next click and their
+	// drawing, while it shows them (read by ?model scripts): the arrow for the
+	// way a one-way road runs, and whether the click would lay nothing.
+	ghost: {
+		graph: Graph;
+		renderer: LabRenderer;
+		arrow: { at: { x: number; y: number }; dir: { x: number; y: number } } | null;
+		blocked: boolean;
+	} | null = null;
 	fps = $state(0);
 	canUndo = $state(false);
 	canRedo = $state(false);
@@ -251,6 +280,25 @@ export class Editor {
 		if (!segments.every((segment) => segment.lanesKey === key)) return null;
 		return segments[0].lanes;
 	});
+	// What the lane panel edits: the selected roads' shared lanes ('mixed'
+	// when they differ), else in draw mode the armed slot's (empty when the
+	// slot is). Null when there is nothing to edit.
+	laneSource = $derived.by(() => {
+		if (this.selectedSegments.size > 0) {
+			const lanes = this.pickableLanes;
+			if (!lanes) return 'mixed' as const;
+			return { lanes };
+		}
+		if (this.mode === 'draw' && !this.continuationBrush) {
+			const brush = this.hotbar[this.activeSlot];
+			return { lanes: brush?.lanes ?? [] };
+		}
+		return null;
+	});
+	// The panel row under the pointer, lit on every selected road.
+	highlightedLane = $state<number | null>(null);
+	// Draw mode only draws with lanes: an armed empty slot leaves the map inert.
+	private drawing = $derived(this.mode === 'draw' && (this.activeBrush?.lanes.length ?? 0) > 0);
 
 	private modeHandlers: ModeHandlers | null = null;
 	private boundKeyDown: ((e: KeyboardEvent) => void) | null = null;
@@ -275,6 +323,7 @@ export class Editor {
 		// and must not re-run when that state changes.
 		$effect(() => {
 			const mode = this.mode;
+			void this.drawing;
 			untrack(() => this.setupMode(mode));
 		});
 	}
@@ -290,12 +339,13 @@ export class Editor {
 		this.sceneManager = new SceneManager(container, (fps) => {
 			this.fps = fps;
 		});
-		this.nodeRenderer = new NodeRenderer(this.sceneManager.scene);
-		this.roadRenderer = new LabRenderer(this.sceneManager.scene);
-		this.sceneManager.scene.background = new THREE.Color(COLOURS.ground);
 		const { scene, screenSized } = this.sceneManager;
+		this.nodeRenderer = new NodeRenderer(scene, screenSized);
+		this.roadRenderer = new LabRenderer(scene);
+		scene.background = new THREE.Color(COLOURS.ground);
 		this.selectionRenderer = new SelectionRenderer(scene, screenSized);
 		this.taperRenderer = new HandleRenderer(scene, screenSized, 'taper');
+		this.guideRenderer = new GuideRenderer(scene, this.sceneManager.beforeFrame);
 		this.offsetRenderer = new HandleRenderer(scene, screenSized, 'offset');
 		this.crossingRenderer = new HandleRenderer(scene, screenSized, 'crossing');
 		this.connectionRenderer = new ConnectionRenderer(scene, screenSized);
@@ -373,12 +423,32 @@ export class Editor {
 		}
 	}
 
+	// Arms a slot, empty or not; the lane panel opens on it.
 	activateSlot(index: number) {
-		const brush = this.hotbar[index];
-		if (!brush) return;
 		this.continuationBrush = null;
 		this.activeSlot = index;
-		this.mode = 'draw';
+		this.armStyle();
+	}
+
+	// Enters the mode of the chosen draw style for the armed slot; an empty
+	// slot goes to draw mode, where the lane panel fills it.
+	private armStyle() {
+		this.mode = this.drawStyle === 'circle' && this.hotbar[this.activeSlot] ? 'circle' : 'draw';
+	}
+
+	setDrawStyle(style: DrawStyle) {
+		if (!this.activeBrush || style === this.drawStyle) return;
+		this.drawStyle = style;
+		const mode = style === 'circle' ? 'circle' : 'draw';
+		// Straight and curve share draw mode, which reads the style on each
+		// move: the pending road keeps its start and only its preview redraws.
+		if (this.mode === mode) this.modeHandlers?.refresh?.();
+		else this.mode = mode;
+	}
+
+	cycleDrawStyle() {
+		const at = DRAW_STYLES.indexOf(this.drawStyle);
+		this.setDrawStyle(DRAW_STYLES[(at + 1) % DRAW_STYLES.length]);
 	}
 
 	cycleBrush(direction: number) {
@@ -389,7 +459,7 @@ export class Editor {
 			filled[((((at < 0 ? 0 : at) + direction) % filled.length) + filled.length) % filled.length];
 		this.continuationBrush = null;
 		this.activeSlot = next;
-		this.mode = 'draw';
+		this.armStyle();
 	}
 
 	// Continue an existing road from a dangling endpoint, building onward with the
@@ -417,16 +487,65 @@ export class Editor {
 		return anchor;
 	}
 
-	// Drop the selected road's cross-section into a slot and arm it.
-	pickIntoSlot(index: number) {
-		const lanes = this.pickableLanes;
+	// Drop a cross-section (the selected road's by default) into a slot and arm it.
+	pickIntoSlot(index: number, lanes = this.pickableLanes) {
 		if (!lanes) return;
 		this.hotbar[index] = { name: 'Custom road', lanes: cloneLanes(lanes) };
 		this.saveHotbar();
 		this.continuationBrush = null;
 		this.clearSelection();
 		this.activeSlot = index;
-		this.mode = 'draw';
+		this.armStyle();
+	}
+
+	// The eyedropper: the road under the cursor replaces the armed slot, or
+	// fills the first empty one when none is armed, and drawing starts with it.
+	eyedrop() {
+		const segment = this.hoveredSegmentId && this.graph.segments.get(this.hoveredSegmentId);
+		if (!segment) return;
+		const armed = this.mode === 'draw' && !this.continuationBrush;
+		const index = armed ? this.activeSlot : this.hotbar.findIndex((brush) => !brush);
+		if (index < 0) return;
+		this.pickIntoSlot(index, segment.lanes);
+	}
+
+	// Applies one change to each target's own lane list: every selected road
+	// (when they share a cross-section) or the armed slot. Lanes the change
+	// adds get fresh ids on each road; lanes it keeps keep theirs, since
+	// junction connections name them. live skips saving, for mid-drag edits.
+	editLanes(change: (lanes: Lane[]) => void, live = false) {
+		const source = this.laneSource;
+		if (!source || source === 'mixed') return;
+		if (this.selectedSegments.size > 0) {
+			for (const id of this.selectedSegments) {
+				const segment = this.graph.segments.get(id);
+				if (!segment) continue;
+				const before = [...segment.lanes];
+				change(segment.lanes);
+				for (const lane of segment.lanes) if (!before.includes(lane)) delete lane.id;
+				segment.ensureLaneIds();
+			}
+			this.rebuildRoads();
+			this.refreshSelectionVisuals();
+			if (!live) this.graph.save();
+		} else {
+			const brush = this.hotbar[this.activeSlot] ?? { name: 'Custom road', lanes: [] };
+			change(brush.lanes);
+			this.hotbar[this.activeSlot] = brush.lanes.length > 0 ? brush : null;
+			if (!live) this.saveHotbar();
+		}
+	}
+
+	// Closes the lane panel: drops the selection, or leaves draw mode.
+	closeLanes() {
+		if (this.selectedSegments.size > 0) this.clearSelection();
+		else this.mode = 'select';
+	}
+
+	highlightLane(index: number | null) {
+		if (this.highlightedLane === index) return;
+		this.highlightedLane = index;
+		this.refreshSelectionVisuals();
 	}
 
 	// Empty a slot. Drawing falls back to select if it held the active brush.
@@ -485,6 +604,13 @@ export class Editor {
 
 	private setupClipboardKeys() {
 		this.boundClipboardKeyDown = (e: KeyboardEvent) => {
+			// I, the eyedropper, copies the road under the cursor into a slot.
+			if (e.key.toLowerCase() === 'i' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+				const target = e.target;
+				if (target instanceof HTMLElement && target.tagName !== 'BODY') return;
+				this.eyedrop();
+				return;
+			}
 			if (!(e.metaKey || e.ctrlKey)) return;
 			const key = e.key.toLowerCase();
 			if (key !== 'c' && key !== 'v' && key !== 'x') return;
@@ -547,7 +673,8 @@ export class Editor {
 				endNodeId: segment.endNodeId,
 				controlX: segment.controlX,
 				controlY: segment.controlY,
-				offset: segment.offset,
+				offsetStart: segment.offsetStart,
+				offsetEnd: segment.offsetEnd,
 				lanes: cloneLanes(segment.lanes)
 			});
 		}
@@ -696,24 +823,11 @@ export class Editor {
 		this.currentCityName = city.name;
 		this.cityCamera = this.readCameraCache(city.id) ?? city.camera;
 		this.cities = this.cityStore.list();
-		this.graph.fromJSON(this.workingGraph(city));
+		this.graph.fromJSON(city.graph);
 		for (const node of this.graph.nodes.values()) {
 			this.nodeRenderer.createNode(node);
 		}
 		this.rebuildRoads();
-	}
-
-	// The saved graph is the legacy single-graph slot (written on every save and
-	// city switch); the current city's snapshot is the fallback. Reading the legacy slot
-	// first lets external writers (and the e2e harness) seed a graph before boot.
-	private workingGraph(city: CityRecord): GraphData {
-		try {
-			const raw = localStorage.getItem('citynista-graph-v2');
-			if (raw) return JSON.parse(raw) as GraphData;
-		} catch {
-			// fall through to the city snapshot
-		}
-		return city.graph;
 	}
 
 	// Apply the saved camera for the current city. The page calls this only on the
@@ -791,8 +905,9 @@ export class Editor {
 		}
 	}
 
-	// Back-compat mirror of the current city's saved graph — the single-graph
-	// slot the e2e suite, any legacy reader, and boot's workingGraph() still read.
+	// A copy of the current city's saved graph under one fixed key, so the e2e
+	// suite and scripts can read what was saved without knowing the city's id.
+	// Write-only: the app never reads it back.
 	private writeMirror(graph: GraphData) {
 		try {
 			localStorage.setItem('citynista-graph-v2', JSON.stringify(graph));
@@ -842,6 +957,16 @@ export class Editor {
 		this.currentCityId = '';
 		this.currentCityName = example.name;
 		this.showCity(example, example.camera);
+	}
+
+	// Writes the new name straight to storage without saving pending map edits,
+	// and is not an undo step. Examples are read-only and keep their name.
+	renameCity(name: string) {
+		const trimmed = name.trim();
+		if (!trimmed || this.currentExampleId || !this.currentCityId) return;
+		this.cityStore.rename(this.currentCityId, trimmed);
+		this.currentCityName = trimmed;
+		this.cities = this.cityStore.list();
 	}
 
 	newCity(name: string) {
@@ -933,28 +1058,22 @@ export class Editor {
 		this.refreshTaperHandles();
 		this.refreshOffsetHandle();
 		for (const node of this.graph.nodes.values()) {
-			this.nodeRenderer.setRadius(node.id, this.nodeRingRadius(node));
 			this.nodeRenderer.setPosition(node.id, nodePoint(this.graph, node));
 		}
 	}
 
-	// Node rings hug the widest road meeting at the node; the modes also use
-	// this as the node's hit radius.
-	nodeRingRadius(node: { connectedSegments: string[] }) {
-		let maxHalfWidth = 0;
-		for (const segmentId of node.connectedSegments) {
-			const segment = this.graph.segments.get(segmentId);
-			if (segment) {
-				maxHalfWidth = Math.max(maxHalfWidth, segment.totalWidth / 2);
-			}
-		}
-		return (maxHalfWidth || 4) + 2;
+	// A node ring's radius in world units at the current zoom: a fixed size on
+	// screen. The modes use it as the node's hit and snap radius, so the ring
+	// you see is the area you click.
+	nodeRingRadius() {
+		return NODE_RING_PX * this.sceneManager.worldPerPixel();
 	}
 
-	// Turn any mid-span segment crossings into shared nodes, so overlapping
-	// roads become real intersections.
-	resolveSegmentCrossings() {
-		if (!resolveCrossings(this.graph)) return;
+	// Join the changed roads to what they pass over: a node under the road,
+	// or another road crossed mid-span, so overlapping roads become real
+	// intersections.
+	resolveSegmentCrossings(changed: Iterable<string>) {
+		if (!resolveCrossings(this.graph, changed)) return;
 
 		this.clearSelection();
 		for (const node of this.graph.nodes.values()) {
@@ -1010,11 +1129,18 @@ export class Editor {
 		this.setHoveredNode(null);
 		this.setHoveredSegment(null);
 		if (mode !== 'place') this.pendingPlacement = null;
-		if (mode !== 'draw') this.continuationBrush = null;
+		// A continued road can be laid as a ring too, so circle keeps its brush.
+		if (mode !== 'draw' && mode !== 'circle') this.continuationBrush = null;
+		// Draw mode is never the circle style (an empty slot armed, a road
+		// continued from its end), and circle mode always is.
+		if (mode === 'draw' && this.drawStyle === 'circle') this.drawStyle = 'curve';
+		if (mode === 'circle') this.drawStyle = 'circle';
 		this.modeHandlers = null;
 
 		if (mode === 'draw') {
-			this.modeHandlers = setupDrawMode(this);
+			this.modeHandlers = this.drawing ? setupDrawMode(this) : null;
+		} else if (mode === 'circle') {
+			this.modeHandlers = setupCircleMode(this);
 		} else if (mode === 'bulldoze') {
 			this.modeHandlers = setupBulldozeMode(this);
 		} else if (mode === 'split') {
@@ -1054,30 +1180,48 @@ export class Editor {
 		this.refreshTaperHandles();
 	}
 
-	// Taper handles on a single selected node where only two roads meet: a dot
-	// on each road where the transition between them ends. Dragging either
-	// sets the transition's length.
+	// Setback handles on a single selected node of two or more roads: an arrow
+	// on each road where it stops short of the node. Where two roads meet that
+	// is where its side of the taper ends; at a junction of more, where the
+	// junction ends on it. Dragging one sets that road's setback.
+	// Dashed guides go with them: across each road's full width where it
+	// stops short, and, where the node's ring sits off a road (a road with a
+	// large offset), from the ring to where that road shows at the node.
 	refreshTaperHandles() {
 		const nodeId = this.selectedNodes.size === 1 ? [...this.selectedNodes][0] : null;
 		const node = nodeId ? this.graph.nodes.get(nodeId) : undefined;
-		if (!node || node.connectedSegments.length !== 2 || !this.roadRenderer?.derived) {
+		const limits = node && this.roadRenderer?.taperLimits(node.id);
+		if (!node || !limits || !this.roadRenderer?.derived) {
 			this.currentTaperHandles = [];
 			this.taperRenderer?.clear();
+			this.guideRenderer?.clear();
 			return;
 		}
 		const rich: TaperHandleInfo[] = [];
+		const guides: [Point, Point][] = [];
+		const ring = nodePoint(this.graph, node);
 		for (const segmentId of node.connectedSegments) {
 			const segment = this.graph.segments.get(segmentId);
 			const span = this.roadRenderer.derived?.spans.get(segmentId);
-			if (!segment || !span) continue;
+			if (!segment || !span || !limits.has(segmentId)) continue;
 			const atStart = segment.startNodeId === node.id;
 			// Along the road as it shows (offset and all), from the node out.
 			let centerline: Point[] = roadLine(this.graph, segment);
 			if (!atStart) centerline = [...centerline].reverse();
 			const trim = atStart ? span.d0 : span.total - span.d0 - span.length;
-			// Where the taper ends, but never on the node itself.
+			// Where the road stops short, but never on the node itself.
 			const reach = Math.max(trim, TAPER_HANDLE_REACH);
+			const end = pointAlong(centerline, trim);
+			const along = directionAlong(centerline, trim);
+			const half = segment.totalWidth / 2;
+			guides.push([
+				{ x: end.x - along.y * half, y: end.y + along.x * half },
+				{ x: end.x + along.y * half, y: end.y - along.x * half }
+			]);
+			const at = centerline[0];
+			if (Math.hypot(ring.x - at.x, ring.y - at.y) > half) guides.push([ring, at]);
 			rich.push({
+				index: rich.length,
 				nodeId: node.id,
 				segmentId,
 				atStart,
@@ -1088,9 +1232,8 @@ export class Editor {
 			});
 		}
 		this.currentTaperHandles = rich;
-		this.taperRenderer.show(
-			rich.map((h) => ({ at: h.handle, dir: h.dir, stem: [h.node, h.handle] }))
-		);
+		this.taperRenderer.show(rich.map((h) => ({ at: h.handle, dir: h.dir })));
+		this.guideRenderer.show(guides);
 	}
 
 	taperHandleAt(worldX: number, worldZ: number): TaperHandleInfo | null {
@@ -1111,9 +1254,10 @@ export class Editor {
 		return best;
 	}
 
-	// While dragging a taper handle: the transition reaches as far along the
-	// road from the node as the pointer, on both sides.
-	setTaperFromDrag(handle: TaperHandleInfo, worldX: number, worldZ: number) {
+	// While dragging a setback handle: its road stops as far along from the
+	// node as the pointer; with `every` (Shift held) every road at the node
+	// does, each within its own limits.
+	setTaperFromDrag(handle: TaperHandleInfo, worldX: number, worldZ: number, every = false) {
 		const points = handle.centerline;
 		let accumulated = 0;
 		let bestArc = 0;
@@ -1137,13 +1281,25 @@ export class Editor {
 		}
 		const node = this.graph.nodes.get(handle.nodeId);
 		if (!node) return;
-		// Within the taper's limits: no steeper than the lanes' shift allows,
-		// and never into the far node's setback.
+		// Within each road's limits: a taper no steeper than the lanes' shift
+		// allows, a junction no smaller than its curb corners need, and never
+		// into the far node's setback. Moved together (Shift), every road
+		// stops at the tightest of their limits, so the setbacks stay equal;
+		// limits that leave no common range fall back to each road's own.
 		const limits = this.roadRenderer.taperLimits(node.id);
-		const taper = Math.min(limits?.max ?? Infinity, Math.max(limits?.min ?? 0, bestArc * 2));
-		node.junction = { ...(node.junction ?? { connections: [] }), taper };
+		const setbacks = { ...node.junction?.setbacks };
+		const roads = every ? this.currentTaperHandles.map((h) => h.segmentId) : [handle.segmentId];
+		const range = (ids: string[]) => ({
+			min: Math.max(0, ...ids.map((id) => limits?.get(id)?.min ?? 0)),
+			max: Math.min(...ids.map((id) => limits?.get(id)?.max ?? Infinity))
+		});
+		const shared = range(roads);
+		for (const road of roads) {
+			const { min, max } = shared.min <= shared.max ? shared : range([road]);
+			setbacks[road] = Math.min(max, Math.max(min, bestArc));
+		}
+		node.junction = { ...(node.junction ?? { connections: [] }), setbacks };
 		this.rebuildRoads();
-		this.refreshTaperHandles();
 	}
 
 	finishTaper() {
@@ -1375,13 +1531,15 @@ export class Editor {
 		});
 	}
 
+	// The crossing whose handle is under the pointer, with its place among
+	// the handles shown (`shown`).
 	crossingHandleAt(worldX: number, worldZ: number) {
 		const scale = this.sceneManager.worldPerPixel();
-		return (
-			this.connectorCrossings().find((c) =>
-				hitsHandle(CROSSING_HANDLE, c.mid, c.dir, worldX, worldZ, scale)
-			) ?? null
+		const list = this.connectorCrossings();
+		const shown = list.findIndex((c) =>
+			hitsHandle(CROSSING_HANDLE, c.mid, c.dir, worldX, worldZ, scale)
 		);
+		return shown < 0 ? null : { ...list[shown], shown };
 	}
 
 	// Slides a crossing along its road to where the pointer is: never past
@@ -1497,6 +1655,7 @@ export class Editor {
 	}
 
 	clearSelection() {
+		this.highlightedLane = null;
 		this.nodeRenderer.clearSelection();
 		this.selectionRenderer.clear();
 		this.selectedNodes.clear();
@@ -1504,6 +1663,7 @@ export class Editor {
 		this.refreshRevealedNodes();
 		this.currentTaperHandles = [];
 		this.taperRenderer.clear();
+		this.guideRenderer.clear();
 		this.currentOffsetHandle = null;
 		this.offsetRenderer?.clear();
 	}
@@ -1529,14 +1689,7 @@ export class Editor {
 		const ends = segment && segmentEnds(this.graph, segment);
 
 		if (segment && startNode && endNode && ends) {
-			this.selectionRenderer.showHover(
-				segment,
-				ends.a,
-				ends.b,
-				this.nodeRingRadius(startNode),
-				this.nodeRingRadius(endNode),
-				this.mode === 'bulldoze'
-			);
+			this.selectionRenderer.showHover(segment, ends.a, ends.b, this.mode === 'bulldoze');
 		} else {
 			this.selectionRenderer.hideHover();
 		}
@@ -1575,7 +1728,7 @@ export class Editor {
 	refreshOffsetHandle() {
 		this.currentOffsetHandle = this.sceneManager ? offsetHandle(this) : null;
 		const h = this.currentOffsetHandle;
-		if (h) this.offsetRenderer?.show([{ at: h.point, dir: h.normal, stem: [h.base, h.point] }]);
+		if (h) this.offsetRenderer?.show([{ at: h.point, dir: h.normal }]);
 		else this.offsetRenderer?.clear();
 	}
 
@@ -1583,6 +1736,17 @@ export class Editor {
 		const h = this.currentOffsetHandle;
 		const scale = this.sceneManager.worldPerPixel();
 		return h && hitsHandle(OFFSET_HANDLE, h.point, h.normal, worldX, worldZ, scale) ? h : null;
+	}
+
+	// Tints one handle for its state (the one under the pointer, or in hand)
+	// and every other back to rest; null for none.
+	lightHandle(ref: HandleRef | null, state: HandleState = 'hover') {
+		const at = (kind: HandleRef['kind']) =>
+			ref?.kind === kind && 'index' in ref ? ref.index : null;
+		this.selectionRenderer?.lightControl(ref?.kind === 'curve' ? ref.segmentId : null, state);
+		this.taperRenderer?.light(at('taper'), state);
+		this.offsetRenderer?.light(at('offset'), state);
+		this.crossingRenderer?.light(at('crossing'), state);
 	}
 
 	refreshSelectionVisuals() {
@@ -1596,13 +1760,7 @@ export class Editor {
 			const ends = segmentEnds(this.graph, segment);
 			if (!startNode || !endNode || !ends) continue;
 
-			this.selectionRenderer.showSegment(
-				segment,
-				ends.a,
-				ends.b,
-				this.nodeRingRadius(startNode),
-				this.nodeRingRadius(endNode)
-			);
+			this.selectionRenderer.showSegment(segment, ends.a, ends.b, this.highlightedLane);
 		}
 	}
 
@@ -1619,8 +1777,9 @@ export class Editor {
 		if (farA === farB) return false;
 		const flowA = segA.endNodeId === nodeId ? segA.lanes : reverseLanes(segA.lanes);
 		const flowB = segB.startNodeId === nodeId ? segB.lanes : reverseLanes(segB.lanes);
-		const offsetA = segA.endNodeId === nodeId ? segA.offset : -segA.offset;
-		const offsetB = segB.startNodeId === nodeId ? segB.offset : -segB.offset;
+		// Each read to the right of the flow through the node.
+		const offsetA = -offsetOutOf(segA, nodeId);
+		const offsetB = offsetOutOf(segB, nodeId);
 		return serializeLanes(flowA) === serializeLanes(flowB) && Math.abs(offsetA - offsetB) < 1e-6;
 	}
 
@@ -1641,7 +1800,8 @@ export class Editor {
 		const flowB = segB.startNodeId === nodeId ? segB.lanes : reverseLanes(segB.lanes);
 
 		const merged = this.graph.createSegment(farAId, farBId, cloneLanes(flowA));
-		merged.offset = segA.endNodeId === nodeId ? segA.offset : -segA.offset;
+		merged.offsetStart = offsetOutOf(segA, farAId);
+		merged.offsetEnd = -offsetOutOf(segB, farBId);
 		// Keep the shape: bow the merged road through where the node sat unless the
 		// three points were already collinear, in which case it stays straight.
 		const ax = farB.x - farA.x;
@@ -1813,6 +1973,7 @@ export class Editor {
 		}
 		this.selectionRenderer?.dispose();
 		this.taperRenderer?.dispose();
+		this.guideRenderer?.dispose();
 		this.offsetRenderer?.dispose();
 		this.crossingRenderer?.dispose();
 		this.connectionRenderer?.dispose();

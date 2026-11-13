@@ -1,0 +1,142 @@
+{
+	"nodes": [
+		{
+			"id": "a",
+			"x": -60,
+			"y": 0
+		},
+		{
+			"id": "b",
+			"x": 0,
+			"y": 0
+		},
+		{
+			"id": "c",
+			"x": 5,
+			"y": 0
+		},
+		{
+			"id": "d",
+			"x": 65,
+			"y": 0
+		},
+		{
+			"id": "e",
+			"x": -60,
+			"y": 60
+		},
+		{
+			"id": "f",
+			"x": 60,
+			"y": 60
+		}
+	],
+	"segments": [
+		{
+			"id": "ab",
+			"startNodeId": "a",
+			"endNodeId": "b",
+			"lanes": [
+				{
+					"role": "pedestrian",
+					"material": "concrete",
+					"width": 2,
+					"direction": "bidirectional"
+				},
+				{
+					"role": "vehicle",
+					"material": "asphalt",
+					"width": 3.5,
+					"direction": "backward"
+				},
+				{
+					"role": "vehicle",
+					"material": "asphalt",
+					"width": 3.5,
+					"direction": "forward"
+				},
+				{
+					"role": "pedestrian",
+					"material": "concrete",
+					"width": 2,
+					"direction": "bidirectional"
+				}
+			]
+		},
+		{
+			"id": "bc",
+			"startNodeId": "b",
+			"endNodeId": "c",
+			"lanes": [
+				{
+					"role": "pedestrian",
+					"material": "concrete",
+					"width": 2,
+					"direction": "bidirectional"
+				},
+				{
+					"role": "vehicle",
+					"material": "asphalt",
+					"width": 3.5,
+					"direction": "backward"
+				},
+				{
+					"role": "vehicle",
+					"material": "asphalt",
+					"width": 3.5,
+					"direction": "forward"
+				},
+				{
+					"role": "pedestrian",
+					"material": "concrete",
+					"width": 2,
+					"direction": "bidirectional"
+				}
+			]
+		},
+		{
+			"id": "cd",
+			"startNodeId": "c",
+			"endNodeId": "d",
+			"lanes": [
+				{
+					"role": "pedestrian",
+					"material": "concrete",
+					"width": 2,
+					"direction": "bidirectional"
+				},
+				{
+					"role": "vehicle",
+					"material": "asphalt",
+					"width": 3.5,
+					"direction": "backward"
+				},
+				{
+					"role": "vehicle",
+					"material": "asphalt",
+					"width": 3.5,
+					"direction": "forward"
+				},
+				{
+					"role": "pedestrian",
+					"material": "concrete",
+					"width": 2,
+					"direction": "bidirectional"
+				}
+			]
+		},
+		{
+			"id": "ef",
+			"startNodeId": "e",
+			"endNodeId": "f",
+			"lanes": [
+				{
+					"role": "vehicle",
+					"material": "asphalt",
+					"width": 3.5,
+					"direction": "forward"
+				}
+			]
+		}
+	]
+}

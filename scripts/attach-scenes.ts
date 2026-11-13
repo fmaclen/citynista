@@ -25,7 +25,14 @@ writeFileSync(
 		],
 		segments: [
 			{ id: 'north', startNodeId: 'n', endNodeId: 'm', lanes: lanes('highway') },
-			{ id: 'south', startNodeId: 'm', endNodeId: 's', lanes: accel, offset: 1.75 },
+			{
+				id: 'south',
+				startNodeId: 'm',
+				endNodeId: 's',
+				lanes: accel,
+				offsetStart: 1.75,
+				offsetEnd: 1.75
+			},
 			{ id: 'ramp', startNodeId: 'r', endNodeId: 'm', lanes: one('forward') }
 		]
 	})

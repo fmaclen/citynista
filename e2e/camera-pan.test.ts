@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
-
-const STORAGE_KEY = 'citynista-graph-v2';
+import { createLanesFrom } from '../src/lib/core/lane-template';
+import { openGraph } from './scenes';
 
 const GRAPH_DATA = {
 	nodes: [
@@ -8,21 +8,18 @@ const GRAPH_DATA = {
 		{ id: 'node-1', x: 100, y: 0 }
 	],
 	segments: [
-		{ id: 'segment-0', startNodeId: 'node-0', endNodeId: 'node-1', laneTemplateId: 'street' }
+		{
+			id: 'segment-0',
+			startNodeId: 'node-0',
+			endNodeId: 'node-1',
+			lanes: createLanesFrom('street')
+		}
 	]
 };
 
 test.describe('Camera Pan', () => {
 	test('space+drag pans the camera without selecting', async ({ page }) => {
-		await page.goto('/?topdown');
-		await expect(page.locator('canvas')).toBeVisible();
-		await page.evaluate(
-			({ key, data }) => {
-				localStorage.setItem(key, JSON.stringify(data));
-			},
-			{ key: STORAGE_KEY, data: GRAPH_DATA }
-		);
-		await page.reload();
+		await openGraph(page, GRAPH_DATA);
 		await expect(page.locator('canvas')).toBeVisible();
 		await expect(page.locator('nav')).toBeVisible();
 

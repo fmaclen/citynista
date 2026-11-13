@@ -6,7 +6,8 @@
 // over it.
 
 import { defaultConnections, defaultControl, sideConnections } from './connect';
-import { buildLink, linkSides, throughDashes } from './link';
+import { arrowOutline, arrowWidth, type Move } from './arrows';
+import { band, buildLink, linkSides, throughDashes } from './link';
 import {
 	area as areaOf,
 	inside,
@@ -49,6 +50,7 @@ import {
 	type Walkway
 } from './model';
 import {
+	INSET,
 	isRaised,
 	isRoadway,
 	isTravel,
@@ -171,6 +173,60 @@ function crossesAny(pts: Pt[], curves: Curve[]) {
 			for (let k = 1; k < c.points.length; k++)
 				if (segmentsCross(pts[i - 1], pts[i], c.points[k - 1], c.points[k])) return true;
 	return false;
+}
+
+// How far past an edge line a path counts as lying beside it: just past
+// its lane's edge, and a little further.
+const EDGE_PROBES = [INSET + 0.05, 0.6];
+
+// The runs of a polyline's points where `keep` holds.
+function runsOf(pts: Pt[], keep: boolean[]) {
+	const runs: Pt[][] = [];
+	let run: Pt[] = [];
+	pts.forEach((p, k) => {
+		if (keep[k]) run.push(p);
+		else if (run.length) {
+			runs.push(run);
+			run = [];
+		}
+	});
+	if (run.length) runs.push(run);
+	return runs.filter((r) => r.length > 1);
+}
+
+// A polyline moved `by` metres to the side of it `toward` lies on, each
+// corner mitred, with the unit normal at each point pointing back across it.
+// Points come at most half a metre apart, so a line cut short where it meets
+// something loses no more than that.
+function insetLine(line: Pt[], toward: Pt, by: number) {
+	const pts = dedupe(line).flatMap((p, k, list) => {
+		if (k === 0) return [p];
+		const q = list[k - 1];
+		const n = Math.ceil(dist(p, q) / 0.5);
+		return Array.from({ length: n }, (_, i) => ({
+			x: q.x + ((p.x - q.x) * (i + 1)) / n,
+			y: q.y + ((p.y - q.y) * (i + 1)) / n
+		}));
+	});
+	if (pts.length < 2) return null;
+	const left = (k: number) => {
+		const l = dist(pts[k], pts[k + 1]) || 1;
+		return { x: -(pts[k + 1].y - pts[k].y) / l, y: (pts[k + 1].x - pts[k].x) / l };
+	};
+	const side = dot({ x: toward.x - pts[0].x, y: toward.y - pts[0].y }, left(0)) < 0 ? -1 : 1;
+	const normals = pts.map((_, k) => {
+		const n0 = left(Math.max(0, k - 1));
+		const n1 = left(Math.min(pts.length - 2, k));
+		const m = { x: n0.x + n1.x, y: n0.y + n1.y };
+		const l = Math.hypot(m.x, m.y) || 1;
+		const n = { x: m.x / l, y: m.y / l };
+		const reach = by / Math.max(0.3, dot(n, n1));
+		return { n: { x: n.x * side, y: n.y * side }, reach };
+	});
+	return {
+		pts: pts.map((p, k) => offsetPoint(p, normals[k].n, normals[k].reach)),
+		out: normals.map((v) => neg(v.n))
+	};
 }
 
 // Road ends running straight on into each other, and whether another such
@@ -349,7 +405,14 @@ function walkOnSide(end: EndInfo, centre: Pt, ascending: boolean) {
 	return c && (c.side === 0 || c.side === (wantRight ? 1 : -1)) ? walk : null;
 }
 
-export function defaultWalkways(ends: EndInfo[]): Walkway[] {
+// Two walk-only road ends face each other when each heads into the node
+// within 25° of the line to the other.
+const FACING = Math.cos((25 * Math.PI) / 180);
+
+// The sidewalks round a junction. Where one runs across the mouth of a
+// driveway (joinsOnly) it is paved across; across any other road's mouth it
+// is a crosswalk.
+export function defaultWalkways(ends: EndInfo[], connections: Connection[]): Walkway[] {
 	const walkways: Walkway[] = [];
 	const centre = centreOf(ends.filter((e) => e.lanes.some((l) => isRoadway(l.lane))));
 	const pairs = straightPairs(ends);
@@ -374,26 +437,34 @@ export function defaultWalkways(ends: EndInfo[]): Walkway[] {
 			const crossed: EndInfo[] = [];
 			for (let k = (ia + 1) % sorted.length; sorted[k] !== b; k = (k + 1) % sorted.length)
 				crossed.push(sorted[k]);
-			const roadwayWidth = (e: EndInfo) =>
-				e.lanes.filter((l) => isRoadway(l.lane)).reduce((s, l) => s + l.right - l.left, 0);
 			walkways.push({
 				id: `${a.key}~${b.key}`,
 				a: wa.ref,
 				b: wb.ref,
 				on: true,
-				paved: crossed.length > 0 && crossed.every((e) => roadwayWidth(e) < 8)
+				paved: crossed.length > 0 && crossed.every((e) => joinsOnly(e, ends, connections))
 			});
 		}
 	}
-	// Walk-only roads that run straight on into each other cross between.
-	for (const { pair } of pairs) {
-		const [a, b] = pair;
-		const only = (e: EndInfo) => e.lanes.length > 0 && e.lanes.every((l) => isWalk(l.lane));
-		if (!only(a) || !only(b)) continue;
-		const la = a.lanes[Math.floor(a.lanes.length / 2)];
-		const lb = b.lanes[Math.floor(b.lanes.length / 2)];
-		walkways.push({ id: `${a.key}=${b.key}`, a: la.ref, b: lb.ref, on: true, paved: false });
-	}
+	// Walk-only roads that run on into each other cross between: two that
+	// face each other across the node, as a path drawn on a curve through it
+	// does, or that run straight on.
+	const only = (e: EndInfo) => e.lanes.length > 0 && e.lanes.every((l) => isWalk(l.lane));
+	const walks = ends.filter(only);
+	const facing = (a: EndInfo, b: EndInfo) => {
+		const l = dist(a.frame.p, b.frame.p) || 1;
+		const t = { x: (b.frame.p.x - a.frame.p.x) / l, y: (b.frame.p.y - a.frame.p.y) / l };
+		return -dot(a.frame.out, t) > FACING && dot(b.frame.out, t) > FACING;
+	};
+	const inLine = (a: EndInfo, b: EndInfo) =>
+		pairs.some(({ pair }) => pair.includes(a) && pair.includes(b));
+	for (const [i, a] of walks.entries())
+		for (const b of walks.slice(i + 1)) {
+			if (!inLine(a, b) && !facing(a, b)) continue;
+			const la = a.lanes[Math.floor(a.lanes.length / 2)];
+			const lb = b.lanes[Math.floor(b.lanes.length / 2)];
+			walkways.push({ id: `${a.key}=${b.key}`, a: la.ref, b: lb.ref, on: true, paved: false });
+		}
 	return walkways;
 }
 
@@ -455,7 +526,7 @@ export function defaults(junction: Junction, roads: Map<string, RoadGeo>) {
 		if (priority) for (const e of pair) through.add(e.key);
 	return {
 		connections,
-		walkways: link ? [] : defaultWalkways(ends),
+		walkways: link ? [] : defaultWalkways(ends, connections),
 		control: link
 			? Object.fromEntries(
 					ends
@@ -492,7 +563,10 @@ export interface Crossing {
 
 export interface JunctionDraw {
 	outline: Pt[];
+	// The paving, in the junction's material (see pavingOf in scene.ts).
 	asphalt: Paths;
+	// Car lanes carried across in their own surfaces, over the paving.
+	lanes?: { paths: Paths; surface: Surface }[];
 	islands: { path: Path; surface: Surface }[];
 	// Grass verge carried round a corner between curb and sidewalk.
 	verges: Paths;
@@ -510,6 +584,9 @@ export interface JunctionDraw {
 	// Road ends whose lanes carry on across the junction: their medians run
 	// right up to the outline.
 	carriedEnds: Set<string>;
+	// Road ends whose lane lines run on into the junction's, though nothing
+	// else of them is carried across: their paint runs up to the outline.
+	linesOn?: Set<string>;
 	// How far back from each road end its paint stops.
 	setbacks: Map<string, number>;
 	mouths: { key: string; pts: Pt[]; out: Pt }[];
@@ -522,14 +599,29 @@ export const CROSSING_FROM_END = 0.5 + CROSSING_DEPTH / 2;
 // How far a corner's sidewalk overlaps the roads' own sidewalks.
 const SEAM = 0.4;
 export const STOP_GAP = 1;
-// Any road end wider than this across its roadway is a road crossing the
-// through road, not a driveway: lines stop at it.
-const NARROW = 8;
+// Stop line and yield line sizes, MUTCD 11th Edition Section 3B.19: a stop
+// line 12 to 24 in wide; yield teeth 12 to 24 in across the base, 1.5 times
+// that high, 3 to 12 in apart. Each takes the top of its range (600 mm in
+// the metric edition).
+const STOP_LINE = 0.6;
+const YIELD_BASE = 0.6;
+const YIELD_HEIGHT = 0.9;
+const YIELD_GAP = 0.3;
+// A road end narrower than this from curb to curb can be a driveway (see
+// joinsOnly).
+export const NARROW = 8;
 
 // A crossing across a road counts as at its end, with the stop line behind
 // it, when it starts no further back than this: far enough that it never
 // sits among the turn arrows before a stop line at the end.
 const CROSSING_AT_END = 12;
+// The gap between a crossing at a road's end (or the road's end itself,
+// where there's none) and the stop line behind it.
+const CROSSING_TO_STOP = 1;
+// How far a stop line's back edge sits behind the crossing or road end in
+// front of it: room enough for a median's nose to come forward past the stop
+// line, so the lines along the median run straight beside its end.
+export const STOP_ROOM = CROSSING_TO_STOP + STOP_GAP;
 
 // How far back from a road's end (its `end`, a road of `length`) the crossing
 // at that end reaches, or 0 when none lies there.
@@ -546,8 +638,8 @@ export function crossingReach(road: Road, length: number, end: 'start' | 'end') 
 }
 
 // How far back from a road end its paint stops: behind the crossing at its
-// end, if there is one, and behind the stop line when the approach is
-// controlled.
+// end, if there is one, and at the stop line when the approach is
+// controlled (its back edge, so the lane's lines run up to it).
 export function approachSetback(
 	junction: Junction,
 	road: Road,
@@ -556,8 +648,20 @@ export function approachSetback(
 ) {
 	const reach = crossingReach(road, length, end);
 	const controlled = (junction.control[endKey({ road: road.id, end })] ?? 'none') !== 'none';
-	return (reach ? reach + 1 : 0) + (controlled ? STOP_GAP : 0);
+	if (controlled) return reach + STOP_ROOM;
+	return reach ? reach + CROSSING_TO_STOP : 0;
 }
+
+// How far back along an approach a junction's paint reaches at most, with
+// its crossing where it sits by default: past the crossing and its gap, the
+// stop line (its back edge on the paint's setback) or the give-way teeth
+// (their base half a stop gap short of it, pointing back up the road).
+export const APPROACH_PAINT =
+	CROSSING_FROM_END +
+	CROSSING_DEPTH / 2 +
+	CROSSING_TO_STOP +
+	STOP_GAP / 2 +
+	Math.max(STOP_GAP / 2, YIELD_HEIGHT);
 
 // Roadway (or other) strips of a road end's last few metres.
 // A road end's outer edge on the side facing `toward`, from the end out
@@ -618,6 +722,11 @@ export interface Curb {
 	// From the arriving curb across the road end to the leaving curb.
 	mouth: Pt[];
 }
+
+// How far a road end may sit inside a neighbour's curb line and still have
+// its corner run straight along both edges (automatic setbacks overlap by a
+// tenth of a metre, more at a sharp angle).
+const OVERLAP = 1;
 
 const dedupe = (pts: Pt[]) => pts.filter((q, i) => i === 0 || dist(q, pts[i - 1]) > 0.01);
 
@@ -727,6 +836,17 @@ function cornerCurve(a: Curb, b: Curb, bulge: number) {
 			}
 			arc[arc.length - 1] = to;
 			return [p0, ...arc, p3].filter((q, i, list) => i === 0 || dist(q, list[i - 1]) > 0.02);
+		}
+		// The curb lines meet just behind a curb point instead: that end sits a
+		// little inside the other road's line, as roads meeting at a sharp angle
+		// do. No curve fits between them; any would swing into the other road's
+		// mouth and pinch it. The curb runs along both edges to where they meet,
+		// back along an end's own edge where nothing lies beyond it.
+		const reaches = (s: number, bare: boolean) => s > 0.05 || (bare && s > -OVERLAP);
+		if (reaches(sAt, a.bareLeave) && reaches(tAt, b.bareArrive)) {
+			return [p0, offsetPoint(p0, d0, sAt), p3].filter(
+				(q, i, list) => i === 0 || dist(q, list[i - 1]) > 0.02
+			);
 		}
 	}
 	let k =
@@ -854,19 +974,17 @@ export function islandShape(island: Island, ends: EndInfo[]): Pt[] | null {
 const lateral = (end: EndInfo, p: Pt) =>
 	dot({ x: p.x - end.frame.p.x, y: p.y - end.frame.p.y }, end.frame.n);
 
-// The roads leaving the far side of a junction from a road end: facing it
-// and joined to it by connections.
 // The road ends `a` carries straight on into: nearly opposite it and joined
 // to it by connections. Where one of them is about as wide as `a` (the same
 // road carrying on), a narrower one beside it (a ramp or a driveway at a
 // slant) only joins it and isn't carried into.
-function facingOf(a: EndInfo, ends: EndInfo[], junction: Junction) {
+function facingOf(a: EndInfo, ends: EndInfo[], connections: Connection[]) {
 	const facing = ends.filter(
 		(e) =>
 			e !== a &&
 			e.lanes.some((l) => isRoadway(l.lane)) &&
 			dot(e.frame.out, a.frame.out) < -0.7 &&
-			junction.connections.some(
+			connections.some(
 				(c) =>
 					(endKey(c.from) === a.key && endKey(c.to) === e.key) ||
 					(endKey(c.from) === e.key && endKey(c.to) === a.key)
@@ -878,6 +996,20 @@ function facingOf(a: EndInfo, ends: EndInfo[], junction: Junction) {
 
 const roadwayOf = (e: EndInfo) =>
 	e.lanes.filter((l) => isRoadway(l.lane)).reduce((s, l) => s + l.right - l.left, 0);
+
+// Whether a road end only joins the roads it meets, as a driveway does: it
+// is narrow from curb to curb (medians included), and none of its lanes
+// carry straight on across the junction into a road that carries straight
+// back into it. Any other road is a road of its own, however few its lanes:
+// what it meets is not carried over it, and their sidewalks stop at it with
+// a crosswalk over it instead of paving.
+function joinsOnly(e: EndInfo, ends: EndInfo[], connections: Connection[]) {
+	const roadway = e.lanes.filter((l) => isRoadway(l.lane));
+	if (!roadway.length) return true;
+	const span = Math.max(...roadway.map((l) => l.right)) - Math.min(...roadway.map((l) => l.left));
+	if (span >= NARROW) return false;
+	return !facingOf(e, ends, connections).some((f) => facingOf(f, ends, connections).includes(e));
+}
 
 // Points along a polyline at most `step` apart.
 function densify(pts: Pt[], step: number) {
@@ -1034,6 +1166,10 @@ function hatchBars(a: EndInfo, lo: number, hi: number, length: number): Paths {
 	return out;
 }
 
+// A road carried across that turns by less than this (10°) runs nearly
+// straight on.
+const STRAIGHT_ON = Math.cos((10 * Math.PI) / 180);
+
 // Carrying a road across the junction: from road end A, the roads leaving the
 // far side (facing A, joined to it by connections) are laid side by side
 // across A's line. Where their lanes line up with A's, kind for kind (a run
@@ -1046,17 +1182,53 @@ function carry(
 	others: Curve[],
 	out: { carried: JunctionDraw['carried']; marks: Mark[]; white: Pt[][]; yellow: Pt[][] }
 ) {
-	const far = facingOf(a, ends, junction);
+	const far = facingOf(a, ends, junction.connections);
 	if (!far.length) return false;
 	// Each crossing is laid once: from the side with one road, or from the
 	// smaller key when one road faces one road.
 	if (far.length === 1) {
-		const back = facingOf(far[0], ends, junction);
+		const back = facingOf(far[0], ends, junction.connections);
 		if (back.length > 1 || (back.length === 1 && far[0].key < a.key)) return false;
 	}
+	// Lanes are put side by side across A's line, a far road's lanes each at
+	// its place across its own end, lined up with A's: where the road runs
+	// nearly straight on, by where its end lies across A's line; round a
+	// bend (a road on a curve), where its end lies across depends on how the
+	// road curves, so by the lanes that connect across instead, on average.
+	const into = neg(a.frame.out);
+	const turn = dot({ x: -into.y, y: into.x }, a.frame.n) > 0 ? 1 : -1;
+	const frameOf = (end: EndInfo) => {
+		if (end === a) return { shift: 0, sign: 1 };
+		// Across the heading halfway between A's and the far road's.
+		const h = { x: into.x + end.frame.out.x, y: into.y + end.frame.out.y };
+		const l = Math.hypot(h.x, h.y) || 1;
+		const n = { x: (-h.y / l) * turn, y: (h.x / l) * turn };
+		const sign = dot(end.frame.n, n) > 0 ? 1 : -1;
+		const measured = dot({ x: end.frame.p.x - a.frame.p.x, y: end.frame.p.y - a.frame.p.y }, n);
+		if (dot(into, end.frame.out) > STRAIGHT_ON) return { shift: measured, sign };
+		const gaps: number[] = [];
+		for (const c of junction.connections) {
+			const from = laneEndOf(ends, c.from);
+			const to = laneEndOf(ends, c.to);
+			if (!from || !to || !isTravel(from.lane.lane)) continue;
+			const [near, there] =
+				from.end === a && to.end === end
+					? [from, to]
+					: to.end === a && from.end === end
+						? [to, from]
+						: [];
+			if (near && there)
+				gaps.push(lateral(a, near.lane.point) - sign * lateral(end, there.lane.point));
+		}
+		return {
+			shift: gaps.length ? gaps.reduce((s, g) => s + g, 0) / gaps.length : measured,
+			sign
+		};
+	};
 	const inFrame = (end: EndInfo) =>
 		end.lanes.map((l) => {
-			const c = lateral(a, l.point);
+			const { shift, sign } = frameOf(end);
+			const c = shift + sign * lateral(end, l.point);
 			const w = l.right - l.left;
 			const flow = end === a ? l.flow : l.flow === 'in' ? 'out' : l.flow === 'out' ? 'in' : l.flow;
 			const dir: Lane['dir'] = isTravel(l.lane)
@@ -1093,7 +1265,6 @@ function carry(
 	const ga = group(roadwayOnly(near));
 	const gb = group(roadwayOnly(other));
 	if (ga.length !== gb.length || ga.some((g, i) => g.kind !== gb[i].kind)) return false;
-	const into = neg(a.frame.out);
 	// Nothing is carried across if another road's mouth reaches into the
 	// carried roadway (a driveway pushed into the street).
 	const edgeL = offsetPoint(a.frame.p, a.frame.n, ga[0].items[0].left);
@@ -1190,11 +1361,8 @@ function carry(
 		const p = offsetPoint(a.frame.p, a.frame.n, m.o);
 		// The far mark sits on whichever far road spans its offset.
 		const host = other.find((s) => o >= s.left - 0.3 && o <= s.right + 0.3)?.end ?? far[0];
-		const q = offsetPoint(
-			host.frame.p,
-			host.frame.n,
-			(o - lateral(a, host.frame.p)) / dot(host.frame.n, a.frame.n)
-		);
+		const { shift, sign } = frameOf(host);
+		const q = offsetPoint(host.frame.p, host.frame.n, sign * (o - shift));
 		const pts = along(p, q, host.frame.out);
 		// A line only carries on where no turning traffic crosses it.
 		if (crossesAny(pts, others)) continue;
@@ -1212,14 +1380,20 @@ export function buildJunction(junction: Junction, roads: Map<string, RoadGeo>): 
 	const outline = outlineOf(junction, ends);
 	const asphalt = outline.polygon.length >= 3 ? union([toPath(outline.polygon)]) : [];
 	const curves: Curve[] = [];
-	const resolved: { c: Connection; curve: Curve; fromEnd: EndInfo; toEnd: EndInfo }[] = [];
+	const resolved: {
+		c: Connection;
+		curve: Curve;
+		fromEnd: EndInfo;
+		toEnd: EndInfo;
+		travel: boolean;
+	}[] = [];
 	for (const c of junction.connections) {
 		const a = laneEndOf(ends, c.from);
 		const b = laneEndOf(ends, c.to);
 		if (!a || !b) continue;
 		const curve = connectionCurve(a.lane, a.end, b.lane, b.end);
 		curves.push(curve);
-		resolved.push({ c, curve, fromEnd: a.end, toEnd: b.end });
+		resolved.push({ c, curve, fromEnd: a.end, toEnd: b.end, travel: isTravel(a.lane.lane) });
 	}
 	const islands: JunctionDraw['islands'] = [];
 	for (const island of junction.islands) {
@@ -1227,8 +1401,8 @@ export function buildJunction(junction: Junction, roads: Map<string, RoadGeo>): 
 		if (shape) islands.push({ path: toPath(shape), surface: island.surface });
 	}
 
-	// Carry roads straight across where nothing but narrow roads (driveways)
-	// joins them and nobody has to stop.
+	// Carry roads straight across where nothing but driveways (joinsOnly) joins
+	// them and nobody has to stop.
 	const out = {
 		carried: [] as JunctionDraw['carried'],
 		marks: [] as Mark[],
@@ -1236,88 +1410,161 @@ export function buildJunction(junction: Junction, roads: Map<string, RoadGeo>): 
 		yellow: [] as Pt[][]
 	};
 	const carriedEnds = new Set<string>();
-	const roadwayWidth = (e: EndInfo) =>
-		e.lanes.filter((l) => isRoadway(l.lane)).reduce((s, l) => s + l.right - l.left, 0);
 	for (const a of ends) {
 		if (!a.lanes.some((l) => isRoadway(l.lane))) continue;
 		if ((junction.control[a.key] ?? 'none') !== 'none') continue;
-		const facing = facingOf(a, ends, junction);
+		const facing = facingOf(a, ends, junction.connections);
 		if (facing.some((e) => (junction.control[e.key] ?? 'none') !== 'none')) continue;
 		const rest = ends.filter(
 			(e) => e !== a && !facing.includes(e) && dot(e.frame.out, a.frame.out) <= 0.7
 		);
-		if (rest.some((e) => roadwayWidth(e) >= NARROW)) continue;
+		if (rest.some((e) => !joinsOnly(e, ends, junction.connections))) continue;
+		// Traffic turning across it; the road's own, following it round a
+		// bend, isn't.
+		const own = (r: (typeof resolved)[number]) =>
+			(r.fromEnd === a && facing.includes(r.toEnd)) ||
+			(r.toEnd === a && facing.includes(r.fromEnd));
 		const turning = resolved
-			.filter((r) => dot(neg(r.fromEnd.frame.out), r.toEnd.frame.out) < Math.cos(Math.PI / 6))
+			.filter(
+				(r) => !own(r) && dot(neg(r.fromEnd.frame.out), r.toEnd.frame.out) < Math.cos(Math.PI / 6)
+			)
 			.map((r) => r.curve);
 		if (carry(a, ends, junction, turning, out)) {
 			carriedEnds.add(a.key);
 			for (const e of facing) carriedEnds.add(e.key);
 		}
 	}
-	// A road with priority that carries on keeps its lane lines (dashed,
-	// between lanes going the same way) through the junction, even round a
-	// bend, as a roundabout's ring does past each entry.
+	// A road with priority that carries on keeps its lines through the
+	// junction, even round a bend, as a roundabout's ring does past each
+	// entry. The paint follows the neighbour rule of a two-road node
+	// (link.ts) with right of way added: traffic from an approach that stops,
+	// yields or has signals gives way to the road, so its paths never break
+	// the road's lines; a path from another approach nobody controls does.
+	const free = (e: EndInfo) => (junction.control[e.key] ?? 'none') === 'none';
+	const linesOn = new Set<string>();
 	for (const { pair, priority } of continuingPairs(ends, junction.connections)) {
 		const [a, b] = pair;
-		if (!priority || carriedEnds.has(a.key)) continue;
-		if (
-			(junction.control[a.key] ?? 'none') !== 'none' ||
-			(junction.control[b.key] ?? 'none') !== 'none'
-		)
-			continue;
-		// Only where no other movement crosses them.
+		if (!priority || carriedEnds.has(a.key) || !free(a) || !free(b)) continue;
+		const through = (r: (typeof resolved)[number]) =>
+			(r.fromEnd === a && r.toEnd === b) || (r.fromEnd === b && r.toEnd === a);
+		// Dashes between the road's lanes going the same way, unless a path
+		// with right of way crosses them (the road's own traffic turning off
+		// changes lanes first, so it doesn't).
 		const crossing = resolved
-			.filter((r) => !(r.fromEnd === a && r.toEnd === b) && !(r.fromEnd === b && r.toEnd === a))
+			.filter((r) => r.fromEnd !== a && r.fromEnd !== b && free(r.fromEnd))
 			.map((r) => r.curve);
 		const dashes = throughDashes(junction, ends, a, b).filter((m) => !crossesAny(m.pts, crossing));
-		if (!dashes.length) continue;
-		// Its lines meet the carried ones at the outline.
-		carriedEnds.add(a.key);
-		carriedEnds.add(b.key);
 		for (const m of dashes) {
 			const s = [0];
 			for (let k = 1; k < m.pts.length; k++) s.push(s[k - 1] + dist(m.pts[k], m.pts[k - 1]));
 			paintLine(m.pts, s, true, out.white);
 			out.marks.push(m);
 		}
-		if (!sameLanes(a, b)) continue;
-		// Its edge lines carry on too where no other road joins on that side
-		// (a ring's inner edge along the apron); the side with the entry
-		// breaks for it.
-		const edges = (e: EndInfo) =>
-			rowMarks(e.lanes.map((l) => ({ lane: l.lane, left: l.left, right: l.right })))
-				.filter((m) => !m.dashed)
-				.map((m) => ({ colour: m.colour, p: offsetPoint(e.frame.p, e.frame.n, m.o) }))
-				.sort((p, q) => lateral(a, p.p) - lateral(a, q.p));
-		const ea = edges(a);
-		const eb = edges(b);
-		if (ea.length !== eb.length) continue;
-		const rest = ends.filter((e) => e !== a && e !== b);
-		let inner: Paths | null = null;
-		// Sides measured from the middle of the road's own width.
-		const mid =
-			(Math.min(...a.lanes.map((l) => l.left)) + Math.max(...a.lanes.map((l) => l.right))) / 2;
-		const side = Math.sign(rest.reduce((sum, e) => sum + lateral(a, e.frame.p) - mid, 0));
-		ea.forEach((m, i) => {
-			if (eb[i].colour !== m.colour) return;
-			// Only the edge away from every other road's mouth.
-			if (rest.length && Math.sign(lateral(a, m.p) - mid) === side) return;
-			if (!inner) inner = offset(union(asphalt), -0.3);
-			const pts = curveBetween(
-				m.p,
-				neg(a.frame.out),
-				eb[i].p,
-				b.frame.out,
-				Math.max(6, Math.ceil(dist(m.p, eb[i].p) / 1.2))
+		let painted = dashes.length > 0;
+		// Edge lines, where the road keeps its lanes across: each runs on
+		// wherever nothing lies just beyond it, neither another car path nor
+		// another road's mouth. Any path counts, given way or not: a path
+		// coming in from an entry runs beside the road's outermost path, or
+		// across it, until it has merged, so that path has no bare outside
+		// there, and the outer edge line stops at the mouth and starts again
+		// past it; the same goes for a path turning off at an exit, and for a
+		// lane of the other road that no path uses. The far side, with nothing
+		// joining it (a ring's inner edge along the apron), runs unbroken.
+		if (sameLanes(a, b)) {
+			// A median stopping in its nose has its lines wrapped round the nose
+			// on the road (road.ts), so none carry on from beside it.
+			const nosed = (e: EndInfo, o: number) =>
+				e.geo.road.noses?.[e.ref.end] !== 0 &&
+				e.lanes.some(
+					(l, i) =>
+						isRaised(l.lane) &&
+						(Math.abs(l.left - INSET - o) < 0.02 || Math.abs(l.right + INSET - o) < 0.02) &&
+						e.lanes.slice(0, i).some((x) => isRoadway(x.lane)) &&
+						e.lanes.slice(i + 1).some((x) => isRoadway(x.lane))
+				);
+			const edges = (e: EndInfo) =>
+				rowMarks(e.lanes.map((l) => ({ lane: l.lane, left: l.left, right: l.right })))
+					.filter((m) => !m.dashed && !nosed(e, m.o))
+					.map((m) => ({ colour: m.colour, o: m.o, p: offsetPoint(e.frame.p, e.frame.n, m.o) }))
+					.sort((p, q) => lateral(a, p.p) - lateral(a, q.p));
+			const ea = edges(a);
+			const eb = edges(b);
+			const mouths = union(
+				ends.filter((e) => e !== a && e !== b).flatMap((e) => nearEnd(e, 1, isRoadway))
 			);
-			// Only where it stays on the junction's asphalt.
-			if (!pts.slice(1, -1).every((q) => inside(inner!, q))) return;
-			const s = [0];
-			for (let k = 1; k < pts.length; k++) s.push(s[k - 1] + dist(pts[k], pts[k - 1]));
-			paintLine(pts, s, false, m.colour === 'white' ? out.white : out.yellow);
-			out.marks.push({ colour: m.colour, dashed: false, pts });
-		});
+			const beside = union([
+				...resolved.filter((r) => !through(r) && r.travel).map((r) => band(r.curve).path),
+				...mouths
+			]);
+			// (The paint is clipped to the asphalt below; a line that leaves
+			// it altogether stops. A hair of slack keeps a line's first and
+			// last points, right on the mouths.)
+			const paved = offset(union(asphalt), 0.02);
+			// Sides measured from the middle of the road's own width.
+			const mid =
+				(Math.min(...a.lanes.map((l) => l.left)) + Math.max(...a.lanes.map((l) => l.right))) / 2;
+			// An edge line just inside a curb that runs straight from one end
+			// to the other, nobody joining between, follows that curb at its
+			// inset. A curve guessed from the two ends alone strays off the
+			// asphalt where the curb is long or bends one way then the other.
+			const alongCurb = (p: Pt, q: Pt) => {
+				for (const c of outline.corners) {
+					const pts =
+						c.a === a.key && c.b === b.key
+							? c.pts
+							: c.a === b.key && c.b === a.key
+								? [...c.pts].reverse()
+								: null;
+					if (!pts || pts.length < 2) continue;
+					const near = (curb: Pt, mark: Pt) => Math.abs(dist(curb, mark) - INSET) < 0.05;
+					if (!near(pts[0], p) || !near(pts[pts.length - 1], q)) continue;
+					const line = insetLine(pts, p, INSET);
+					if (line) return line;
+				}
+				return null;
+			};
+			if (ea.length === eb.length)
+				ea.forEach((m, i) => {
+					if (eb[i].colour !== m.colour) return;
+					const curb = alongCurb(m.p, eb[i].p);
+					const pts =
+						curb?.pts ??
+						curveBetween(
+							m.p,
+							neg(a.frame.out),
+							eb[i].p,
+							b.frame.out,
+							Math.max(12, Math.ceil(dist(m.p, eb[i].p) / 0.5))
+						);
+					// Looking past the line, away from the road.
+					const away = Math.sign(m.o - mid);
+					const bare = pts.map((q, k) => {
+						const p0 = pts[Math.max(0, k - 1)];
+						const p1 = pts[Math.min(pts.length - 1, k + 1)];
+						const l = dist(p0, p1) || 1;
+						let n = curb?.out[k] ?? { x: -(p1.y - p0.y) / l, y: (p1.x - p0.x) / l };
+						if (!curb && dot(n, a.frame.n) * away < 0) n = neg(n);
+						// Past a curb line lies only the curb: a path that seems to
+						// lie there is a turn guessed wide of the asphalt.
+						const past = curb ? mouths : beside;
+						return inside(paved, q) && !EDGE_PROBES.some((d) => inside(past, offsetPoint(q, n, d)));
+					});
+					for (const run of runsOf(pts, bare)) {
+						const s = [0];
+						for (let k = 1; k < run.length; k++) s.push(s[k - 1] + dist(run[k], run[k - 1]));
+						if (s[s.length - 1] < 1) continue;
+						paintLine(run, s, false, m.colour === 'white' ? out.white : out.yellow);
+						out.marks.push({ colour: m.colour, dashed: false, pts: run });
+						painted = true;
+					}
+				});
+		}
+		// Its lines meet the junction's at the outline; its medians and
+		// verges keep their own noses, as nothing else of it is carried.
+		if (painted) {
+			linesOn.add(a.key);
+			linesOn.add(b.key);
+		}
 	}
 
 	// Surfaces a walkway can cross: the junction's asphalt, and the roadway of
@@ -1436,17 +1683,19 @@ export function buildJunction(junction: Junction, roads: Map<string, RoadGeo>): 
 				// meet ahead of both ends, the outer edge also rounds that corner in
 				// one curve inside it, filling any dent where the curb turns
 				// tightly; the curve never leaves the corner, so it can't bulge or
-				// end in a point. Where an end runs past the other's edge, the band
-				// alone is the corner.
+				// end in a point. Where an end runs past the other's edge, or the
+				// band crosses another road's mouth on the way (not paved across a
+				// driveway), the band alone is the corner.
 				const band = ribbon(pts, ia, ib, oa, ob, outward);
-				const outer = w.bare
-					? null
-					: fillet(
-							outerEdge(ea.end, ea.lane, ca.leave),
-							neg(ea.end.frame.out),
-							outerEdge(eb.end, eb.lane, cb.arrive),
-							neg(eb.end.frame.out)
-						);
+				const outer =
+					w.bare || (!w.paved && chain.crossed.length)
+						? null
+						: fillet(
+								outerEdge(ea.end, ea.lane, ca.leave),
+								neg(ea.end.frame.out),
+								outerEdge(eb.end, eb.lane, cb.arrive),
+								neg(eb.end.frame.out)
+							);
 				body = subtract(
 					outer
 						? union([
@@ -1470,6 +1719,30 @@ export function buildJunction(junction: Junction, roads: Map<string, RoadGeo>): 
 				// Closed and opened by 10 cm: no dent where the band's pieces meet,
 				// no zero-width sliver left along a curb.
 				body = open(close(body, 0.1), 0.1);
+				// Past the mouth of a road it crosses with a crosswalk (one without
+				// sidewalks of its own), the band is the crossing over that road's
+				// roadway and a square landing either side of it, as deep as the
+				// crossing and as wide as the sidewalk, instead of whatever its
+				// rounding round the curb point would leave there. Paved across a
+				// driveway, it just runs on.
+				for (const key of w.paved ? [] : chain.crossed) {
+					const e = ends.find((x) => x.key === key);
+					if (!e) continue;
+					const roadway = e.lanes.filter((l) => isRoadway(l.lane));
+					if (!roadway.length) continue;
+					const lo = Math.min(...roadway.map((l) => l.left));
+					const hi = Math.max(...roadway.map((l) => l.right));
+					const at = (along: number, across: number) =>
+						offsetPoint(offsetPoint(e.frame.p, e.frame.out, along), e.frame.n, across);
+					const box = (d: number, from: number, to: number) =>
+						toPath([at(0, from), at(d, from), at(d, to), at(0, to)]);
+					const far = width + 8;
+					body = union([
+						...subtract(body, subtract([box(far, lo - far, hi + far)], roadways.get(e)!)),
+						box(width, lo - width, lo),
+						box(width, hi, hi + width)
+					]);
+				}
 				// The verge stops at every road mouth it passes (a driveway's
 				// asphalt runs through it; only the sidewalk carries on across).
 				if (!w.bare && (ia > 0.3 || ib > 0.3))
@@ -1477,12 +1750,46 @@ export function buildJunction(junction: Junction, roads: Map<string, RoadGeo>): 
 				centre = chain.pts;
 			} else {
 				walkOnly = true;
-				// A walk-only road at either end: straight on between them.
-				// Straight across: a curve between two trail ends that don't
-				// quite line up would kink into a chevron.
-				centre = [ea.lane.point, eb.lane.point];
+				// A walk-only road at either end: on between them, leaving each
+				// square to its end, so a path drawn on a curve through the node
+				// carries on along it (straight where the two ends line up).
+				const a = ea.lane.point;
+				const b = eb.lane.point;
+				centre = curveBetween(
+					a,
+					neg(ea.end.frame.out),
+					b,
+					eb.end.frame.out,
+					Math.max(2, Math.ceil(dist(a, b) / 1.5))
+				);
 				width = Math.max(ea.lane.right - ea.lane.left, eb.lane.right - eb.lane.left);
 				body = offsetLine(centre, width / 2);
+				// Its zebra stripes run along the road it crosses (that road's
+				// ends' headings, averaged), one on the middle of the crossing,
+				// each long enough for any angle: clipped to the path over the
+				// roadway, the zebra is as wide as the path and spans just the
+				// roadway, however the path meets the road or curves.
+				const along = ends
+					.filter((e) => e !== ea.end && e !== eb.end && e.lanes.some((l) => isRoadway(l.lane)))
+					.reduce(
+						(d, e) => {
+							const s = dot(d, e.frame.out) < 0 ? -1 : 1;
+							return { x: d.x + s * e.frame.out.x, y: d.y + s * e.frame.out.y };
+						},
+						{ x: 0, y: 0 }
+					);
+				const l = Math.hypot(along.x, along.y);
+				if (l > 1e-6) {
+					const across = { x: -along.y / l, y: along.x / l };
+					const m = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+					const reach = Math.ceil(dist(a, b) / 2 + width) + 0.5;
+					stripes = union(
+						bars(
+							[offsetPoint(m, across, -reach), offsetPoint(m, across, reach)],
+							2 * (dist(a, b) + width)
+						)
+					);
+				}
 			}
 		}
 		const solid = crossableFor(ea.end, eb.end);
@@ -1532,11 +1839,13 @@ export function buildJunction(junction: Junction, roads: Map<string, RoadGeo>): 
 		const refuge = intersect(body, refuges);
 		// Sidewalk paving never covers a road; roads draw their own lanes.
 		const plain = subtract(subtract(body, solid), blockers);
-		if (ea.end !== eb.end && !w.bare)
-			(ea.lane.lane.kind === 'trail' || eb.lane.lane.kind === 'trail' ? trail : pavement).push(
-				...plain
-			);
+		const trailed = ea.lane.lane.kind === 'trail' || eb.lane.lane.kind === 'trail';
+		if (ea.end !== eb.end && !w.bare) (trailed ? trail : pavement).push(...plain);
 		if (over.length === 0 && refuge.length === 0) continue;
+		// A walk-only road crossing a road runs on over that road's sidewalk
+		// and verge right up to its zebra, in its own surface: a trail's, or
+		// sidewalk paving for a footpath.
+		const approach = walkOnly ? subtract(body, union([...solid, ...islandPaths, ...refuge])) : [];
 		// A walkway laid across another road's mouth pushes that road's stop
 		// line back behind it.
 		if (w.on && ea.end !== eb.end) {
@@ -1557,10 +1866,8 @@ export function buildJunction(junction: Junction, roads: Map<string, RoadGeo>): 
 			zebra: w.paved
 				? []
 				: intersect(stripes ?? union(bars(centre, width)), subtract(over, refuge)),
-			paving: w.paved ? over : [],
-			// A trail crossing a road runs on over that road's sidewalk and
-			// verge right up to its zebra.
-			trail: walkOnly ? subtract(body, union([...solid, ...islandPaths, ...refuge])) : [],
+			paving: w.paved ? over : trailed ? [] : approach,
+			trail: trailed ? approach : [],
 			refuge,
 			hit: union([...over, ...refuge])
 		});
@@ -1621,17 +1928,19 @@ export function buildJunction(junction: Junction, roads: Map<string, RoadGeo>): 
 			p: offsetPoint(fb.p, fb.n, (lo + hi) / 2 > 0 ? hi + 2 : lo - 2),
 			control
 		});
-		// What each lane may do: through, left, right or a U-turn.
+		// What each lane may do: through, left, right or a U-turn. A U-turn
+		// is a path back into its own road; a sharp turn onto another road
+		// is still a left or right, however tight.
 		const movesOf = new Map(
 			incoming.map((l) => {
-				const moves = new Set<string>();
+				const moves = new Set<Move>();
 				for (const r of resolved) {
 					if (laneKey(r.c.from) !== laneKey(l.ref)) continue;
 					const dIn = neg(end.frame.out);
 					const dOut = r.toEnd.frame.out;
 					const ahead = dot(dIn, dOut);
 					const turn = dIn.x * dOut.y - dIn.y * dOut.x;
-					moves.add(ahead > 0.7 ? 'through' : ahead < -0.7 ? 'u' : turn > 0 ? 'right' : 'left');
+					moves.add(r.toEnd === end ? 'u' : ahead > 0.7 ? 'through' : turn > 0 ? 'right' : 'left');
 				}
 				return [l, moves];
 			})
@@ -1641,68 +1950,59 @@ export function buildJunction(junction: Junction, roads: Map<string, RoadGeo>): 
 		const turnLane = [...movesOf.values()].some((m) => m.size > 0 && !m.has('through'));
 		if (control === 'none' && !turnLane && !junction.arrows?.includes(end.key)) continue;
 		// One bar (or one row of give-way teeth) across each run of incoming
-		// lanes that end at the same place.
+		// lanes that end at the same place. The stop line's back edge is where
+		// the road's paint stops, so the lines either side run into its ends;
+		// the teeth sit half a stop gap short of it.
 		const runs = new Map<number, LaneEnd[]>();
 		for (const l of incoming) {
 			const k = Math.round(l.at.distance * 10);
 			runs.set(k, [...(runs.get(k) ?? []), l]);
 		}
 		for (const run of control === 'none' ? [] : runs.values()) {
-			const f = atL(run[0], setback - STOP_GAP / 2);
-			const rl = Math.min(...run.map((l) => l.left));
-			const rh = Math.max(...run.map((l) => l.right));
+			const f = atL(run[0], setback - (control === 'yield' ? STOP_GAP : STOP_LINE) / 2);
+			const rl = Math.min(...run.map((l) => l.left)) + 0.15;
+			const rh = Math.max(...run.map((l) => l.right)) - 0.15;
 			if (control === 'yield') {
-				for (let x = rl + 0.3; x + 0.6 <= rh - 0.1; x += 0.9) {
-					const a = offsetPoint(f.p, f.n, x);
-					const b = offsetPoint(f.p, f.n, x + 0.6);
-					white.push([a, b, offsetPoint(offsetPoint(f.p, f.n, x + 0.3), end.frame.out, 1.0)]);
-				}
-				// The give-way line itself: short dashes just ahead of the teeth.
-				const g = atL(run[0], setback - STOP_GAP / 2 - 0.35);
-				for (let x = rl + 0.2; x + 0.5 <= rh - 0.1; x += 0.9) {
-					white.push(quad(offsetPoint(g.p, g.n, x), offsetPoint(g.p, g.n, x + 0.5), 0.1));
+				// A row of teeth pointing at oncoming traffic, centred across the run.
+				const n = Math.floor((rh - rl + YIELD_GAP) / (YIELD_BASE + YIELD_GAP));
+				let x = (rl + rh - n * (YIELD_BASE + YIELD_GAP) + YIELD_GAP) / 2;
+				for (let i = 0; i < n; i++, x += YIELD_BASE + YIELD_GAP) {
+					const apex = offsetPoint(f.p, f.n, x + YIELD_BASE / 2);
+					white.push([
+						offsetPoint(f.p, f.n, x),
+						offsetPoint(f.p, f.n, x + YIELD_BASE),
+						offsetPoint(apex, end.frame.out, YIELD_HEIGHT)
+					]);
 				}
 			} else {
-				white.push(quad(offsetPoint(f.p, f.n, rl + 0.15), offsetPoint(f.p, f.n, rh - 0.15), 0.25));
+				white.push(quad(offsetPoint(f.p, f.n, rl), offsetPoint(f.p, f.n, rh), STOP_LINE / 2));
 			}
 		}
-		for (const l of incoming) {
-			const moves = movesOf.get(l)!;
-			if (
-				!moves.size ||
-				setback + 9 >
+		const arrowed = incoming.filter(
+			(l) =>
+				movesOf.get(l)!.size > 0 &&
+				setback + 9 <=
 					l.at.distance + (end.ref.end === 'start' ? end.geo.path.length - 2 * l.at.distance : 0)
-			)
-				continue;
+		);
+		// Every arrow on an approach is drawn at one size: full size unless one
+		// of them is wider than its lane allows.
+		const scale = Math.min(
+			1,
+			...arrowed.map((l) => (l.right - l.left - 0.5) / arrowWidth(arrowOutline(movesOf.get(l)!)))
+		);
+		// Each arrow's tail is 6 m back from where the paint stops, so all of an
+		// approach's arrows start and end level (see `arrows.ts`).
+		for (const l of arrowed) {
 			const fa = atL(l, setback + 6);
 			const base = offsetPoint(fa.p, fa.n, (l.left + l.right) / 2);
 			// Along the lane where the arrow sits (the road may curve).
 			const dIn = end.ref.end === 'end' ? fa.t : neg(fa.t);
-			const tip = offsetPoint(base, dIn, 3);
-			// A turn-only arrow's stem stops where it turns.
-			white.push(quad(base, moves.has('through') ? tip : offsetPoint(tip, dIn, -0.6), 0.12));
 			const side = { x: -dIn.y, y: dIn.x };
-			for (const m of moves) {
-				if (m === 'through') {
-					white.push([
-						offsetPoint(tip, side, 0.4),
-						offsetPoint(tip, side, -0.4),
-						offsetPoint(tip, dIn, 0.8)
-					]);
-					continue;
-				}
-				const sign = m === 'right' ? 1 : -1;
-				const elbow = offsetPoint(tip, dIn, -0.6);
-				const o = offsetPoint(elbow, side, sign * 0.6);
-				white.push(quad(elbow, o, 0.12));
-				const dir = m === 'u' ? neg(dIn) : { x: side.x * sign, y: side.y * sign };
-				const perp = { x: -dir.y, y: dir.x };
-				white.push([
-					offsetPoint(o, perp, 0.35),
-					offsetPoint(o, perp, -0.35),
-					offsetPoint(o, dir, 0.5)
-				]);
-			}
+			white.push(
+				arrowOutline(movesOf.get(l)!).map((q) =>
+					offsetPoint(offsetPoint(base, side, q.x * scale), dIn, q.y * scale)
+				)
+			);
 		}
 	}
 	const mouths = [...outline.curbs.values()].map((c) => ({
@@ -1729,6 +2029,7 @@ export function buildJunction(junction: Junction, roads: Map<string, RoadGeo>): 
 			e.lanes.filter((l) => l.flow !== 'none').map((l) => ({ p: l.point, flow: l.flow }))
 		),
 		carriedEnds,
+		linesOn,
 		setbacks,
 		mouths
 	};

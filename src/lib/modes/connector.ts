@@ -9,20 +9,25 @@ import { nodeHitAt, segmentHitAt } from './picking';
 // to a dot of the same kind on another road to add that connection, or to
 // remove it if it is there; the drawing follows the connections. Every
 // crossing at the node shows as a line straight across its road with a
-// handle: drag the handle to slide it along the road, double-click it to
-// switch the crossing off (a hollow handle) or on again. Dragging between
+// handle: drag the handle to slide it along the road, click it to switch
+// the crossing off (a hollow handle) or on again. Dragging between
 // the two sidewalk dots of one road adds a crossing there.
 //
 // The mode is modal: while it's open nothing else hovers or selects. Clicking a
 // road or node is ignored (so you can't accidentally grab the road next door);
 // leave with Escape or a click on empty ground.
+// How far a press on a crossing handle may wander and still be a click.
+const CLICK_SLOP_PX = 3;
+
 export function setupConnectorMode(editor: Editor): ModeHandlers {
 	editor.refreshConnectors();
 	const canvas = editor.sceneManager.getCanvas();
 
 	let dragStart: ConnectorEndpoint | null = null;
-	// A crosswalk being slid along its road (by its index on the node).
-	let crossingDrag: number | null = null;
+	// A crossing handle pressed (by its index on the node): it slides along
+	// its road once the pointer moves past CLICK_SLOP_PX, else the release
+	// switches it.
+	let crossingDrag: { index: number; x: number; y: number; moved: boolean } | null = null;
 	// A mousedown on empty ground becomes an exit on mouseup, unless it turned
 	// into a drag.
 	let pendingExit = false;
@@ -37,7 +42,8 @@ export function setupConnectorMode(editor: Editor): ModeHandlers {
 
 		const crossing = editor.crossingHandleAt(world.x, world.z);
 		if (crossing) {
-			crossingDrag = crossing.index;
+			crossingDrag = { index: crossing.index, x: event.clientX, y: event.clientY, moved: false };
+			editor.lightHandle({ kind: 'crossing', index: crossing.shown }, 'active');
 			pendingExit = false;
 			setCursor('grabbing');
 			return;
@@ -63,7 +69,9 @@ export function setupConnectorMode(editor: Editor): ModeHandlers {
 		const world = editor.sceneManager.screenToWorld(event.clientX, event.clientY);
 
 		if (crossingDrag !== null) {
-			editor.moveCrossing(crossingDrag, world.x, world.z);
+			const travel = Math.hypot(event.clientX - crossingDrag.x, event.clientY - crossingDrag.y);
+			if (travel > CLICK_SLOP_PX) crossingDrag.moved = true;
+			if (crossingDrag.moved) editor.moveCrossing(crossingDrag.index, world.x, world.z);
 			return;
 		}
 
@@ -82,6 +90,9 @@ export function setupConnectorMode(editor: Editor): ModeHandlers {
 			return;
 		}
 
+		const crossing = editor.crossingHandleAt(world.x, world.z);
+		editor.lightHandle(crossing ? { kind: 'crossing', index: crossing.shown } : null);
+
 		// Hovering ANY dot (incoming or outgoing) highlights it and every movement
 		// that starts or ends there; only incoming dots are grabbable for a drag.
 		const near = editor.connectorEndpointNear(world.x, world.z);
@@ -93,9 +104,12 @@ export function setupConnectorMode(editor: Editor): ModeHandlers {
 		editor.connectionRenderer.hideRubberBand();
 
 		if (crossingDrag !== null) {
+			const { index, moved } = crossingDrag;
 			crossingDrag = null;
+			editor.lightHandle(null);
 			setCursor('default');
-			editor.graph.save();
+			if (moved) editor.graph.save();
+			else editor.switchCrossing(index);
 			return;
 		}
 
@@ -114,16 +128,11 @@ export function setupConnectorMode(editor: Editor): ModeHandlers {
 		}
 	};
 
-	// Double-clicking a lane dot drops all of its connections; double-clicking
-	// a crossing's handle switches the crossing off or back on.
+	// Double-clicking a lane dot drops all of its connections.
 	const onDoubleClick = (event: MouseEvent) => {
 		if (event.button !== 0) return;
 		const world = editor.sceneManager.screenToWorld(event.clientX, event.clientY);
-		const crossing = editor.crossingHandleAt(world.x, world.z);
-		if (crossing) {
-			editor.switchCrossing(crossing.index);
-			return;
-		}
+		if (editor.crossingHandleAt(world.x, world.z)) return;
 		const near = editor.connectorEndpointNear(world.x, world.z);
 		if (near) editor.toggleAllConnections(near);
 	};

@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { openGraph } from './scenes';
 import { saveCity } from './save';
 
 const STORAGE_KEY = 'citynista-graph-v2';
@@ -55,14 +56,8 @@ const savedGraph = async (page: import('@playwright/test').Page) => {
 	}, STORAGE_KEY);
 };
 
-async function seed(page: import('@playwright/test').Page, data: unknown) {
-	await page.goto('/?topdown');
-	await expect(page.locator('canvas')).toBeVisible();
-	await page.evaluate(({ key, data }) => localStorage.setItem(key, JSON.stringify(data)), {
-		key: STORAGE_KEY,
-		data
-	});
-	await page.reload();
+async function seed(page: import('@playwright/test').Page, data: object) {
+	await openGraph(page, data);
 	await expect(page.locator('nav')).toBeVisible();
 }
 

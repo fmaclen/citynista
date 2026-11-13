@@ -16,15 +16,21 @@ interface Pt {
 	y: number;
 }
 
-interface SegmentLike {
+export interface SegmentLike {
 	id: string;
 	startNodeId: string;
 	endNodeId: string;
 	controlX?: number;
 	controlY?: number;
-	offset: number;
+	// Its shift at each end (road-line.ts).
+	offsetStart: number;
+	offsetEnd: number;
 	lanes: Lane[];
 }
+
+// A segment's shift at the end that meets `nodeId`.
+const shiftAt = (segment: SegmentLike, nodeId: string) =>
+	segment.startNodeId === nodeId ? segment.offsetStart : segment.offsetEnd;
 
 // Where a cross-section's roadway lies across it, from its centre.
 export function roadwayOf(lanes: Lane[]) {
@@ -69,6 +75,34 @@ function normalAt(graph: Graph, segment: SegmentLike, nodeId: string) {
 	return { out, n: { x: -along.y, y: along.x } };
 }
 
+// The roads at a node that a segment there would attach beside: every other
+// road not itself attached at an edge.
+function mainsAt(graph: Graph, segment: SegmentLike, nodeId: string) {
+	const node = graph.nodes.get(nodeId);
+	const sides = node?.junction?.sides ?? {};
+	return (node?.connectedSegments ?? [])
+		.filter((id) => id !== segment.id && !sides[id])
+		.flatMap((id) => {
+			const s = graph.segments.get(id);
+			return s ? [s] : [];
+		});
+}
+
+// The side to record for a segment attached at `nodeId` so that its end
+// moves toward `across` (the way from the road it joins to the edge picked).
+// attachShift reads the side against the segment's own direction out of the
+// node, curve and all, so this must be asked once that is final.
+export function sideToward(graph: Graph, segment: SegmentLike, nodeId: string, across: Pt) {
+	const mains = mainsAt(graph, segment, nodeId);
+	const own = normalAt(graph, segment, nodeId);
+	const host = mains.length ? normalAt(graph, mains[0], nodeId) : null;
+	if (!own || !host) return null;
+	const right = { x: -own.out.y, y: own.out.x };
+	const wanted = host.n.x * across.x + host.n.y * across.y >= 0;
+	const rightward = host.n.x * right.x + host.n.y * right.y >= 0;
+	return wanted === rightward ? 'right' : 'left';
+}
+
 // How far a segment's end at `nodeId` is moved off the node: zero unless the
 // node attaches it at an edge of the other roads there.
 export function attachShift(graph: Graph, segment: SegmentLike, nodeId: string): Pt {
@@ -76,13 +110,7 @@ export function attachShift(graph: Graph, segment: SegmentLike, nodeId: string):
 	const node = graph.nodes.get(nodeId);
 	const side = node?.junction?.sides?.[segment.id];
 	if (!node || !side) return zero;
-	const sides = node.junction?.sides ?? {};
-	const mains = node.connectedSegments
-		.filter((id) => id !== segment.id && !sides[id])
-		.flatMap((id) => {
-			const s = graph.segments.get(id);
-			return s ? [s] : [];
-		});
+	const mains = mainsAt(graph, segment, nodeId);
 	const own = normalAt(graph, segment, nodeId);
 	if (!mains.length || !own) return zero;
 	// The side it is on: to its own right (looking out of the node along it)
@@ -101,7 +129,8 @@ export function attachShift(graph: Graph, segment: SegmentLike, nodeId: string):
 		if (!m) continue;
 		const r = roadwayOf(main.lanes);
 		const k = m.n.x * d.x + m.n.y * d.y;
-		edge = Math.min(edge, k >= 0 ? r.hi + main.offset : -(r.lo + main.offset));
+		const off = shiftAt(main, nodeId);
+		edge = Math.min(edge, k >= 0 ? r.hi + off : -(r.lo + off));
 	}
 	if (!Number.isFinite(edge)) return zero;
 	const mine = roadwayOf(segment.lanes);
@@ -110,7 +139,7 @@ export function attachShift(graph: Graph, segment: SegmentLike, nodeId: string):
 	// Where its roadway's middle goes, measured from the node along d.
 	const reach = edge + (beside ? half : -half);
 	// Its drawn end goes where that puts its roadway's middle.
-	const middle = (mine.lo + mine.hi) / 2 + segment.offset;
+	const middle = (mine.lo + mine.hi) / 2 + shiftAt(segment, nodeId);
 	// (Its own normal leans by the angle it joins at.)
 	const lean = own.n.x * d.x + own.n.y * d.y;
 	const along = reach - lean * middle;

@@ -1,13 +1,4 @@
-import type {
-	Brush,
-	Lane,
-	LaneMaterial,
-	LaneRole,
-	LaneTemplate,
-	LegacyLaneSurface,
-	LegacyLaneType,
-	StoredLane
-} from './types';
+import type { Brush, Lane, LaneMaterial, LaneRole, LaneTemplate } from './types';
 import { MATERIAL_COLOR } from './lane-types';
 
 export function laneSwatchColor(lane: { role: LaneRole; material: LaneMaterial }) {
@@ -112,68 +103,6 @@ export function serializeLanes(lanes: Lane[]): string {
 	return lanes
 		.map((lane) => `${lane.role}:${lane.material}:${lane.width}:${lane.direction}`)
 		.join(',');
-}
-
-const LEGACY_TYPE_MAP: Record<LegacyLaneType, { role: LaneRole; material: LaneMaterial }> = {
-	road: { role: 'vehicle', material: 'asphalt' },
-	concrete: { role: 'vehicle', material: 'concrete' },
-	bike: { role: 'vehicle', material: 'asphalt' },
-	parking: { role: 'vehicle', material: 'asphalt' },
-	transit: { role: 'vehicle', material: 'asphalt' },
-	turn: { role: 'vehicle', material: 'asphalt' },
-	sidewalk: { role: 'pedestrian', material: 'concrete' },
-	grass: { role: 'buffer', material: 'grass' },
-	median: { role: 'buffer', material: 'concrete' }
-};
-
-function legacySurfaceMaterial(surface: LegacyLaneSurface): {
-	material: LaneMaterial;
-} {
-	switch (surface) {
-		case 'curb':
-			return { material: 'concrete' };
-		case 'paint':
-			return { material: 'asphalt' };
-		case 'grass':
-			return { material: 'grass' };
-		case 'concrete':
-			return { material: 'concrete' };
-		case 'asphalt':
-			return { material: 'asphalt' };
-	}
-}
-
-export function migrateLane(stored: StoredLane): Lane {
-	const base = stored.type
-		? LEGACY_TYPE_MAP[stored.type]
-		: {
-				role: stored.role ?? ('vehicle' as const),
-				material: stored.material ?? ('asphalt' as const)
-			};
-
-	let material = base.material;
-
-	if (!stored.material && stored.surface) {
-		const legacy = legacySurfaceMaterial(stored.surface);
-		material = base.role === 'pedestrian' ? 'concrete' : legacy.material;
-	}
-
-	if (stored.material) {
-		material = stored.material;
-	}
-
-	const lane: Lane = {
-		role: base.role,
-		material,
-		width: stored.width,
-		direction: base.role === 'vehicle' ? stored.direction : 'bidirectional'
-	};
-	if (stored.id) lane.id = stored.id;
-	return lane;
-}
-
-export function migrateLanes(stored: StoredLane[]): Lane[] {
-	return stored.map(migrateLane);
 }
 
 // The same cross-section read end-to-end the other way: lane order reverses and

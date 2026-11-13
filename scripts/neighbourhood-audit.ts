@@ -25,7 +25,8 @@ interface AuditGraph {
 		endNodeId: string;
 		controlX?: number;
 		controlY?: number;
-		offset?: number;
+		offsetStart?: number;
+		offsetEnd?: number;
 		lanes?: AuditLane[];
 	}[];
 }
@@ -121,7 +122,10 @@ export function auditNeighbourhood(graph: AuditGraph) {
 			])
 		),
 		segments: new Map(
-			graph.segments.map((s) => [s.id, { ...s, offset: s.offset ?? 0, lanes: s.lanes ?? [] }])
+			graph.segments.map((s) => [
+				s.id,
+				{ ...s, offsetStart: s.offsetStart ?? 0, offsetEnd: s.offsetEnd ?? 0, lanes: s.lanes ?? [] }
+			])
 		)
 	};
 	const segments = graph.segments.map((s) => {

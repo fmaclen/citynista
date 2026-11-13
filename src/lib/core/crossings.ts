@@ -1,11 +1,12 @@
 import type { Graph } from './graph.svelte';
 import type { Segment } from './segment.svelte';
 import { getQuadraticBezierPoint, getQuadraticBezierTangent } from '../geometry/bezier';
-import { roadAt, roadLine } from './road-line';
+import { closestOnRoad, nodePoint, roadAt, roadLine } from './road-line';
+import { getTotalWidth } from './lane-template';
 
 const SAMPLES = 50;
 // Crossings this close to an existing endpoint are already junctions.
-const ENDPOINT_EXCLUSION = 6;
+export const ENDPOINT_EXCLUSION = 6;
 const MAX_SPLITS = 50;
 
 export interface Crossing {
@@ -18,18 +19,39 @@ export interface Crossing {
 	y: number;
 }
 
-// Find roads that cross mid-span and split both at a shared node, so the
-// crossing renders (and behaves) as a real intersection. Roads are found
-// crossing where they show (offset and all); the node goes where the two
-// segments' lines meet, so both roads stay exactly where they were. Returns
-// whether the graph changed.
-export function resolveCrossings(graph: Graph): boolean {
-	let changed = false;
+// Make the changed roads meet the others where they show, so overlaps render
+// (and behave) as real intersections. A changed road that passes over a node
+// of other roads (the node shows within the road's half width) is split there
+// and joined to it. Then changed roads that cross another road mid-span are both
+// split at a new shared node, placed where the two segments' lines meet so
+// both roads stay exactly where they were. Crossings near a road's end are
+// left out of that second pass, so the node pass reaches at least that far
+// even past a narrow road's edge, and so are crossings of two roads near a
+// node they already share (`nearSharedNode`): they meet there already.
+// Only the changed roads (and the pieces they split into) are looked at, so an
+// edit never rewires roads elsewhere. Returns whether the graph changed.
+export function resolveCrossings(graph: Graph, changed: Iterable<string>) {
+	const scope = new Set(changed);
+	const scoped = () => [...scope].flatMap((id) => graph.segments.get(id) ?? []);
+	const split = (segment: Segment, t: number, nodeId: string) => {
+		const halves = splitSegment(graph, segment, t, nodeId);
+		if (!halves || !scope.delete(segment.id)) return;
+		scope.add(halves.left.id);
+		scope.add(halves.right.id);
+	};
+	let changedGraph = false;
 
 	for (let i = 0; i < MAX_SPLITS; i++) {
+		const pass = findNodePass(graph, scoped());
+		if (pass) {
+			split(pass.segment, pass.t, pass.nodeId);
+			changedGraph = true;
+			continue;
+		}
+
 		const crossing = findCrossingsBetweenSegments(
 			graph,
-			graph.segments.values(),
+			scoped(),
 			graph,
 			graph.segments.values()
 		)[0];
@@ -37,12 +59,34 @@ export function resolveCrossings(graph: Graph): boolean {
 
 		const { tA, tB, at } = nodeFor(graph, crossing);
 		const node = graph.createNode(at.x, at.y);
-		splitSegment(graph, crossing.segmentA, tA, node.id);
-		splitSegment(graph, crossing.segmentB, tB, node.id);
-		changed = true;
+		split(crossing.segmentA, tA, node.id);
+		split(crossing.segmentB, tB, node.id);
+		changedGraph = true;
 	}
 
-	return changed;
+	return changedGraph;
+}
+
+// The first road that passes over a node of other roads, away from the road's
+// own ends.
+function findNodePass(graph: Graph, segments: Segment[]) {
+	for (const segment of segments) {
+		const reach = Math.max(getTotalWidth(segment.lanes) / 2, ENDPOINT_EXCLUSION);
+		const line = sampleRoad(graph, segment);
+		if (!line) continue;
+		const box = boxOf(line);
+		for (const node of graph.nodes.values()) {
+			if (node.connectedSegments.length === 0) continue;
+			if (node.id === segment.startNodeId || node.id === segment.endNodeId) continue;
+			const p = nodePoint(graph, node);
+			if (p.x < box.x0 - reach || p.x > box.x1 + reach) continue;
+			if (p.y < box.y0 - reach || p.y > box.y1 + reach) continue;
+			const near = closestOnRoad(graph, segment, p.x, p.y);
+			if (near.distance >= reach || isNearSegmentEndpoint(graph, segment, near)) continue;
+			return { segment, t: near.t, nodeId: node.id };
+		}
+	}
+	return null;
 }
 
 // The segment's line (a quadratic between its nodes) at t, and its
@@ -99,12 +143,12 @@ export function findCrossingsBetweenSegments(
 			return line ? [{ segment, line, box: boxOf(line) }] : [];
 		});
 	const a = lines(graphA, segmentsA);
-	const b = graphA === graphB ? a : lines(graphB, segmentsB);
+	const b = segmentsA === segmentsB ? a : lines(graphB, segmentsB);
 
 	for (const [i, la] of a.entries()) {
 		for (const [j, lb] of b.entries()) {
 			// Each pair once, and never a segment against itself.
-			if (graphA === graphB && j <= i) continue;
+			if (la.segment === lb.segment || (b === a && j <= i)) continue;
 			if (!overlaps(la.box, lb.box)) continue;
 			crossings.push(
 				...findPolylineCrossingsBetween(graphA, la.segment, la.line, graphB, lb.segment, lb.line)
@@ -121,7 +165,7 @@ interface PolylinePoint {
 	t: number;
 }
 
-// The road as it shows (its segment's line moved by its offset), sampled.
+// The road as it shows (its segment's line moved by its shift), sampled.
 function sampleRoad(graph: Graph, segment: Segment): PolylinePoint[] | null {
 	const line = roadLine(graph, segment, segment.hasControlPoint ? SAMPLES : 1);
 	return line.length >= 2 ? line : null;
@@ -157,7 +201,8 @@ function findPolylineCrossingsBetween(
 
 			if (
 				isNearSegmentEndpoint(graphA, segmentA, hit) ||
-				isNearSegmentEndpoint(graphB, segmentB, hit)
+				isNearSegmentEndpoint(graphB, segmentB, hit) ||
+				(graphA === graphB && nearSharedNode(graphA, segmentA, segmentB, hit))
 			) {
 				continue;
 			}
@@ -189,6 +234,26 @@ function isNearSegmentEndpoint(graph: Graph, segment: Segment, point: { x: numbe
 	return false;
 }
 
+// Whether a crossing of two roads lies near a node they share. From that
+// node the roads' bodies overlap until they are a whole half width each
+// apart: out to (wA + wB) / 2 / sin θ, θ the angle between them there. Each
+// road's line is never shifted further than its half width at the node, so
+// two roads sharing a node whose lines cross within that reach are only
+// crossing inside the junction they already make.
+function nearSharedNode(graph: Graph, a: Segment, b: Segment, point: { x: number; y: number }) {
+	for (const nodeId of [a.startNodeId, a.endNodeId]) {
+		if (nodeId !== b.startNodeId && nodeId !== b.endNodeId) continue;
+		const node = graph.nodes.get(nodeId);
+		const ta = roadAt(graph, a, a.startNodeId === nodeId ? 0 : 1)?.tangent;
+		const tb = roadAt(graph, b, b.startNodeId === nodeId ? 0 : 1)?.tangent;
+		if (!node || !ta || !tb) continue;
+		const sin = Math.abs(ta.x * tb.y - ta.y * tb.x);
+		const reach = (getTotalWidth(a.lanes) + getTotalWidth(b.lanes)) / 2 / sin;
+		if (Math.hypot(point.x - node.x, point.y - node.y) < reach) return true;
+	}
+	return false;
+}
+
 function intersectLineSegments(
 	p1: { x: number; y: number },
 	p2: { x: number; y: number },
@@ -213,12 +278,15 @@ function intersectLineSegments(
 
 // Split a segment at parameter t through an existing node. Curved segments
 // keep their exact shape: de Casteljau subdivision of a quadratic yields two
-// quadratics whose control points are the lerped legs.
+// quadratics whose control points are the lerped legs. Returns the two
+// halves: start to the node, and the node to the end.
 export function splitSegment(graph: Graph, segment: Segment, t: number, nodeId: string) {
 	const startNode = graph.nodes.get(segment.startNodeId);
 	const endNode = graph.nodes.get(segment.endNodeId);
 	if (!startNode || !endNode) return;
 
+	// The shift where it is cut, so both halves show where the road did.
+	const cut = roadAt(graph, segment, t)?.shift ?? segment.offsetStart;
 	const hadControl = segment.hasControlPoint;
 	let leftControl: { x: number; y: number } | null = null;
 	let rightControl: { x: number; y: number } | null = null;
@@ -248,10 +316,13 @@ export function splitSegment(graph: Graph, segment: Segment, t: number, nodeId: 
 		left.setControlPoint(leftControl.x, leftControl.y);
 	}
 
-	left.offset = segment.offset;
+	left.offsetStart = segment.offsetStart;
+	left.offsetEnd = cut;
 	const right = graph.createSegment(nodeId, endNodeId, rightLanes);
-	right.offset = segment.offset;
+	right.offsetStart = cut;
+	right.offsetEnd = segment.offsetEnd;
 	if (rightControl) {
 		right.setControlPoint(rightControl.x, rightControl.y);
 	}
+	return { left, right };
 }

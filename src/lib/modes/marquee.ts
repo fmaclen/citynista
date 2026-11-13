@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import type { Editor } from '../editor.svelte';
 import { quadContents } from './picking';
+import { RING_THICKNESS_PX } from '../rendering/editor-palette';
 
 const MARQUEE_Y = 0.5;
 const FRAME_OPACITY = 0.9;
@@ -40,14 +41,9 @@ function insetCorner(
 // rectangle is always what the user draws; its world footprint is the four
 // unprojected screen corners — a parallelogram once the camera is rotated or
 // tilted — which the fill, the frame and the containment test all use. The frame
-// is a solid mesh band (not a 1px line, which WebGL can't thicken) `thickness`
-// world units wide, so it matches the editor's node/connector rings.
-export function createMarquee(
-	editor: Editor,
-	color: number,
-	fillOpacity: number,
-	thickness: number
-) {
+// is a solid mesh band (not a 1px line, which WebGL can't thicken) as wide on
+// screen as a node ring's stroke.
+export function createMarquee(editor: Editor, color: number, fillOpacity: number) {
 	const fillPositions = new Float32Array(12);
 	const fillGeometry = new THREE.BufferGeometry();
 	fillGeometry.setAttribute('position', new THREE.BufferAttribute(fillPositions, 3));
@@ -127,6 +123,7 @@ export function createMarquee(
 				framePositions[i * 3 + 1] = MARQUEE_Y;
 				framePositions[i * 3 + 2] = corners[i].y;
 			}
+			const thickness = RING_THICKNESS_PX * editor.sceneManager.worldPerPixel();
 			for (let i = 0; i < 4; i++) {
 				const inner = insetCorner(
 					corners[(i + 3) % 4],

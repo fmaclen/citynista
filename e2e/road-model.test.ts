@@ -2,14 +2,33 @@ import { expect, test } from '@playwright/test';
 import { PlaceBuilder } from '../src/lib/core/place';
 import { createLanesFrom } from '../src/lib/core/lane-template';
 import type { JunctionData, Lane } from '../src/lib/core/types';
+import { area, inside, intersect, toPath, type Paths } from '../src/lib/lab/clip';
+import { check } from '../src/lib/lab/checks';
+import type { JunctionDraw } from '../src/lib/lab/junction';
+import { roundabout } from '../src/lib/lab/places/roundabout';
 import { Scene } from '../src/lib/lab/scene';
+import { crossSection, frameAt, offsetPoint } from '../src/lib/lab/geometry';
+import { connectionCurve, endsOf, laneEndOf, outlineOf } from '../src/lib/lab/junction';
+import { band } from '../src/lib/lab/link';
+import type { Pt } from '../src/lib/lab/model';
 import { serializeLanes } from '../src/lib/core/lane-template';
+import { readScene } from './scenes';
 
 // The default rules the drawing runs on, read straight off the road model
 // (no browser): a graph is built by hand and read the way the editor reads
 // it. Each test protects one rule the editor's look depends on.
 
-type Seg = { id: string; from: string; to: string; lanes: Lane[]; offset?: number };
+type Seg = {
+	id: string;
+	from: string;
+	to: string;
+	lanes: Lane[];
+	// The shift at both ends, unless one is given on its own.
+	offset?: number;
+	offsetStart?: number;
+	offsetEnd?: number;
+	control?: [number, number];
+};
 
 function graphOf(nodes: Record<string, [number, number, JunctionData?]>, segs: Seg[]) {
 	const nodeMap = new Map(
@@ -27,10 +46,11 @@ function graphOf(nodes: Record<string, [number, number, JunctionData?]>, segs: S
 					id: s.id,
 					startNodeId: s.from,
 					endNodeId: s.to,
-					controlX: undefined,
-					controlY: undefined,
-					hasControlPoint: false,
-					offset: s.offset ?? 0,
+					controlX: s.control?.[0],
+					controlY: s.control?.[1],
+					hasControlPoint: !!s.control,
+					offsetStart: s.offsetStart ?? s.offset ?? 0,
+					offsetEnd: s.offsetEnd ?? s.offset ?? 0,
 					lanes: s.lanes,
 					lanesKey: serializeLanes(s.lanes),
 					totalWidth: s.lanes.reduce((a, l) => a + l.width, 0)
@@ -43,6 +63,31 @@ function graphOf(nodes: Record<string, [number, number, JunctionData?]>, segs: S
 		nodeMap.get(s.endNodeId)!.connectedSegments.push(s.id);
 	}
 	return { nodes: nodeMap, segments };
+}
+
+// A graph from e2e/scenes/, read the same way.
+function sceneGraph(name: string) {
+	const { nodes, segments } = readScene(name) as {
+		nodes: { id: string; x: number; y: number; junction?: JunctionData }[];
+		segments: (Omit<Seg, 'from' | 'to' | 'control'> & {
+			startNodeId: string;
+			endNodeId: string;
+			controlX?: number;
+			controlY?: number;
+		})[];
+	};
+	return graphOf(
+		Object.fromEntries(nodes.map((n) => [n.id, [n.x, n.y, n.junction]])),
+		segments.map((s) => ({
+			id: s.id,
+			from: s.startNodeId,
+			to: s.endNodeId,
+			lanes: s.lanes,
+			offsetStart: s.offsetStart,
+			offsetEnd: s.offsetEnd,
+			control: s.controlX !== undefined ? [s.controlX, s.controlY!] : undefined
+		}))
+	);
 }
 
 function build(graph: ReturnType<typeof graphOf>) {
@@ -105,9 +150,9 @@ test('a crossing moved past the far end of its road stops short of it', () => {
 	expect(at).toBeGreaterThan(span.length - 3);
 });
 
-test('a lane added on the kerb side turns right only; the lanes beside it go straight', () => {
-	// The west approach gains a third eastbound lane on its kerb side (right
-	// of the existing eastbound pair), as a right-turn lane does.
+// Two Avenues crossing, the west approach with a third eastbound lane on its
+// kerb side (right of the existing eastbound pair), as a right-turn lane is.
+function rightTurnLane() {
 	const graph = crossroads(avenue, avenue);
 	const west = graph.segments.get('west')!;
 	const lanes = avenue();
@@ -123,8 +168,13 @@ test('a lane added on the kerb side turns right only; the lanes beside it go str
 	west.totalWidth += 3.5;
 	// Slid half a lane toward its kerb, as a pocket is, so its through lanes
 	// line up with the road beyond.
-	west.offset = 1.75;
-	const j = build(graph).derived.junctions.get('c')!;
+	west.offsetStart = 1.75;
+	west.offsetEnd = 1.75;
+	return graph;
+}
+
+test('a lane added on the kerb side turns right only; the lanes beside it go straight', () => {
+	const j = build(rightTurnLane()).derived.junctions.get('c')!;
 	const from = (lane: string) =>
 		j.connections
 			.filter((c) => c.from.road === 'west' && c.from.lane === lane)
@@ -134,6 +184,22 @@ test('a lane added on the kerb side turns right only; the lanes beside it go str
 	expect(from('l9')).toEqual(['south']);
 	expect(from('l6')).toEqual(['east']);
 	expect(from('l5')).toEqual(['east', 'north']);
+});
+
+test('through and turn arrows on one approach are one length and start level', () => {
+	const { scene } = build(rightTurnLane());
+	// The west approach's arrows (straight-and-left, straight, right only);
+	// its stop bar is the only other paint there, four corners.
+	const arrows = scene
+		.junctionDraw('c')!
+		.white.filter((p) => p.length > 4 && p.every((q) => q.x < -15));
+	expect(new Set(arrows.map((a) => a.length)).size).toBe(3);
+	const start = Math.min(...arrows[0].map((q) => q.x));
+	for (const a of arrows) {
+		const xs = a.map((q) => q.x);
+		expect(Math.min(...xs)).toBeCloseTo(start, 3);
+		expect(Math.max(...xs) - Math.min(...xs)).toBeCloseTo(4, 3);
+	}
 });
 
 test('swapping two lanes across a node keeps both kerb lines', () => {
@@ -156,7 +222,7 @@ test('swapping two lanes across a node keeps both kerb lines', () => {
 						{ from: ref('one', 'end', 'l5'), to: ref('two', 'start', 'l6') },
 						{ from: ref('one', 'end', 'l6'), to: ref('two', 'start', 'l5') }
 					],
-					taper: 30
+					setbacks: { one: 15, two: 15 }
 				}
 			]
 		},
@@ -279,4 +345,549 @@ test('two lane changes close enough to merge keep the sidewalks running through'
 		.filter((c) => /^l0$|^l3$/.test(c.from.lane) && c.from.road !== c.to.road)
 		.map((c) => [c.from.road, c.to.road].sort().join('-'));
 	expect(walks).toEqual(['north-south', 'north-south']);
+});
+
+const drive = (direction: 'forward' | 'backward'): Lane => ({
+	role: 'vehicle',
+	material: 'asphalt',
+	width: 3.5,
+	direction
+});
+
+// Whether any point of a junction's lines lies on the asphalt just inside a
+// road end's mouth (within 1 m of it), where a line would run across the
+// road's lanes as they come in.
+function paintedAcrossMouth(draw: JunctionDraw, key: string) {
+	const mouth = draw.mouths.find((m) => m.key === key)!;
+	const into = mouth.pts.map((p) => ({ x: p.x - mouth.out.x, y: p.y - mouth.out.y }));
+	const strip = [toPath([...mouth.pts, ...into.reverse()])];
+	return draw.marks.some((m) => m.pts.some((p) => inside(strip, p)));
+}
+
+test('two legs attached at the edges of one road merge into it with no lines crossing', () => {
+	// A two-way stem going south from the node; a one-way leg attached at
+	// each of its edges, curving apart to the north; a footpath off east.
+	const graph = graphOf(
+		{
+			s: [0, 100],
+			m: [0, 0, { connections: [], sides: { west: 'left', east: 'right' } }],
+			w: [-90, -130],
+			e: [90, -130],
+			f: [80, 0]
+		},
+		[
+			{
+				id: 'stem',
+				from: 's',
+				to: 'm',
+				lanes: [drive('backward'), drive('backward'), drive('forward'), drive('forward')]
+			},
+			{
+				id: 'west',
+				from: 'm',
+				to: 'w',
+				lanes: [drive('backward'), drive('backward')],
+				control: [-4, -90]
+			},
+			{
+				id: 'east',
+				from: 'm',
+				to: 'e',
+				lanes: [drive('forward'), drive('forward')],
+				control: [4, -90]
+			},
+			{ id: 'path', from: 'm', to: 'f', lanes: createLanesFrom('path') }
+		]
+	);
+	const { scene } = build(graph);
+	expect(check(scene)).toEqual([]);
+	// Each leg's lane line runs on into the stem.
+	expect(scene.junctionDraw('m')!.marks.filter((m) => m.dashed).length).toBe(2);
+});
+
+// A ring of four one-way two-lane roads running anticlockwise on screen,
+// drawn as the editor stores it, with a two-way arm leaving each ring node:
+// the ring goes on (Go) and each arm yields, as set with the connector's
+// badges.
+function ring() {
+	const R = 30;
+	const at = (deg: number, r: number): [number, number] => [
+		r * Math.cos((deg * Math.PI) / 180),
+		r * Math.sin((deg * Math.PI) / 180)
+	];
+	const angles = [0, -90, 180, 90];
+	const nodes: Record<string, [number, number, JunctionData?]> = {};
+	const segs: Seg[] = [];
+	angles.forEach((deg, i) => {
+		const prev = (i + 3) % 4;
+		nodes[`r${i}`] = [
+			...at(deg, R),
+			{ connections: [], control: { [`ring${prev}:end`]: 'none', [`arm${i}:start`]: 'yield' } }
+		];
+		nodes[`o${i}`] = [...at(deg, 90)];
+		segs.push({
+			id: `ring${i}`,
+			from: `r${i}`,
+			to: `r${(i + 1) % 4}`,
+			lanes: [drive('forward'), drive('forward')],
+			control: at(deg - 45, R / Math.cos(Math.PI / 4))
+		});
+		segs.push({
+			id: `arm${i}`,
+			from: `r${i}`,
+			to: `o${i}`,
+			lanes: [drive('backward'), drive('backward'), drive('forward'), drive('forward')]
+		});
+	});
+	return graphOf(nodes, segs);
+}
+
+test('a ring drawn in the editor keeps its lane line and inner edge through every entry', () => {
+	const { scene } = build(ring());
+	for (let i = 0; i < 4; i++) {
+		const draw = scene.junctionDraw(`r${i}`)!;
+		// The dashes between the ring's two lanes, and its inner edge line
+		// (yellow, on the driver's left of a one-way road).
+		expect(draw.marks.filter((m) => m.dashed).length).toBe(1);
+		expect(draw.marks.filter((m) => !m.dashed && m.colour === 'yellow').length).toBe(1);
+		// The outer edge stops at the arm's mouth: the arm's paths and its
+		// mouth lie beyond it there.
+		expect(paintedAcrossMouth(draw, `arm${i}:start`)).toBe(false);
+	}
+	expect(check(scene)).toEqual([]);
+});
+
+test('the roundabout place keeps its ring lines through every entry', () => {
+	const scene = new Scene(roundabout());
+	scene.build();
+	for (const id of ['e', 'n', 'w', 's']) {
+		const j = scene.effective.find((x) => x.id === `entry-${id}`)!;
+		const arm = `arm-${id}:start`;
+		expect(j.control[arm]).toBe('yield');
+		const draw = scene.junctionDraw(j.id)!;
+		expect(draw.marks.filter((m) => m.dashed).length).toBe(1);
+		expect(draw.marks.filter((m) => !m.dashed && m.colour === 'yellow').length).toBe(1);
+		// The outer edge runs where nothing lies beyond it, and stops at the
+		// arm's mouth.
+		expect(draw.marks.some((m) => !m.dashed && m.colour === 'white')).toBe(true);
+		expect(paintedAcrossMouth(draw, arm)).toBe(false);
+	}
+});
+
+// What a junction draws on top at a point, as the renderer stacks its
+// layers: concrete, grass, dirt, then the paving (in the junction's
+// material) and asphalt, then sidewalk; null where it leaves the ground.
+function surfaceAt(scene: Scene, id: string, p: Pt) {
+	const draw = scene.junctionDraw(id)!;
+	const lanes = (surface: string) =>
+		(draw.lanes ?? []).filter((l) => l.surface === surface).flatMap((l) => l.paths);
+	const carried = (surface: string) =>
+		draw.carried.filter((c) => c.surface === surface).flatMap((c) => c.paths);
+	const layers: [string, Paths][] = [
+		['concrete', [...carried('concrete'), ...lanes('concrete')]],
+		['grass', [...carried('grass'), ...draw.verges, ...lanes('grass')]],
+		['dirt', [...carried('dirt'), ...lanes('dirt')]],
+		[scene.junctionPaving(id), draw.asphalt],
+		['asphalt', [...carried('hatch'), ...lanes('asphalt')]],
+		['pavement', [...draw.pavement, ...lanes('pavement')]]
+	];
+	for (const island of draw.islands) if (inside([island.path], p)) return island.surface;
+	return layers.find(([, paths]) => inside(paths, p))?.[0] ?? null;
+}
+
+// The middle of a road's lane (by index) at a distance along it.
+function laneMiddle(scene: Scene, road: string, lane: number, at: 'start' | 'end') {
+	const geo = scene.geos.get(road)!;
+	const d = at === 'start' ? 0 : geo.path.length;
+	const f = frameAt(geo.path, d);
+	const span = crossSection(geo.road, d)[lane];
+	return { p: offsetPoint(f.p, f.n, (span.left + span.right) / 2), t: f.t };
+}
+
+const mixed = (): Lane[] => [
+	{ role: 'vehicle', material: 'asphalt', width: 3.5, direction: 'forward' },
+	{ role: 'vehicle', material: 'concrete', width: 3.5, direction: 'forward' }
+];
+
+test('a node between two identical roads draws each lane on in its own material', () => {
+	// One asphalt lane and one concrete lane, cut in two where the road bends.
+	const { scene } = build(
+		graphOf({ a: [-60, -60], m: [0, 0], b: [80, 0] }, [
+			{ id: 'one', from: 'a', to: 'm', lanes: mixed() },
+			{ id: 'two', from: 'm', to: 'b', lanes: mixed(), control: [40, 40] }
+		])
+	);
+	// All the way across the node, each lane is drawn in its own material.
+	for (const [lane, surface] of [
+		[0, 'asphalt'],
+		[1, 'pavement']
+	] as const) {
+		const from = laneMiddle(scene, 'one', lane, 'end').p;
+		const to = laneMiddle(scene, 'two', lane, 'start').p;
+		for (const f of [0.1, 0.3, 0.5, 0.7, 0.9]) {
+			const p = { x: from.x + (to.x - from.x) * f, y: from.y + (to.y - from.y) * f };
+			expect(surfaceAt(scene, 'm', p), `lane ${lane} at ${f}`).toBe(surface);
+		}
+	}
+});
+
+test('a node paves only where lanes carry on: a sidewalk ending there leaves ground', () => {
+	// A street (sidewalk, two lanes, sidewalk) bending into two bare lanes.
+	const bare = (): Lane[] => [drive('backward'), drive('forward')];
+	const { scene } = build(
+		graphOf({ a: [-60, -60], m: [0, 0], b: [80, 0] }, [
+			{ id: 'wide', from: 'a', to: 'm', lanes: street() },
+			{ id: 'narrow', from: 'm', to: 'b', lanes: bare() }
+		])
+	);
+	const into = (lane: number) => {
+		const { p, t } = laneMiddle(scene, 'wide', lane, 'end');
+		return offsetPoint(p, t, 0.5);
+	};
+	// Just past the wide road's end, beyond its sidewalks: ground.
+	expect(surfaceAt(scene, 'm', into(0))).toBeNull();
+	expect(surfaceAt(scene, 'm', into(3))).toBeNull();
+	// Its two lanes carry on, paved.
+	expect(surfaceAt(scene, 'm', into(1))).toBe('asphalt');
+	expect(surfaceAt(scene, 'm', into(2))).toBe('asphalt');
+	expect(check(scene)).toEqual([]);
+});
+
+// A divided freeway, four lanes each way, curving on to three each way at
+// node m, where its outermost northbound lane leaves as a one-lane off-ramp
+// attached at its right edge and curving away (e2e/scenes/off-ramp.json).
+// The transition at m was dragged long before the ramp was drawn off it.
+function offRamp() {
+	const { scene } = build(sceneGraph('off-ramp'));
+	const j = scene.effective.find((x) => x.id === 'm')!;
+	const ends = endsOf(j, scene.geos);
+	const path = (from: string, to: string) => {
+		const [fr, fl] = from.split(':');
+		const [tr, tl] = to.split(':');
+		const c = j.connections.find(
+			(c) => c.from.road === fr && c.from.lane === fl && c.to.road === tr && c.to.lane === tl
+		)!;
+		const a = laneEndOf(ends, c.from)!;
+		const b = laneEndOf(ends, c.to)!;
+		return band(connectionCurve(a.lane, a.end, b.lane, b.end));
+	};
+	// The freeway's outermost lane carrying on, and the lane leaving.
+	return { scene, through: path('south:l7', 'north:l7'), ramp: path('south:l8', 'ramp:l0') };
+}
+
+const distance = (p: Pt, q: Pt) => Math.hypot(p.x - q.x, p.y - q.y);
+
+test('an off-ramp leaving a freeway keeps its lines on the road', () => {
+	expect(check(offRamp().scene)).toEqual([]);
+});
+
+test('between a freeway and the off-ramp leaving it, where no lane runs, is ground', () => {
+	const { scene, through, ramp } = offRamp();
+	// Halfway between the edges of the lane carrying on and the ramp's lane,
+	// wherever they have parted.
+	const between = through.right.flatMap((p) => {
+		const q = ramp.left.reduce((a, b) => (distance(p, b) < distance(p, a) ? b : a));
+		return distance(p, q) > 1.5 ? [{ x: (p.x + q.x) / 2, y: (p.y + q.y) / 2 }] : [];
+	});
+	expect(between.length).toBeGreaterThan(5);
+	for (const p of between) expect(surfaceAt(scene, 'm', p), `at ${p.x}, ${p.y}`).toBeNull();
+});
+
+test("a freeway's edge line runs along its lane to where an off-ramp parts", () => {
+	const { scene, through } = offRamp();
+	// All along the right edge of the lane carrying on, a line beside it: the
+	// lane line while the ramp's lane is beside it, then its edge line.
+	const lines = scene.junctionDraw('m')!.marks.filter((m) => m.colour === 'white');
+	const near = (p: Pt) =>
+		Math.min(
+			...lines.flatMap((m) =>
+				m.pts.slice(1).map((b, i) => {
+					const a = m.pts[i];
+					const d = { x: b.x - a.x, y: b.y - a.y };
+					const t = ((p.x - a.x) * d.x + (p.y - a.y) * d.y) / (d.x * d.x + d.y * d.y || 1);
+					const k = Math.max(0, Math.min(1, t));
+					return distance(p, { x: a.x + d.x * k, y: a.y + d.y * k });
+				})
+			)
+		);
+	for (const p of through.right.slice(1, -1))
+		expect(near(p), `at ${p.x}, ${p.y}`).toBeLessThan(0.3);
+});
+
+// An avenue (sidewalk, two lanes, grass median, two lanes, sidewalk) running
+// west-east across a road of just two car lanes, 7 m of roadway, whose lanes
+// only go straight through (e2e/scenes/busway-crossing.json): a busway.
+test('a narrow road whose lanes cross an avenue stops its median and sidewalks', () => {
+	const { scene } = build(sceneGraph('busway-crossing'));
+	const draw = scene.junctionDraw('c')!;
+	const zebra = draw.crossings.filter((c) => c.on).flatMap((c) => c.zebra);
+	// Across the busway's two lanes (x = ±1.75): asphalt where the avenue's
+	// median and sidewalks would run on, and a crosswalk over the busway just
+	// past the corners where they turn.
+	for (const x of [-1.75, 1.75]) {
+		expect(surfaceAt(scene, 'c', { x, y: 0 }), `median at ${x}`).toBe('asphalt');
+		for (const y of [-9.5, 9.5])
+			expect(surfaceAt(scene, 'c', { x, y }), `sidewalk at ${x}, ${y}`).toBe('asphalt');
+		for (const y of [-15.5, 15.5])
+			expect(inside(zebra, { x, y }), `crosswalk at ${x}, ${y}`).toBe(true);
+	}
+	expect(check(scene)).toEqual([]);
+});
+
+// A curved six-lane avenue with sidewalks, and joining it at a slant from
+// the inside of the curve a side road of two car lanes either side of a
+// concrete median, 9 m from curb to curb, with no sidewalks of its own
+// (e2e/scenes/curved-tee.json). The side road stops at the avenue. `lanes`
+// swaps in another cross-section for the side road.
+function curvedTee(lanes?: Lane[]) {
+	const graph = sceneGraph('curved-tee');
+	if (lanes) {
+		const side = graph.segments.get('side')!;
+		side.lanes = lanes;
+		side.lanesKey = serializeLanes(lanes);
+		side.totalWidth = lanes.reduce((a, l) => a + l.width, 0);
+	}
+	const { scene } = build(graph);
+	const j = scene.effective.find((x) => x.id === 'c')!;
+	const ends = endsOf(j, scene.geos);
+	const side = ends.find((e) => e.ref.road === 'side')!;
+	const draw = scene.junctionDraw('c')!;
+	// A point in the side road's frame at its end: metres along it away from
+	// the avenue, and across it to the right.
+	const at = (along: number, across: number) =>
+		offsetPoint(offsetPoint(side.frame.p, side.frame.out, along), side.frame.n, across);
+	return { scene, j, ends, side, draw, at };
+}
+
+test('a divided side road is crossed by a crosswalk, not paved over as a driveway', () => {
+	const { j, draw, at } = curvedTee();
+	expect(j.control['side:start']).toBe('stop');
+	const across = j.walkways.find((w) => w.id === 'north:start~south:end')!;
+	expect(across.paved).toBe(false);
+	// Zebra stripes over both its lanes (3.5 m either side of a 2 m median),
+	// within the first 3 m of each.
+	const zebra = draw.crossings.filter((c) => c.on).flatMap((c) => c.zebra);
+	for (const lane of [-2.75, 2.75]) {
+		const box = toPath([
+			at(0, lane - 1.75),
+			at(3, lane - 1.75),
+			at(3, lane + 1.75),
+			at(0, lane + 1.75)
+		]);
+		const painted = intersect(zebra, [box]).reduce((s, p) => s + Math.abs(area(p)), 0);
+		expect(painted, `lane at ${lane}`).toBeGreaterThan(2);
+	}
+});
+
+test('two lanes with no median and no sidewalks are a driveway: the sidewalk is paved across', () => {
+	const { j, draw } = curvedTee([
+		{ ...drive('backward'), id: 'l0' },
+		{ ...drive('forward'), id: 'l1' }
+	]);
+	const across = j.walkways.find((w) => w.id === 'north:start~south:end')!;
+	expect(across.paved).toBe(true);
+	expect(draw.crossings.flatMap((c) => c.zebra)).toEqual([]);
+});
+
+test("the corners either side of a side road's mouth round, with the sidewalk round them", () => {
+	const { scene, j, ends, draw } = curvedTee();
+	const outline = outlineOf(j, ends);
+	for (const key of ['north:start>side:start', 'side:start>south:end']) {
+		const corner = outline.corners.find((c) => `${c.a}>${c.b}` === key)!;
+		const [a, b] = [corner.pts[0], corner.pts[corner.pts.length - 1]];
+		const chord = distance(a, b);
+		// Bowed well off the straight line between its two curb points.
+		const bow = Math.max(
+			...corner.pts.map(
+				(p) => Math.abs((b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x)) / chord
+			)
+		);
+		expect(bow, `${key} bow`).toBeGreaterThan(1);
+		// Sidewalk just outside the curb at the middle of the corner.
+		const k = Math.floor(corner.pts.length / 2);
+		const [p, q] = [corner.pts[k - 1], corner.pts[k + 1]];
+		const l = distance(p, q);
+		const n = { x: -(q.y - p.y) / l, y: (q.x - p.x) / l };
+		const m = corner.pts[k];
+		const sign = inside(draw.asphalt, offsetPoint(m, n, 0.3)) ? -1 : 1;
+		expect(inside(draw.pavement, offsetPoint(m, n, sign * 1.5)), `${key} sidewalk`).toBe(true);
+	}
+	expect(check(scene)).toEqual([]);
+});
+
+test('the sidewalk ends square beside a crosswalk over a road without sidewalks', () => {
+	const { draw, at } = curvedTee();
+	// The roadway runs 4.5 m either side of the side road's line; the crossing
+	// is 3 m deep, as wide as the avenue's sidewalk. Beside it on either side
+	// a square of sidewalk, its far corner paved (no rounded knob), and
+	// nothing beyond.
+	for (const edge of [-4.5, 4.5]) {
+		const out = Math.sign(edge);
+		expect(inside(draw.pavement, at(2.8, edge + out * 2.8)), `landing at ${edge}`).toBe(true);
+		expect(inside(draw.pavement, at(3.4, edge + out * 1.5)), `past landing at ${edge}`).toBe(false);
+	}
+});
+
+// A skewed four-way junction of divided roads without sidewalks: north-west,
+// south-west, east and south-east, the last two only 45° apart. Each corner
+// stays outside both roads' edge lines, from a few metres in front of a
+// road's mouth to well behind it, so no corner pinches a road's opening
+// narrower than the road. Automatically, every end sits a hair inside its
+// neighbour's curb line; set by hand, south-west and south-east stop further
+// out than their neighbours.
+for (const name of ['skewed-four', 'skewed-four-setbacks'])
+	test(`no corner of the ${name} junction cuts inside a road's edge`, () => {
+		const { scene } = build(sceneGraph(name));
+		const j = scene.effective.find((x) => x.id === 'k')!;
+		const ends = endsOf(j, scene.geos);
+		const outline = outlineOf(j, ends);
+		const curb = outline.corners.flatMap((c) =>
+			c.pts.flatMap((p, i) => {
+				if (i === 0) return [p];
+				const q = c.pts[i - 1];
+				const n = Math.ceil(distance(p, q) / 0.25);
+				return Array.from({ length: n }, (_, k) => ({
+					x: q.x + ((p.x - q.x) * (k + 1)) / n,
+					y: q.y + ((p.y - q.y) * (k + 1)) / n
+				}));
+			})
+		);
+		for (const e of ends) {
+			const { p, out, n } = e.frame;
+			const across = (q: Pt) => (q.x - p.x) * n.x + (q.y - p.y) * n.y;
+			const along = (q: Pt) => (q.x - p.x) * out.x + (q.y - p.y) * out.y;
+			const { lo, hi } = outline.curbs.get(e.key)!;
+			const [left, right] = [across(lo), across(hi)].sort((a, b) => a - b);
+			// How far the curb reaches in from the nearer edge line, 6 m in front
+			// of the mouth to 10 m behind it. Only the hair of overlap the
+			// automatic setbacks leave.
+			const inside = Math.max(
+				...curb
+					.filter((q) => along(q) > -6 && along(q) < 10)
+					.map((q) => Math.min(across(q) - left, right - across(q)))
+			);
+			expect(inside, e.key).toBeLessThan(0.25);
+		}
+	});
+
+const divided = (): Lane[] => [
+	{ role: 'vehicle', material: 'asphalt', width: 3.5, direction: 'backward' },
+	{ role: 'buffer', material: 'concrete', width: 2, direction: 'bidirectional' },
+	{ role: 'vehicle', material: 'asphalt', width: 3.5, direction: 'forward' }
+];
+
+// How far a point lies from a polyline.
+const offLine = (p: Pt, pts: Pt[]) =>
+	Math.min(
+		...pts.slice(1).map((b, i) => {
+			const a = pts[i];
+			const d = { x: b.x - a.x, y: b.y - a.y };
+			const t = ((p.x - a.x) * d.x + (p.y - a.y) * d.y) / (d.x * d.x + d.y * d.y || 1);
+			const k = Math.max(0, Math.min(1, t));
+			return distance(p, { x: a.x + d.x * k, y: a.y + d.y * k });
+		})
+	);
+
+// Four divided roads (one lane each way, a concrete median) at a skewed
+// junction (e2e/scenes/skewed-priority.json): west and east have right of way
+// and bend through it, the other two stop, and both join on the same side.
+// West stops 14 m short, so the curb between west and east is long and bends
+// one way then the other.
+test('an edge line runs the whole curb between two priority roads, at its inset', () => {
+	const { scene } = build(sceneGraph('skewed-priority'));
+	const j = scene.effective.find((x) => x.id === 'k')!;
+	const outline = outlineOf(j, endsOf(j, scene.geos));
+	const curb = outline.corners.find(
+		(c) => [c.a, c.b].sort().join() === 'east:start,west:start'
+	)!.pts;
+	const lines = scene
+		.junctionDraw('k')!
+		.marks.filter((m) => m.colour === 'white' && !m.dashed && offLine(m.pts[0], curb) < 0.5);
+	expect(lines.length).toBe(1);
+	const { pts } = lines[0];
+	// From one mouth to the other, the inset in from the curb all along.
+	const ends = [pts[0], pts[pts.length - 1]];
+	for (const c of [curb[0], curb[curb.length - 1]])
+		expect(Math.min(...ends.map((p) => distance(p, c)))).toBeCloseTo(0.2, 1);
+	for (const p of pts) expect(offLine(p, curb), `at ${p.x}, ${p.y}`).toBeCloseTo(0.2, 1);
+	expect(check(scene)).toEqual([]);
+});
+
+test('the lines either side of a median join round its nose, but not at a free or carried end', () => {
+	const { scene } = build(sceneGraph('skewed-priority'));
+	for (const id of ['west', 'east', 'sw', 'se']) {
+		const draw = scene.roadDraw(id)!;
+		const yellow = draw.marks.filter((m) => m.colour === 'yellow');
+		// One line: from the free end up one side, round the nose at the
+		// junction and back down the other.
+		expect(yellow.length, id).toBe(1);
+		const along = yellow[0].along!;
+		expect(along[0]).toBeCloseTo(draw.path.length, 1);
+		expect(along[along.length - 1]).toBeCloseTo(draw.path.length, 1);
+		// Round the tip, the inset short of it.
+		expect(Math.min(...along)).toBeCloseTo(draw.cut.start.nose! - 0.2, 1);
+	}
+
+	// A road on its own, and a divided road narrowing into a plain one at a
+	// node of two (the median carried square to the node): two lines each.
+	const plain = (): Lane[] => divided().filter((l) => l.role === 'vehicle');
+	const { scene: other } = build(
+		graphOf({ a: [-60, 0], m: [0, 0], b: [60, 0], c: [-60, 40], d: [60, 40] }, [
+			{ id: 'taper', from: 'a', to: 'm', lanes: divided() },
+			{ id: 'plain', from: 'm', to: 'b', lanes: plain() },
+			{ id: 'alone', from: 'c', to: 'd', lanes: divided() }
+		])
+	);
+	for (const id of ['taper', 'alone']) {
+		const draw = other.roadDraw(id)!;
+		const yellow = draw.marks.filter((m) => m.colour === 'yellow');
+		expect(yellow.length, id).toBe(2);
+		for (const m of yellow) {
+			expect(m.along![0]).toBeCloseTo(0, 1);
+			expect(m.along![m.along!.length - 1]).toBeCloseTo(draw.path.length, 1);
+		}
+	}
+	expect(check(other)).toEqual([]);
+});
+
+// A stop line runs from the approach's white edge line to the yellow line on
+// its other side, both running up to it: its back edge (away from the
+// junction) has a white line at one end and a yellow one at the other. On a
+// divided road the yellow runs along the median (its nose comes forward past
+// the stop line), on a plain one it is the centre line, and on an avenue the
+// stop line spans both lanes behind its crosswalk.
+test('a stop line meets the edge line and the yellow line', () => {
+	const stops: JunctionData = {
+		connections: [],
+		control: {
+			'west:end': 'stop',
+			'east:start': 'stop',
+			'north:end': 'stop',
+			'south:start': 'stop'
+		}
+	};
+	const plain = (): Lane[] => divided().filter((l) => l.role === 'vehicle');
+	for (const [name, lanes] of [
+		['divided', divided],
+		['plain', plain],
+		['avenue', avenue]
+	] as const) {
+		const { scene } = build(crossroads(lanes, lanes, stops));
+		const marks = scene.place.roads.flatMap((r) => scene.roadDraw(r.id)!.marks);
+		const bars = scene.junctionDraw('c')!.white.filter((p) => p.length === 4);
+		expect(bars.length, name).toBe(4);
+		for (const bar of bars) {
+			// The roads run along the axes: the back edge is the farther one
+			// out along its road.
+			const out = (p: Pt) => Math.max(Math.abs(p.x), Math.abs(p.y));
+			const back = [...bar].sort((p, q) => out(q) - out(p)).slice(0, 2);
+			const colours = back.map(
+				(p) => marks.find((m) => !m.dashed && offLine(p, m.pts) < 0.1)?.colour
+			);
+			expect(colours.sort(), `${name} at ${back[0].x.toFixed(1)}, ${back[0].y.toFixed(1)}`).toEqual(
+				['white', 'yellow']
+			);
+		}
+		expect(check(scene), name).toEqual([]);
+	}
 });

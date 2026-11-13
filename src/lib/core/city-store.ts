@@ -1,11 +1,20 @@
 import type { CameraState, CityRecord, CitySummary, GraphData } from './types';
 
+// The shape of saved cities and examples. Bump it whenever the saved graph's
+// shape changes: anything written with another version is ignored, never
+// migrated, so a library from an older build starts clean.
+export const SCHEMA_VERSION = 2;
+
 // The user's own cities live in localStorage, in dev exactly as in production.
 const INDEX_KEY = 'citynista:cities';
 const CURRENT_KEY = 'citynista:current-city';
 const cityKey = (id: string) => `citynista:city:${id}`;
-// The single-graph slot the editor used before cities existed; migrated once.
-const LEGACY_GRAPH_KEY = 'citynista-graph-v2';
+const cameraKey = (id: string) => `citynista:cam:${id}`;
+
+// What is stored: each index entry and each city carries the version it was
+// written with.
+type StoredSummary = CitySummary & { version: number };
+type StoredCity = CityRecord & { version: number };
 
 const EMPTY_GRAPH: GraphData = { nodes: [], segments: [] };
 
@@ -26,25 +35,45 @@ export function slugify(name: string) {
 export class CityStore {
 	list(): CitySummary[] {
 		try {
-			const raw = localStorage.getItem(INDEX_KEY);
-			return raw ? (JSON.parse(raw) as CitySummary[]) : [];
+			const index: StoredSummary[] = JSON.parse(localStorage.getItem(INDEX_KEY) ?? '[]');
+			return index.map(({ id, name }) => ({ id, name }));
 		} catch {
 			return [];
 		}
 	}
 
-	load(id: string): CityRecord | null {
+	// Drop every city written with another version, or none: its index entry
+	// or its record. Run once on boot, so the library holds current cities only.
+	prune() {
+		let index: StoredSummary[] = [];
 		try {
-			const raw = localStorage.getItem(cityKey(id));
-			return raw ? (JSON.parse(raw) as CityRecord) : null;
+			index = JSON.parse(localStorage.getItem(INDEX_KEY) ?? '[]');
 		} catch {
-			return null;
+			// unreadable: rewritten empty below
 		}
+		if (!Array.isArray(index)) index = [];
+		const kept = index.filter((c) => c?.version === SCHEMA_VERSION && this.load(c.id));
+		for (const c of index)
+			if (!kept.includes(c) && typeof c?.id === 'string') this.removeKeys(c.id);
+		if (kept.length !== index.length) this.writeIndex(kept);
+	}
+
+	// A city from another version (or none) reads as absent.
+	load(id: string): CityRecord | null {
+		let city: StoredCity | null = null;
+		try {
+			city = JSON.parse(localStorage.getItem(cityKey(id)) ?? 'null');
+		} catch {
+			city = null;
+		}
+		if (city?.version !== SCHEMA_VERSION) return null;
+		return { id: city.id, name: city.name, graph: city.graph, camera: city.camera ?? null };
 	}
 
 	save(city: CityRecord) {
+		const stored: StoredCity = { ...city, version: SCHEMA_VERSION };
 		try {
-			localStorage.setItem(cityKey(city.id), JSON.stringify(city));
+			localStorage.setItem(cityKey(city.id), JSON.stringify(stored));
 		} catch {
 			// Quota exceeded: keep the index untouched rather than point at nothing.
 			return;
@@ -53,13 +82,32 @@ export class CityStore {
 		const at = index.findIndex((c) => c.id === city.id);
 		if (at >= 0) index[at] = { id: city.id, name: city.name };
 		else index.push({ id: city.id, name: city.name });
-		localStorage.setItem(INDEX_KEY, JSON.stringify(index));
+		this.writeIndex(index);
+	}
+
+	private writeIndex(index: CitySummary[]) {
+		const stored: StoredSummary[] = index.map(({ id, name }) => ({
+			id,
+			name,
+			version: SCHEMA_VERSION
+		}));
+		localStorage.setItem(INDEX_KEY, JSON.stringify(stored));
+	}
+
+	private removeKeys(id: string) {
+		localStorage.removeItem(cityKey(id));
+		localStorage.removeItem(cameraKey(id));
+	}
+
+	// A rename touches only the name; the stored map stays as last saved.
+	rename(id: string, name: string) {
+		const city = this.load(id);
+		if (city) this.save({ ...city, name });
 	}
 
 	remove(id: string) {
-		localStorage.removeItem(cityKey(id));
-		const index = this.list().filter((c) => c.id !== id);
-		localStorage.setItem(INDEX_KEY, JSON.stringify(index));
+		this.removeKeys(id);
+		this.writeIndex(this.list().filter((c) => c.id !== id));
 	}
 
 	currentId() {
@@ -81,22 +129,15 @@ export class CityStore {
 		return city;
 	}
 
-	// The working city on boot: the current one, else a fresh city seeded from the
-	// legacy single-graph slot (a one-time migration of pre-city saves).
+	// The working city on boot: the current one, else a fresh empty city.
 	ensureCurrent() {
+		this.prune();
 		const id = this.currentId();
 		if (id) {
 			const current = this.load(id);
 			if (current) return current;
 		}
-		let graph = EMPTY_GRAPH;
-		try {
-			const legacy = localStorage.getItem(LEGACY_GRAPH_KEY);
-			if (legacy) graph = JSON.parse(legacy) as GraphData;
-		} catch {
-			graph = EMPTY_GRAPH;
-		}
-		const city = this.create('untitled', graph);
+		const city = this.create('untitled');
 		this.setCurrentId(city.id);
 		return city;
 	}
@@ -114,6 +155,11 @@ export async function loadExample(id: string): Promise<CityRecord | null> {
 		const response = await fetch(`/examples/${id}.json`);
 		if (!response.ok) return null;
 		const data = await response.json();
+		// A stale example fails loudly rather than drawing wrong.
+		if (data?.version !== SCHEMA_VERSION) {
+			console.error(`Example ${id} is version ${data?.version}, expected ${SCHEMA_VERSION}`);
+			return null;
+		}
 		const graph: GraphData = data?.graph;
 		const camera: CameraState | null = data?.camera ?? null;
 		if (!Array.isArray(graph?.nodes) || !Array.isArray(graph?.segments)) return null;

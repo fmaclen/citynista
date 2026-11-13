@@ -9,9 +9,9 @@ import type { Paths } from 'clipper-lib';
 import type { Graph } from '../core/graph.svelte';
 import { PlaceBuilder, type Derived } from '../core/place';
 import type { JunctionDraw } from '../lab/junction';
-import type { Pt } from '../lab/model';
 import type { RoadDraw } from '../lab/road';
 import { COLOURS, Scene } from '../lab/scene';
+import type { Pt, Surface } from '../lab/model';
 import { toPolygons } from '../lab/clip';
 import { crossSection, frameAt, offsetPoint } from '../lab/geometry';
 
@@ -54,6 +54,8 @@ const SURFACES = new Set<Layer>([
 	'island',
 	'refuge'
 ]);
+// How far a tint (a blocked preview) pulls each colour toward it.
+const TINT = 0.7;
 const BASE_Y = 0.05;
 const STEP = 0.02;
 const yOf = (layer: Layer) => BASE_Y + ORDER.indexOf(layer) * STEP;
@@ -87,13 +89,24 @@ function roadParts(draw: RoadDraw): Part[] {
 	];
 }
 
-function junctionParts(draw: JunctionDraw): Part[] {
+// The paved area keeps the asphalt layer whatever it is made of, so sidewalks
+// and verges stack around it the same way.
+function junctionParts(draw: JunctionDraw, paving: Surface): Part[] {
 	const carried = (surface: 'grass' | 'concrete' | 'dirt' | 'hatch') =>
 		draw.carried.filter((c) => c.surface === surface).flatMap((c) => c.paths);
 	const parts: Part[] = [
+		// Each car lane in the layer its road draws it in.
+		...(draw.lanes ?? []).map(
+			(l): Part => ({
+				layer: l.surface === 'hatch' ? 'asphalt' : l.surface,
+				colour: COLOURS[l.surface],
+				paths: l.paths
+			})
+		),
 		{ layer: 'pavement', colour: COLOURS.pavement, paths: draw.pavement },
 		{ layer: 'trail', colour: COLOURS.trail, paths: draw.trail },
-		{ layer: 'asphalt', colour: COLOURS.asphalt, paths: [...draw.asphalt, ...carried('hatch')] },
+		{ layer: 'asphalt', colour: COLOURS[paving], paths: draw.asphalt },
+		{ layer: 'asphalt', colour: COLOURS.asphalt, paths: carried('hatch') },
 		{ layer: 'dirt', colour: COLOURS.dirt, paths: carried('dirt') },
 		{ layer: 'grass', colour: COLOURS.grass, paths: [...carried('grass'), ...draw.verges] },
 		{ layer: 'concrete', colour: COLOURS.concrete, paths: carried('concrete') }
@@ -125,6 +138,7 @@ export class LabRenderer {
 	private materials = new Map<string, THREE.MeshBasicMaterial>();
 	private lastKeys = new Map<string, string>();
 	private overlayKey = '';
+	private tinted: number | null = null;
 	showConnections = false;
 
 	constructor(
@@ -137,7 +151,8 @@ export class LabRenderer {
 		this.three.add(this.overlay);
 	}
 
-	update(graph: Graph) {
+	// With `only`, draws just those roads and the junctions at those nodes.
+	update(graph: Graph, only?: { roads: Set<string>; nodes: Set<string> }) {
 		const derived = this.builder.build(graph);
 		this.derived = derived;
 		const scene = this.scene ?? new Scene(derived.place);
@@ -153,15 +168,16 @@ export class LabRenderer {
 		const live = new Set<string>();
 		for (const road of derived.place.roads) {
 			const draw = scene.roadDraw(road.id);
-			if (!draw || scene.hidden.has(road.id)) continue;
+			if (!draw || scene.hidden.has(road.id) || (only && !only.roads.has(road.id))) continue;
 			live.add(`road:${road.id}`);
 			this.place(`road:${road.id}`, draw, () => roadParts(draw));
 		}
 		for (const j of scene.effective) {
 			const draw = scene.junctionDraw(j.id);
-			if (!draw) continue;
+			if (!draw || (only && !j.id.split('+').some((id) => only.nodes.has(id)))) continue;
 			live.add(`junction:${j.id}`);
-			this.place(`junction:${j.id}`, draw, () => junctionParts(draw));
+			const paving = scene.junctionPaving(j.id);
+			this.place(`junction:${j.id}`, draw, () => junctionParts(draw, paving));
 		}
 		for (const [id, piece] of this.pieces) {
 			if (live.has(id)) continue;
@@ -171,13 +187,26 @@ export class LabRenderer {
 		this.refreshOverlay();
 	}
 
+	// Washes every surface and paint toward one colour (null: their own).
+	tint(colour: number | null) {
+		if (colour === this.tinted) return;
+		this.tinted = colour;
+		for (const [key, m] of this.materials) m.color.copy(this.colourOf(key.split('|')[1]));
+	}
+
+	private colourOf(colour: string) {
+		const own = new THREE.Color(colour);
+		return this.tinted === null ? own : own.lerp(new THREE.Color(this.tinted), TINT);
+	}
+
 	// Holds a node's taper where it is (while its connections are edited);
 	// null lets it follow its connections again.
 	holdTaper(nodeId: string | null) {
 		this.builder.hold(nodeId);
 	}
 
-	// The shortest and longest a node's taper may be set to.
+	// The shortest and longest each road may be set to stop short of a node,
+	// by segment id: its side of a taper, or its setback at a junction.
 	taperLimits(nodeId: string) {
 		return this.builder.limits.get(nodeId);
 	}
@@ -226,7 +255,7 @@ export class LabRenderer {
 		if (!m) {
 			const bias = -ORDER.indexOf(layer);
 			m = new THREE.MeshBasicMaterial({
-				color: new THREE.Color(colour),
+				color: this.colourOf(colour),
 				side: THREE.DoubleSide,
 				transparent: this.look.opacity < 1,
 				opacity: this.look.opacity,

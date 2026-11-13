@@ -103,16 +103,20 @@ export const roundabout = () => {
 		const prev = ARMS[(i + ARMS.length - 1) % ARMS.length];
 		const a = ARMS[i];
 		const next = ARMS[(i + 1) % ARMS.length];
+		const into = `${ring(prev.id, a.id)}:end`;
+		const on = `${ring(a.id, next.id)}:start`;
 		junctions.push(
-			junction(
-				`entry-${a.id}`,
-				[`${ring(prev.id, a.id)}:end`, `${ring(a.id, next.id)}:start`, `arm-${a.id}:start`],
-				{
-					islands: [{ ...splitter(a.median), anchor: `arm-${a.id}:start` }],
-					// Arrows in the ring before each exit.
-					arrows: [`${ring(prev.id, a.id)}:end`]
-				}
-			)
+			junction(`entry-${a.id}`, [into, on, `arm-${a.id}:start`], {
+				islands: [{ ...splitter(a.median), anchor: `arm-${a.id}:start` }],
+				// Arrows in the ring before each exit.
+				arrows: [into],
+				// The ring goes on and every entry yields to it.
+				control: { [into]: 'none', [`arm-${a.id}:start`]: 'yield' },
+				// Where the arm has two lanes each way the defaults send the
+				// ring's outer lane only out into it: it carries on round the
+				// ring as well.
+				add: a.lanes === 2 ? [`${into}/out>${on}/out`] : []
+			})
 		);
 	}
 	junctions.push(

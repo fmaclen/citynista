@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { openGraph } from './scenes';
 import { saveCity } from './save';
 
 const STORAGE_KEY = 'citynista-graph-v2';
@@ -43,13 +44,7 @@ const enterSplitMode = (page: import('@playwright/test').Page) =>
 
 test.describe('Split tool', () => {
 	test.beforeEach(async ({ page }) => {
-		await page.goto('/?topdown');
-		await expect(page.locator('canvas')).toBeVisible();
-		await page.evaluate(({ key, data }) => localStorage.setItem(key, JSON.stringify(data)), {
-			key: STORAGE_KEY,
-			data: GRAPH_DATA
-		});
-		await page.reload();
+		await openGraph(page, GRAPH_DATA);
 		await expect(page.locator('nav')).toBeVisible();
 	});
 
