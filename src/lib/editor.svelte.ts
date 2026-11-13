@@ -1283,13 +1283,20 @@ export class Editor {
 		if (!node) return;
 		// Within each road's limits: a taper no steeper than the lanes' shift
 		// allows, a junction no smaller than its curb corners need, and never
-		// into the far node's setback.
+		// into the far node's setback. Moved together (Shift), every road
+		// stops at the tightest of their limits, so the setbacks stay equal;
+		// limits that leave no common range fall back to each road's own.
 		const limits = this.roadRenderer.taperLimits(node.id);
 		const setbacks = { ...node.junction?.setbacks };
 		const roads = every ? this.currentTaperHandles.map((h) => h.segmentId) : [handle.segmentId];
+		const range = (ids: string[]) => ({
+			min: Math.max(0, ...ids.map((id) => limits?.get(id)?.min ?? 0)),
+			max: Math.min(...ids.map((id) => limits?.get(id)?.max ?? Infinity))
+		});
+		const shared = range(roads);
 		for (const road of roads) {
-			const limit = limits?.get(road);
-			setbacks[road] = Math.min(limit?.max ?? Infinity, Math.max(limit?.min ?? 0, bestArc));
+			const { min, max } = shared.min <= shared.max ? shared : range([road]);
+			setbacks[road] = Math.min(max, Math.max(min, bestArc));
 		}
 		node.junction = { ...(node.junction ?? { connections: [] }), setbacks };
 		this.rebuildRoads();

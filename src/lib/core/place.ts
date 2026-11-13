@@ -645,7 +645,9 @@ export class PlaceBuilder {
 		// what the shifts need), never shorter than the shifts allow nor so
 		// long it runs into the road's far node. Left to itself the taper is
 		// the same length both sides, as long as the side with least room
-		// allows.
+		// allows; past that the other side takes what it can of the rest (a
+		// short footpath between this node and a junction leaves its sidewalks
+		// to ease across on the road behind).
 		for (const [nodeId, groups] of links) {
 			const node = graph.nodes.get(nodeId)!;
 			const lead = [groups[0][0], groups[1][0]];
@@ -662,17 +664,18 @@ export class PlaceBuilder {
 				const set = node.junction?.setbacks?.[id];
 				if (set !== undefined) return { value: Math.min(max, Math.max(min, set)), room: rooms[k] };
 				const held = this.held?.node === nodeId ? this.held.setbacks.get(id) : undefined;
-				const wanted = held ?? (need === undefined ? undefined : need / 2);
-				return {
-					value: wanted === undefined ? undefined : Math.min(Math.max(0, shared), wanted),
-					room: shared
-				};
+				if (held === undefined && need === undefined) return { value: undefined, room: shared };
+				const rest = held ?? need! - Math.min(Math.max(0, shared), need! / 2);
+				const value = Math.min(max, rest);
+				return { value, room: Math.max(shared, value) };
 			});
 			if (groups.every((g) => g.length === 1)) this.limits.set(nodeId, limits);
 			const result = linkSetbacks(lead[0], lead[1], [reach[0].value, reach[1].value]);
 			const used = new Map<string, number>();
 			for (const [k, group] of groups.entries()) {
-				const trim = Math.min(result[k], reach[k].room);
+				// A road too short for its far junction's setback and a taper
+				// leaves no room here, but its end never reaches past the node.
+				const trim = Math.min(result[k], Math.max(THROUGH_GAP, reach[k].room));
 				used.set(lead[k].segment.id, trim);
 				for (const arm of group) trims.set(`${arm.segment.id}:${arm.end}`, trim);
 			}

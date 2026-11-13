@@ -89,6 +89,21 @@ test.describe('a node of two roads', () => {
 		await expect.poll(async () => (await roadEnds(page)).narrow.last.x).toBeCloseTo(12, 0);
 		expect((await roadEnds(page)).wide.first.x).toBeCloseTo(38, 0);
 	});
+
+	test('Shift-dragging past the shorter side stops both sides there', async ({ page }) => {
+		// Dead end q pulled in to x = 45 leaves the wide side 20 m of room,
+		// the narrow side keeps 35.
+		await drag(page, toScreen(60, 20), toScreen(45, 20));
+		await page.mouse.click(node.x, node.y);
+		await expect.poll(async () => (await roadEnds(page)).wide?.last.x).toBeCloseTo(45, 0);
+
+		await page.keyboard.down('Shift');
+		await drag(page, toScreen(15, 20), toScreen(-5, 20));
+		await page.keyboard.up('Shift');
+		await expect.poll(async () => (await roadEnds(page)).wide.first.x).toBeGreaterThan(40);
+		const ends = await roadEnds(page);
+		expect(25 - ends.narrow.last.x).toBeCloseTo(ends.wide.first.x - 25, 1);
+	});
 });
 
 // Junction k of the setbacks scene: a road west–east, and one leaving south
