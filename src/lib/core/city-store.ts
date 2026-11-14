@@ -3,7 +3,7 @@ import type { CameraState, CityRecord, CitySummary, GraphData } from './types';
 // The shape of saved cities and examples. Bump it whenever the saved graph's
 // shape changes: anything written with another version is ignored, never
 // migrated, so a library from an older build starts clean.
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 // The user's own cities live in localStorage, in dev exactly as in production.
 const INDEX_KEY = 'citynista:cities';
@@ -19,11 +19,11 @@ type StoredCity = CityRecord & { version: number };
 const EMPTY_GRAPH: GraphData = { nodes: [], segments: [] };
 
 // Examples are read-only files under static/examples/<id>.json, built by
-// scripts/examples/. Opening one never writes; the first edit forks it into a
-// city of your own.
+// their scripts under scripts/. Opening one never writes; saving it asks for a
+// name and stores it as a city of your own.
 export const EXAMPLES: CitySummary[] = [{ id: 'neighbourhood', name: 'Neighbourhood' }];
 
-export function slugify(name: string) {
+function slugify(name: string) {
 	const slug = name
 		.toLowerCase()
 		.trim()
@@ -70,19 +70,37 @@ export class CityStore {
 		return { id: city.id, name: city.name, graph: city.graph, camera: city.camera ?? null };
 	}
 
+	// True only when the city and its index entry are both stored. The index is
+	// written only when the entry is new or renamed; if that write fails a new
+	// city's record is removed, and a renamed one's is put back as it was.
+	// Putting it back can itself be refused: the record then carries the name
+	// the menu doesn't show until the city is next saved under its listed name.
 	save(city: CityRecord) {
 		const stored: StoredCity = { ...city, version: SCHEMA_VERSION };
-		try {
-			localStorage.setItem(cityKey(city.id), JSON.stringify(stored));
-		} catch {
-			// Quota exceeded: keep the index untouched rather than point at nothing.
-			return;
-		}
+		const key = cityKey(city.id);
 		const index = this.list();
 		const at = index.findIndex((c) => c.id === city.id);
+		const indexed = at >= 0 && index[at].name === city.name;
+		const before = indexed ? null : localStorage.getItem(key);
+		try {
+			localStorage.setItem(key, JSON.stringify(stored));
+		} catch {
+			// Quota exceeded: nothing was written.
+			return false;
+		}
+		if (indexed) return true;
 		if (at >= 0) index[at] = { id: city.id, name: city.name };
 		else index.push({ id: city.id, name: city.name });
-		this.writeIndex(index);
+		if (this.writeIndex(index)) return true;
+		if (before === null) this.removeKeys(city.id);
+		else {
+			try {
+				localStorage.setItem(key, before);
+			} catch {
+				// best-effort: the old record no longer fits
+			}
+		}
+		return false;
 	}
 
 	private writeIndex(index: CitySummary[]) {
@@ -91,7 +109,12 @@ export class CityStore {
 			name,
 			version: SCHEMA_VERSION
 		}));
-		localStorage.setItem(INDEX_KEY, JSON.stringify(stored));
+		try {
+			localStorage.setItem(INDEX_KEY, JSON.stringify(stored));
+			return true;
+		} catch {
+			return false;
+		}
 	}
 
 	private removeKeys(id: string) {
@@ -102,7 +125,7 @@ export class CityStore {
 	// A rename touches only the name; the stored map stays as last saved.
 	rename(id: string, name: string) {
 		const city = this.load(id);
-		if (city) this.save({ ...city, name });
+		return city ? this.save({ ...city, name }) : false;
 	}
 
 	remove(id: string) {
@@ -115,35 +138,48 @@ export class CityStore {
 	}
 
 	setCurrentId(id: string) {
-		localStorage.setItem(CURRENT_KEY, id);
+		try {
+			localStorage.setItem(CURRENT_KEY, id);
+		} catch {
+			// best-effort: a reload then opens another city
+		}
 	}
 
-	create(name: string, graph: GraphData = EMPTY_GRAPH, camera: CameraState | null = null) {
+	// The first id from the name that no city in the index uses.
+	private freeId(name: string) {
 		const taken = new Set(this.list().map((c) => c.id));
 		const base = slugify(name);
 		let id = base;
 		let n = 2;
 		while (taken.has(id)) id = `${base}-${n++}`;
+		return id;
+	}
+
+	create(name: string, graph: GraphData = EMPTY_GRAPH, camera: CameraState | null = null) {
+		const id = this.freeId(name);
 		const city: CityRecord = { id, name: id, graph, camera };
-		this.save(city);
-		return city;
+		return this.save(city) ? city : null;
 	}
 
 	// The working city on boot: the current one, else a fresh empty city.
+	// `stored` is false when storage refused that fresh city: it is worked on
+	// unstored, under an id no other city has, until a save succeeds.
 	ensureCurrent() {
 		this.prune();
 		const id = this.currentId();
 		if (id) {
 			const current = this.load(id);
-			if (current) return current;
+			if (current) return { city: current, stored: true };
 		}
-		const city = this.create('untitled');
+		const created = this.create('untitled');
+		const free = this.freeId('untitled');
+		const city = created ?? { id: free, name: free, graph: EMPTY_GRAPH, camera: null };
 		this.setCurrentId(city.id);
-		return city;
+		return { city, stored: !!created };
 	}
 }
 
-export function getExample(id: string) {
+function getExample(id: string) {
 	return EXAMPLES.find((example) => example.id === id) ?? null;
 }
 

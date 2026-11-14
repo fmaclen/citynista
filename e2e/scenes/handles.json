@@ -20,7 +20,6 @@
 			"x": 25,
 			"y": 20,
 			"junction": {
-				"connections": [],
 				"setbacks": { "narrow": 10, "wide": 10 }
 			}
 		},
@@ -34,7 +33,6 @@
 			"x": 70,
 			"y": -30,
 			"junction": {
-				"connections": [],
 				"crossings": [
 					{
 						"road": "je",

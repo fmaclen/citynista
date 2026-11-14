@@ -54,19 +54,6 @@ export class Graph {
 		this.segments.delete(segmentId);
 	}
 
-	findNodeAt(x: number, y: number, threshold: number = 15) {
-		let best: Node | null = null;
-		let bestDistance = threshold;
-		for (const node of this.nodes.values()) {
-			const distance = Math.hypot(node.x - x, node.y - y);
-			if (distance < bestDistance) {
-				bestDistance = distance;
-				best = node;
-			}
-		}
-		return best;
-	}
-
 	clear() {
 		this.nodes.clear();
 		this.segments.clear();

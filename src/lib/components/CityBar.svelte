@@ -11,17 +11,21 @@
 
 	let newOpen = $state(false);
 	let newName = $state('');
+	// Whether the dialog's own last attempt was refused; its message shows in
+	// the dialog, since the city bar's sits behind the overlay.
+	let newFailed = $state(false);
 
 	function openNew() {
 		newName = '';
+		newFailed = false;
 		newOpen = true;
 	}
 
 	function create() {
 		const name = newName.trim();
 		if (!name) return;
-		newOpen = false;
-		editor.newCity(name);
+		newFailed = !editor.newCity(name);
+		if (!newFailed) newOpen = false;
 	}
 
 	function openCity(id: string) {
@@ -62,13 +66,16 @@
 	// Save-as (saving an example) and Duplicate share one dialog, prefilled with
 	// the current name.
 	let saveName = $state('');
+	let saveFailed = $state(false);
 	$effect(() => {
-		if (editor.saveAsOpen) saveName = editor.currentCityName;
+		if (!editor.saveAsOpen) return;
+		saveName = editor.currentCityName;
+		saveFailed = false;
 	});
 
 	function saveAs() {
 		const name = saveName.trim();
-		if (name) editor.saveAs(name);
+		if (name) saveFailed = !editor.saveAs(name);
 	}
 </script>
 
@@ -180,6 +187,9 @@
 				aria-label="Unsaved changes"
 			></span>
 		{/if}
+		{#if editor.saveError}
+			<span class="mr-1 text-sm text-muted-foreground" role="alert">{editor.saveError}</span>
+		{/if}
 	</div>
 </div>
 
@@ -200,6 +210,11 @@
 			}}
 		/>
 		<Dialog.Footer>
+			{#if newFailed && editor.saveError}
+				<span class="self-center text-sm text-muted-foreground" role="alert"
+					>{editor.saveError}</span
+				>
+			{/if}
 			<Button onclick={create} disabled={!newName.trim()}>Create</Button>
 		</Dialog.Footer>
 	</Dialog.Content>
@@ -225,6 +240,11 @@
 			}}
 		/>
 		<Dialog.Footer>
+			{#if saveFailed && editor.saveError}
+				<span class="self-center text-sm text-muted-foreground" role="alert"
+					>{editor.saveError}</span
+				>
+			{/if}
 			<Button onclick={saveAs} disabled={!saveName.trim()}>Save</Button>
 		</Dialog.Footer>
 	</Dialog.Content>

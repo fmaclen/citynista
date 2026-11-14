@@ -8,7 +8,6 @@
 		"components": "$lib/components",
 		"utils": "$lib/utils",
 		"ui": "$lib/components/ui",
-		"hooks": "$lib/hooks",
 		"lib": "$lib"
 	},
 	"typescript": true,

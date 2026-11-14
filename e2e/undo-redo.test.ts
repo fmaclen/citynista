@@ -1,24 +1,10 @@
 import { expect, test } from '@playwright/test';
-import { saveCity } from './save';
-import { expectSelectMode } from './mode';
-
-const STORAGE_KEY = 'citynista-graph-v2';
+import { expectSelectMode, openEditor, liveGraph } from './app';
 
 test.describe('Undo/redo', () => {
 	test.beforeEach(async ({ page }) => {
-		await page.goto('/?topdown');
-		await page.evaluate((key) => localStorage.removeItem(key), STORAGE_KEY);
-		await page.reload();
-		await expect(page.locator('canvas')).toBeVisible();
+		await openEditor(page);
 	});
-
-	const savedGraph = async (page: import('@playwright/test').Page) => {
-		await saveCity(page);
-		return page.evaluate((key) => {
-			const data = localStorage.getItem(key);
-			return data ? JSON.parse(data) : null;
-		}, STORAGE_KEY);
-	};
 
 	test('undo and redo step through drawn segments', async ({ page }) => {
 		const canvas = page.locator('canvas');
@@ -29,17 +15,17 @@ test.describe('Undo/redo', () => {
 		await page.keyboard.press('Escape');
 		await page.keyboard.press('Escape');
 
-		expect((await savedGraph(page)).segments.length).toBe(2);
+		expect((await liveGraph(page)).segments.length).toBe(2);
 
 		await page.keyboard.press('ControlOrMeta+z');
-		expect((await savedGraph(page)).segments.length).toBe(1);
+		expect((await liveGraph(page)).segments.length).toBe(1);
 
 		await page.keyboard.press('ControlOrMeta+z');
-		expect((await savedGraph(page)).segments.length).toBe(0);
+		expect((await liveGraph(page)).segments.length).toBe(0);
 
 		await page.keyboard.press('ControlOrMeta+Shift+z');
 		await page.keyboard.press('ControlOrMeta+Shift+z');
-		expect((await savedGraph(page)).segments.length).toBe(2);
+		expect((await liveGraph(page)).segments.length).toBe(2);
 	});
 
 	test('a node drag is one undo step', async ({ page }) => {
@@ -51,7 +37,7 @@ test.describe('Undo/redo', () => {
 		await page.keyboard.press('Escape');
 		await expectSelectMode(page);
 
-		const before = await savedGraph(page);
+		const before = await liveGraph(page);
 
 		// Select and drag the end node in several increments.
 		await canvas.click({ position: { x: 500, y: 300 }, force: true });
@@ -60,13 +46,13 @@ test.describe('Undo/redo', () => {
 		await page.mouse.move(560, 340, { steps: 6 });
 		await page.mouse.up();
 
-		const moved = await savedGraph(page);
+		const moved = await liveGraph(page);
 		expect(moved).not.toEqual(before);
 
 		// One undo restores the original positions despite the many
 		// intermediate mousemoves.
 		await page.keyboard.press('ControlOrMeta+z');
-		expect(await savedGraph(page)).toEqual(before);
+		expect(await liveGraph(page)).toEqual(before);
 	});
 
 	test('undo buttons reflect history state', async ({ page }) => {
@@ -87,25 +73,14 @@ test.describe('Undo/redo', () => {
 		await expect(redoButton).toBeEnabled();
 
 		await redoButton.click();
-		expect((await savedGraph(page)).segments.length).toBe(1);
+		expect((await liveGraph(page)).segments.length).toBe(1);
 	});
 });
 
 test.describe('Bulldoze', () => {
 	test.beforeEach(async ({ page }) => {
-		await page.goto('/?topdown');
-		await page.evaluate((key) => localStorage.removeItem(key), STORAGE_KEY);
-		await page.reload();
-		await expect(page.locator('canvas')).toBeVisible();
+		await openEditor(page);
 	});
-
-	const savedGraph = async (page: import('@playwright/test').Page) => {
-		await saveCity(page);
-		return page.evaluate((key) => {
-			const data = localStorage.getItem(key);
-			return data ? JSON.parse(data) : null;
-		}, STORAGE_KEY);
-	};
 
 	test('click demolishes a segment, marquee demolishes an area, undo restores', async ({
 		page
@@ -118,27 +93,27 @@ test.describe('Bulldoze', () => {
 		await page.keyboard.press('Escape');
 		await page.keyboard.press('Escape');
 
-		expect((await savedGraph(page)).segments.length).toBe(2);
+		expect((await liveGraph(page)).segments.length).toBe(2);
 
 		await page.getByTitle('Bulldoze (click or drag to demolish)').click();
 
 		// Click the middle of the first segment: that segment dies, the rest
 		// survives.
 		await canvas.click({ position: { x: 300, y: 300 }, force: true });
-		expect((await savedGraph(page)).segments.length).toBe(1);
+		expect((await liveGraph(page)).segments.length).toBe(1);
 
 		// Red marquee over everything left.
 		await page.mouse.move(150, 200);
 		await page.mouse.down();
 		await page.mouse.move(700, 420, { steps: 4 });
 		await page.mouse.up();
-		expect((await savedGraph(page)).segments.length).toBe(0);
-		expect((await savedGraph(page)).nodes.length).toBe(0);
+		expect((await liveGraph(page)).segments.length).toBe(0);
+		expect((await liveGraph(page)).nodes.length).toBe(0);
 
 		// Both demolitions are plain undo steps.
 		await page.keyboard.press('ControlOrMeta+z');
 		await page.keyboard.press('ControlOrMeta+z');
-		expect((await savedGraph(page)).segments.length).toBe(2);
+		expect((await liveGraph(page)).segments.length).toBe(2);
 
 		// Escape leaves bulldoze mode even right after clicking the toolbar
 		// button (which must not keep focus).

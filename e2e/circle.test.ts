@@ -1,39 +1,11 @@
-import { expect, test, type Page } from '@playwright/test';
-import { saveCity } from './save';
-import { openScene } from './scenes';
-
-const STORAGE_KEY = 'citynista-graph-v2';
-
-// World→screen at the default camera: screen = centre + world * (720 / 500),
-// so the canvas centre (640, 360) is the world origin.
-const PX = 720 / 500;
-
-interface SavedNode {
-	id: string;
-	x: number;
-	y: number;
-}
-interface SavedSegment {
-	id: string;
-	startNodeId: string;
-	endNodeId: string;
-	lanes: { role: string; direction: string }[];
-}
-interface Saved {
-	nodes: SavedNode[];
-	segments: SavedSegment[];
-}
-
-const savedGraph = async (page: Page): Promise<Saved> => {
-	await saveCity(page);
-	return page.evaluate((key) => JSON.parse(localStorage.getItem(key) ?? 'null'), STORAGE_KEY);
-};
-
-const nodeOf = (data: Saved, id: string) => data.nodes.find((n) => n.id === id)!;
+import { expect, test } from '@playwright/test';
+import type { GraphData, SegmentData } from '../src/lib/core/types';
+import { openEditor, openScene, liveGraph, screenAt, toScreen } from './app';
+import { nodeOf } from '../unit/model';
 
 // Twice the signed area of the closed chain the segments make, walked start
 // to end (world x, z): negative runs counter-clockwise on screen.
-const signedArea = (data: Saved, segments: SavedSegment[]) =>
+const signedArea = (data: GraphData, segments: SegmentData[]) =>
 	segments.reduce((sum, s) => {
 		const a = nodeOf(data, s.startNodeId);
 		const b = nodeOf(data, s.endNodeId);
@@ -42,10 +14,7 @@ const signedArea = (data: Saved, segments: SavedSegment[]) =>
 
 test.describe('Circle tool', () => {
 	test.beforeEach(async ({ page }) => {
-		await page.goto('/?topdown');
-		await page.evaluate(() => localStorage.clear());
-		await page.reload();
-		await expect(page.locator('canvas')).toBeVisible();
+		await openEditor(page);
 	});
 
 	test('the style strip shows while a preset is armed; Tab cycles it', async ({
@@ -89,9 +58,9 @@ test.describe('Circle tool', () => {
 		await page.getByRole('button', { name: 'Circle', exact: true }).click();
 
 		await canvas.click({ position: { x: 640, y: 360 }, force: true });
-		await canvas.click({ position: { x: 640 + 100 * PX, y: 360 }, force: true });
+		await canvas.click({ position: toScreen(100, 0), force: true });
 
-		const data = await savedGraph(page);
+		const data = await liveGraph(page);
 		expect(data.segments.length).toBe(8);
 		expect(data.nodes.length).toBe(8);
 		for (const node of data.nodes) {
@@ -110,15 +79,15 @@ test.describe('Circle tool', () => {
 
 	test('with the grid on, the centre and the radius snap to it', async ({ page }) => {
 		await page.evaluate(() => localStorage.setItem('citynista:grid', '1'));
-		await page.reload();
+		await openEditor(page);
 		const canvas = page.locator('canvas');
 		await page.getByRole('button', { name: 'Street' }).click();
 		await page.getByRole('button', { name: 'Circle', exact: true }).click();
 
-		await canvas.click({ position: { x: 640 + 3 * PX, y: 360 - 4 * PX }, force: true });
-		await canvas.click({ position: { x: 640 + 63 * PX, y: 360 }, force: true });
+		await canvas.click({ position: toScreen(3, -4), force: true });
+		await canvas.click({ position: toScreen(63, 0), force: true });
 
-		const data = await savedGraph(page);
+		const data = await liveGraph(page);
 		expect(data.nodes.length).toBeGreaterThan(0);
 		for (const node of data.nodes) {
 			expect(Math.abs(Math.hypot(node.x, node.y) - 60)).toBeLessThan(0.5);
@@ -137,19 +106,19 @@ test.describe('Circle tool', () => {
 		);
 
 		// Left ring: the default direction. Its ghost carries the arrow.
-		await canvas.click({ position: { x: 640 - 150 * PX, y: 360 }, force: true });
-		await canvas.hover({ position: { x: 640 - 90 * PX, y: 360 }, force: true });
+		await canvas.click({ position: toScreen(-150, 0), force: true });
+		await canvas.hover({ position: toScreen(-90, 0), force: true });
 		await page.screenshot({ path: testInfo.outputPath('ghost-arrow.png') });
-		await canvas.click({ position: { x: 640 - 90 * PX, y: 360 }, force: true });
+		await canvas.click({ position: toScreen(-90, 0), force: true });
 
 		// Right ring: flipped.
-		await canvas.click({ position: { x: 640 + 150 * PX, y: 360 }, force: true });
-		await canvas.hover({ position: { x: 640 + 210 * PX, y: 360 }, force: true });
+		await canvas.click({ position: toScreen(150, 0), force: true });
+		await canvas.hover({ position: toScreen(210, 0), force: true });
 		await page.keyboard.press('f');
 		await page.screenshot({ path: testInfo.outputPath('ghost-arrow-flipped.png') });
-		await canvas.click({ position: { x: 640 + 210 * PX, y: 360 }, force: true });
+		await canvas.click({ position: toScreen(210, 0), force: true });
 
-		const data = await savedGraph(page);
+		const data = await liveGraph(page);
 		expect(data.segments.length).toBe(16);
 		const left = data.segments.filter((s) => nodeOf(data, s.startNodeId).x < 0);
 		const right = data.segments.filter((s) => nodeOf(data, s.startNodeId).x > 0);
@@ -171,9 +140,9 @@ test.describe('Circle tool', () => {
 		// Dragged out along the road itself, where a ring node would sit on it.
 		await page.getByRole('button', { name: 'Circle', exact: true }).click();
 		await canvas.click({ position: { x: 640, y: 360 }, force: true });
-		await canvas.click({ position: { x: 640 + 100 * PX, y: 360 }, force: true });
+		await canvas.click({ position: toScreen(100, 0), force: true });
 
-		const data = await savedGraph(page);
+		const data = await liveGraph(page);
 		// The road in three, the ring in eight with nodes at both crossings.
 		expect(data.segments.length).toBe(11);
 		const degree = (id: string) =>
@@ -187,19 +156,17 @@ test.describe('Circle tool', () => {
 	});
 
 	test('a 12 m ring over a crossroads cuts all four arms', async ({ page }) => {
-		// Zoomed 8×: 720 / 500 * 8 px per metre.
-		const px = PX * 8;
-		await openScene(page, 'crossroads', 'topdown&cam=0,0,8');
+		const at = screenAt(8);
+		await openScene(page, 'crossroads', 'topdown&model&cam=0,0,8');
 		const canvas = page.locator('canvas');
-		await expect(canvas).toBeVisible();
 		await page.getByRole('button', { name: 'Street' }).click();
 		await page.getByRole('button', { name: 'Circle', exact: true }).click();
 
 		// The centre lands on the crossroads node; the radius runs along an arm.
 		await canvas.click({ position: { x: 640, y: 360 }, force: true });
-		await canvas.click({ position: { x: 640 + 12 * px, y: 360 }, force: true });
+		await canvas.click({ position: at(12, 0), force: true });
 
-		const data = await savedGraph(page);
+		const data = await liveGraph(page);
 		const degree = (id: string) =>
 			data.segments.filter((s) => s.startNodeId === id || s.endNodeId === id).length;
 		const cuts = data.nodes.filter((n) => n.id !== 'c' && degree(n.id) === 4);
@@ -211,26 +178,22 @@ test.describe('Circle tool', () => {
 	});
 
 	test('a ring over roads at uneven angles cuts each, where the ghost showed', async ({ page }) => {
-		const px = PX * 4;
+		const at = screenAt(4);
 		await openScene(page, 'uneven-three', 'topdown&model&cam=0,0,4');
 		const canvas = page.locator('canvas');
-		await expect(canvas).toBeVisible();
 		await page.getByRole('button', { name: 'Street' }).click();
 		await page.getByRole('button', { name: 'Circle', exact: true }).click();
 
 		// Roads leave the centre at 0°, 100° and 200°; the cursor sits between.
-		const cursor = {
-			x: 640 + 20 * Math.cos(Math.PI / 3.6) * px,
-			y: 360 + 20 * Math.sin(Math.PI / 3.6) * px
-		};
+		const cursor = at(20 * Math.cos(Math.PI / 3.6), 20 * Math.sin(Math.PI / 3.6));
 		await canvas.click({ position: { x: 640, y: 360 }, force: true });
 		await canvas.hover({ position: cursor, force: true });
-		const ghost: Saved = await page.evaluate(() =>
-			(window as unknown as { __ghostGraph: () => unknown }).__ghostGraph()
+		const ghost = await page.evaluate(() =>
+			(window as unknown as { __ghostGraph: () => GraphData }).__ghostGraph()
 		);
 		await canvas.click({ position: cursor, force: true });
 
-		const data = await savedGraph(page);
+		const data = await liveGraph(page);
 		const degree = (id: string) =>
 			data.segments.filter((s) => s.startNodeId === id || s.endNodeId === id).length;
 		const cuts = data.nodes.filter((n) => n.id !== 'c' && degree(n.id) === 4);

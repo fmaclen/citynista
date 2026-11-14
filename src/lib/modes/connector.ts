@@ -1,6 +1,22 @@
 import type { ModeHandlers } from './types';
-import type { ConnectorEndpoint, Editor } from '../editor.svelte';
-import { nodeHitAt, segmentHitAt } from './picking';
+import type { Editor } from '../editor.svelte';
+import type { JunctionCrossing, LaneRef } from '../core/types';
+import type { LaneConnection } from '../core/lane-connections';
+import { crossingAt } from '../core/place';
+import { CROSSING_DEPTH, CROSSING_FROM_END } from '../road-model/approach';
+import { endsOf, type EndInfo } from '../road-model/ends';
+import { kindOf } from '../road-model/connect';
+import {
+	endKey,
+	isTravel,
+	type Control,
+	type LaneRef as ModelLaneRef,
+	type Pt as Point
+} from '../road-model/model';
+import { crossSection, frameAt, offsetPoint, project } from '../road-model/geometry';
+import { CROSSING_HANDLE, hitsHandle } from '../rendering/handle-shapes';
+import { HANDLE_HIT_SLACK_PX, LANE_DOT_PX } from '../rendering/editor-palette';
+import { pickAt } from './picking';
 
 // The lane connector: a transient mode scoped to one node (entered by
 // double-clicking it). Each lane shows a dot at its mouth: a filled disc where
@@ -11,16 +27,355 @@ import { nodeHitAt, segmentHitAt } from './picking';
 // crossing at the node shows as a line straight across its road with a
 // handle: drag the handle to slide it along the road, click it to switch
 // the crossing off (a hollow handle) or on again. Dragging between
-// the two sidewalk dots of one road adds a crossing there.
+// the two sidewalk dots of one road adds a crossing there. A badge on each
+// approach steps its control through none, stop, yield and signal.
 //
 // The mode is modal: while it's open nothing else hovers or selects. Clicking a
 // road or node is ignored (so you can't accidentally grab the road next door);
 // leave with Escape or a click on empty ground.
+
 // How far a press on a crossing handle may wander and still be a click.
 const CLICK_SLOP_PX = 3;
+// A new crosswalk lands this far beyond the end of its road's taper.
+const NEW_CROSSING_BEYOND = 3;
+// Lane dots of two road ends that nearly meet sit at least this far apart.
+const CONNECTOR_SPREAD = 10;
+
+// A lane end in the lane connector: travel lanes are entered (`in`) or left
+// (`out`); medians, grass and sidewalks connect either way (`both`).
+export interface ConnectorEndpoint {
+	ref: LaneRef;
+	lane: ModelLaneRef;
+	kind: string;
+	point: Point;
+	dir: Point;
+	flow: 'in' | 'out' | 'both';
+}
+
+type Toggle = { from: ModelLaneRef; to: ModelLaneRef };
+
+// Opens the connector on a node of two or more roads. The node's taper, and
+// with it every lane dot, holds still while its connections are edited; the
+// editor lets it go when the connector closes (`closeConnector`).
+export function openConnector(editor: Editor, nodeId: string) {
+	const node = editor.graph.nodes.get(nodeId);
+	if (!node || node.connectedSegments.length < 2) return;
+	editor.clearSelection();
+	editor.roadRenderer.holdTaper(nodeId);
+	editor.connectorNodeId = nodeId;
+	editor.mode = 'connector';
+}
+
+const connectorNode = (editor: Editor) =>
+	editor.connectorNodeId ? editor.graph.nodes.get(editor.connectorNodeId) : undefined;
+
+const connectorJunction = (editor: Editor) =>
+	editor.connectorNodeId
+		? editor.roadRenderer.derived?.junctions.get(editor.connectorNodeId)
+		: undefined;
+
+// The road ends at the connector's node, as the drawing reads them.
+function connectorEnds(editor: Editor): EndInfo[] {
+	const junction = connectorJunction(editor);
+	const scene = editor.roadRenderer.scene;
+	return junction && scene ? endsOf(junction, scene.geos) : [];
+}
+
+// Lane dots and the connections between them. Where only two roads meet,
+// every lane shows; at a junction of more, the travel lanes (its sidewalks
+// are its corners and crosswalks).
+function refreshConnectors(editor: Editor) {
+	const id = editor.connectorNodeId;
+	const junction = connectorJunction(editor);
+	const ends = connectorEnds(editor);
+	const node = id ? editor.roadRenderer.scene?.node(id) : undefined;
+	editor.controlBadges = (node?.approaches ?? []).map((a) => ({
+		key: a.end,
+		control: a.control,
+		x: a.badge.x,
+		y: a.badge.y
+	}));
+	if (!junction || ends.length === 0) {
+		editor.connectorEndpoints = [];
+		editor.connectionRenderer.clear();
+		editor.crossingRenderer.clear();
+		return;
+	}
+	const link = ends.length === 2;
+	// Where two road ends nearly meet, their dots spread apart along the
+	// roads so every lane's dot can be told apart and aimed at.
+	const gap = link
+		? Math.hypot(ends[0].frame.p.x - ends[1].frame.p.x, ends[0].frame.p.y - ends[1].frame.p.y)
+		: Infinity;
+	const spread = Math.max(0, (CONNECTOR_SPREAD - gap) / 2);
+	const endpoints: ConnectorEndpoint[] = [];
+	for (const end of ends) {
+		const segment = editor.graph.segments.get(end.ref.road);
+		if (!segment) continue;
+		for (const l of end.lanes) {
+			const travel = isTravel(l.lane);
+			if (!travel && !link) continue;
+			if (!travel && l.lane.kind !== 'walk' && l.lane.kind !== 'buffer') continue;
+			const laneIndex = segment.lanes.findIndex((x) => x.id === l.ref.lane);
+			if (laneIndex < 0) continue;
+			endpoints.push({
+				ref: { segmentId: end.ref.road, laneIndex },
+				lane: l.ref,
+				kind: kindOf(l.lane),
+				point: {
+					x: l.point.x + end.frame.out.x * spread,
+					y: l.point.y + end.frame.out.y * spread
+				},
+				dir: { x: -end.frame.out.x, y: -end.frame.out.y },
+				flow: !travel ? 'both' : l.flow === 'in' ? 'in' : 'out'
+			});
+		}
+	}
+	const find = (r: ModelLaneRef) =>
+		endpoints.find((e) => endKey(e.lane) === endKey(r) && e.lane.lane === r.lane);
+	const connections: LaneConnection[] = [];
+	for (const c of junction.connections) {
+		const from = find(c.from);
+		const to = find(c.to);
+		if (!from || !to) continue;
+		connections.push({
+			from: from.ref,
+			to: to.ref,
+			fromPoint: from.point,
+			toPoint: to.point,
+			fromDir: from.dir,
+			toDir: { x: -to.dir.x, y: -to.dir.y }
+		});
+	}
+	editor.connectorEndpoints = endpoints;
+	editor.connectionRenderer.show(connections, endpoints);
+	// Each crossing: its handle across the road, on a straight line from
+	// sidewalk to sidewalk while it is on.
+	editor.crossingRenderer.show(
+		connectorCrossings(editor).map((c) => ({
+			at: c.mid,
+			dir: c.dir,
+			stem: c.crossing.on ? ([c.from, c.to] as [Point, Point]) : undefined,
+			hollow: !c.crossing.on
+		}))
+	);
+}
+
+// The lane dot nearest the cursor, either flow — used for hover feedback and
+// for picking both ends of a connector drag (direction-agnostic).
+function endpointNear(editor: Editor, worldX: number, worldZ: number) {
+	const threshold = (LANE_DOT_PX + HANDLE_HIT_SLACK_PX) * editor.sceneManager.worldPerPixel();
+	let best: ConnectorEndpoint | null = null;
+	let bestDistance = threshold;
+	for (const endpoint of editor.connectorEndpoints) {
+		const distance = Math.hypot(endpoint.point.x - worldX, endpoint.point.y - worldZ);
+		if (distance < bestDistance) {
+			bestDistance = distance;
+			best = endpoint;
+		}
+	}
+	return best;
+}
+
+// Two different sidewalks at the same road end.
+function crossingPair(a: ConnectorEndpoint, b: ConnectorEndpoint) {
+	return (
+		a.kind === 'walk' &&
+		b.kind === 'walk' &&
+		endKey(a.lane) === endKey(b.lane) &&
+		a.lane.lane !== b.lane.lane
+	);
+}
+
+// Whether a drag from one lane dot to another makes (or unmakes) a
+// connection: same kind, different road ends, and for travel lanes from
+// where traffic comes in to where it leaves.
+function canConnect(from: ConnectorEndpoint, to: ConnectorEndpoint) {
+	// Two sidewalks of one road end: a crosswalk across that road.
+	if (crossingPair(from, to)) return true;
+	if (from.kind !== to.kind || endKey(from.lane) === endKey(to.lane)) return false;
+	if (from.flow === 'both' || to.flow === 'both') return from.flow === to.flow;
+	return from.flow === 'in' && to.flow === 'out';
+}
+
+// Adds the connection between two lane dots, or removes it if it is there.
+// The node keeps the edit (an addition or a removal against the defaults)
+// for as long as both lanes exist.
+function toggleConnection(editor: Editor, from: ConnectorEndpoint, to: ConnectorEndpoint) {
+	if (!canConnect(from, to)) return;
+	if (crossingPair(from, to)) {
+		toggleCrossing(editor, from, to);
+		return;
+	}
+	editConnections(editor, [{ from: from.lane, to: to.lane }]);
+}
+
+// Double-clicking a lane dot removes every connection it has.
+function toggleAllConnections(editor: Editor, endpoint: ConnectorEndpoint) {
+	const hit = (r: ModelLaneRef) =>
+		endKey(r) === endKey(endpoint.lane) && r.lane === endpoint.lane.lane;
+	const mine = (connectorJunction(editor)?.connections ?? []).filter(
+		(c) => hit(c.from) || hit(c.to)
+	);
+	if (mine.length) editConnections(editor, mine);
+}
+
+function editConnections(editor: Editor, toggles: Toggle[]) {
+	const node = connectorNode(editor);
+	const junction = connectorJunction(editor);
+	if (!node || !junction) return;
+	const key = (r: ModelLaneRef) => `${endKey(r)}/${r.lane}`;
+	const same = (x: Toggle, y: Toggle) =>
+		(key(x.from) === key(y.from) && key(x.to) === key(y.to)) ||
+		(key(x.from) === key(y.to) && key(x.to) === key(y.from));
+	const copy = (c: Toggle) => ({ from: { ...c.from }, to: { ...c.to } });
+	let added = (node.junction?.added ?? []).map(copy);
+	let removed = (node.junction?.removed ?? []).map(copy);
+	for (const t of toggles) {
+		const present = junction.connections.some((c) => same(c, t));
+		if (present) {
+			if (added.some((c) => same(c, t))) added = added.filter((c) => !same(c, t));
+			else removed.push(copy(t));
+		} else if (removed.some((c) => same(c, t))) removed = removed.filter((c) => !same(c, t));
+		else added.push(copy(t));
+	}
+	node.junction = { ...node.junction, added, removed };
+	editor.rebuildRoads();
+	editor.graph.save();
+	refreshConnectors(editor);
+}
+
+// The connector node's crossings, on and off, each straight across its
+// road with a handle in the middle to slide it along the road.
+function connectorCrossings(editor: Editor) {
+	const id = editor.connectorNodeId;
+	const list = id ? editor.roadRenderer.derived?.crossings.get(id) : undefined;
+	const geos = editor.roadRenderer.scene?.geos;
+	if (!list || !geos) return [];
+	return list.flatMap((c, index) => {
+		const geo = geos.get(c.road);
+		if (!geo || c.place === undefined) return [];
+		const f = frameAt(geo.path, c.place);
+		const spans = crossSection(geo.road, c.place);
+		const sides = c.lanes.map((lane) => spans.find((sp) => sp.lane.id === lane));
+		if (!sides[0] || !sides[1]) return [];
+		const [p, q] = sides.map((sp) => offsetPoint(f.p, f.n, (sp!.left + sp!.right) / 2));
+		const mid = { x: (p.x + q.x) / 2, y: (p.y + q.y) / 2 };
+		const l = Math.hypot(q.x - p.x, q.y - p.y) || 1;
+		const dir = { x: (q.x - p.x) / l, y: (q.y - p.y) / l };
+		return [{ index, crossing: c, from: p, to: q, mid, dir }];
+	});
+}
+
+// The crossing whose handle is under the pointer, with its place among
+// the handles shown (`shown`).
+function crossingHandleAt(editor: Editor, worldX: number, worldZ: number) {
+	const scale = editor.sceneManager.worldPerPixel();
+	const list = connectorCrossings(editor);
+	const shown = list.findIndex((c) =>
+		hitsHandle(CROSSING_HANDLE, c.mid, c.dir, worldX, worldZ, scale)
+	);
+	return shown < 0 ? null : { ...list[shown], shown };
+}
+
+const sameCrossing = (c: JunctionCrossing) => (x: JunctionCrossing) =>
+	x.road === c.road && x.end === c.end && x.lanes.every((l) => c.lanes.includes(l));
+
+// Writes a crossing's stored edit on the connector's node: a default one
+// moved or switched, or one added by hand.
+function storeCrossing(editor: Editor, c: JunctionCrossing, patch: Partial<JunctionCrossing>) {
+	const node = connectorNode(editor);
+	if (!node) return;
+	const stored = node.junction?.crossings ?? [];
+	const same = sameCrossing(c);
+	const next = stored.some(same)
+		? stored.map((x) => (same(x) ? { ...x, ...patch } : x))
+		: [...stored, { road: c.road, end: c.end, lanes: c.lanes, ...patch }];
+	node.junction = { ...node.junction, crossings: next };
+	editor.rebuildRoads();
+	refreshConnectors(editor);
+}
+
+// A crossing between two sidewalks of one road end: switched off if it is
+// on, on if it is off; one that isn't there yet is added a little way
+// past the node.
+function toggleCrossing(editor: Editor, a: ConnectorEndpoint, b: ConnectorEndpoint) {
+	const lanes: [string, string] = [a.lane.lane, b.lane.lane];
+	const existing = connectorCrossings(editor).find(
+		(c) =>
+			c.crossing.road === a.lane.road &&
+			c.crossing.end === a.lane.end &&
+			c.crossing.lanes.every((l) => lanes.includes(l))
+	);
+	if (existing) {
+		switchCrossing(editor, existing.index);
+		return;
+	}
+	const span = editor.roadRenderer.derived?.spans.get(a.lane.road);
+	if (!span) return;
+	const place = a.lane.end === 'start' ? NEW_CROSSING_BEYOND : span.length - NEW_CROSSING_BEYOND;
+	storeCrossing(
+		editor,
+		{ road: a.lane.road, end: a.lane.end, lanes },
+		{ at: crossingAt(a.lane.end, place, span), on: true }
+	);
+	editor.graph.save();
+}
+
+// Slides a crossing along its road to where the pointer is: never past
+// either end of the road, nor onto another crossing on it.
+function moveCrossing(editor: Editor, index: number, worldX: number, worldZ: number) {
+	const c = connectorCrossings(editor).find((x) => x.index === index)?.crossing;
+	const geo = c && editor.roadRenderer.scene?.geos.get(c.road);
+	const span = c && editor.roadRenderer.derived?.spans.get(c.road);
+	if (!c || !geo || !span || c.place === undefined) return;
+	const lo = CROSSING_FROM_END;
+	const hi = span.length - CROSSING_FROM_END;
+	let place = Math.max(lo, Math.min(hi, project(geo.path, { x: worldX, y: worldZ }).s));
+	// Other crossings on the road block the way from where it is now.
+	const gap = CROSSING_DEPTH + 1;
+	for (const other of geo.road.crossings ?? []) {
+		if (Math.abs(other.at - c.place) < 1e-6) continue;
+		if (other.at > c.place) place = Math.min(place, other.at - gap);
+		else place = Math.max(place, other.at + gap);
+	}
+	storeCrossing(editor, c, { at: crossingAt(c.end, place, span) });
+}
+
+// Switches a crossing off, or back on; one added by hand goes when
+// switched off.
+function switchCrossing(editor: Editor, index: number) {
+	const node = connectorNode(editor);
+	const c = connectorCrossings(editor).find((x) => x.index === index)?.crossing;
+	if (!node || !c) return;
+	if (!c.auto && c.on) {
+		const same = sameCrossing(c);
+		const crossings = (node.junction?.crossings ?? []).filter((x) => !same(x));
+		node.junction = { ...node.junction, crossings };
+		editor.rebuildRoads();
+		refreshConnectors(editor);
+	} else storeCrossing(editor, c, { on: !c.on });
+	editor.graph.save();
+}
+
+// Steps an approach's control on: none, stop, yield, signal, and round.
+export function cycleControl(editor: Editor, key: string) {
+	const node = connectorNode(editor);
+	const current = editor.controlBadges.find((b) => b.key === key)?.control;
+	if (!node || !current) return;
+	const order: Control[] = ['none', 'stop', 'yield', 'signal'];
+	const next = order[(order.indexOf(current) + 1) % order.length];
+	node.junction = {
+		...node.junction,
+		control: { ...(node.junction?.control ?? {}), [key]: next }
+	};
+	editor.rebuildRoads();
+	editor.graph.save();
+	refreshConnectors(editor);
+}
 
 export function setupConnectorMode(editor: Editor): ModeHandlers {
-	editor.refreshConnectors();
+	refreshConnectors(editor);
 	const canvas = editor.sceneManager.getCanvas();
 
 	let dragStart: ConnectorEndpoint | null = null;
@@ -36,11 +391,16 @@ export function setupConnectorMode(editor: Editor): ModeHandlers {
 		canvas.style.cursor = cursor;
 	};
 
+	// Leaving the mode closes the connector (Editor.setupMode).
+	const exit = () => {
+		editor.mode = 'select';
+	};
+
 	const onMouseDown = (event: MouseEvent) => {
 		if (event.button !== 0) return;
 		const world = editor.sceneManager.screenToWorld(event.clientX, event.clientY);
 
-		const crossing = editor.crossingHandleAt(world.x, world.z);
+		const crossing = crossingHandleAt(editor, world.x, world.z);
 		if (crossing) {
 			crossingDrag = { index: crossing.index, x: event.clientX, y: event.clientY, moved: false };
 			editor.lightHandle({ kind: 'crossing', index: crossing.shown }, 'active');
@@ -49,7 +409,7 @@ export function setupConnectorMode(editor: Editor): ModeHandlers {
 			return;
 		}
 
-		const near = editor.connectorEndpointNear(world.x, world.z);
+		const near = endpointNear(editor, world.x, world.z);
 		if (near) {
 			// Only discs are grabbable; an outgoing ring is a passive target.
 			dragStart = near.flow !== 'out' ? near : null;
@@ -59,10 +419,8 @@ export function setupConnectorMode(editor: Editor): ModeHandlers {
 		}
 
 		// No dot: leave only from empty ground; clicking a road or node is ignored.
-		const onSomething =
-			!!nodeHitAt(editor, world.x, world.z).node ||
-			!!segmentHitAt(editor, world.x, world.z).segment;
-		pendingExit = !onSomething;
+		const { node, segment } = pickAt(editor, world.x, world.z);
+		pendingExit = !node && !segment;
 	};
 
 	const onMouseMove = (event: MouseEvent) => {
@@ -71,16 +429,16 @@ export function setupConnectorMode(editor: Editor): ModeHandlers {
 		if (crossingDrag !== null) {
 			const travel = Math.hypot(event.clientX - crossingDrag.x, event.clientY - crossingDrag.y);
 			if (travel > CLICK_SLOP_PX) crossingDrag.moved = true;
-			if (crossingDrag.moved) editor.moveCrossing(crossingDrag.index, world.x, world.z);
+			if (crossingDrag.moved) moveCrossing(editor, crossingDrag.index, world.x, world.z);
 			return;
 		}
 
 		if (dragStart) {
 			// Feedback: green over a lane it can connect to, red over anything
 			// else under the cursor.
-			const near = editor.connectorEndpointNear(world.x, world.z);
+			const near = endpointNear(editor, world.x, world.z);
 			const over = near && near !== dragStart ? near : null;
-			const valid = !!over && editor.canConnect(dragStart, over);
+			const valid = !!over && canConnect(dragStart, over);
 			editor.connectionRenderer.setDragFeedback(dragStart.ref, over ? over.ref : null, valid);
 			editor.connectionRenderer.showRubberBand(
 				dragStart.point,
@@ -90,12 +448,12 @@ export function setupConnectorMode(editor: Editor): ModeHandlers {
 			return;
 		}
 
-		const crossing = editor.crossingHandleAt(world.x, world.z);
+		const crossing = crossingHandleAt(editor, world.x, world.z);
 		editor.lightHandle(crossing ? { kind: 'crossing', index: crossing.shown } : null);
 
 		// Hovering ANY dot (incoming or outgoing) highlights it and every movement
 		// that starts or ends there; only incoming dots are grabbable for a drag.
-		const near = editor.connectorEndpointNear(world.x, world.z);
+		const near = endpointNear(editor, world.x, world.z);
 		editor.connectionRenderer.setHovered(near ? near.ref : null);
 		setCursor(near ? (near.flow !== 'out' ? 'grab' : 'pointer') : 'default');
 	};
@@ -109,14 +467,14 @@ export function setupConnectorMode(editor: Editor): ModeHandlers {
 			editor.lightHandle(null);
 			setCursor('default');
 			if (moved) editor.graph.save();
-			else editor.switchCrossing(index);
+			else switchCrossing(editor, index);
 			return;
 		}
 
 		if (dragStart) {
 			const world = editor.sceneManager.screenToWorld(event.clientX, event.clientY);
-			const near = editor.connectorEndpointNear(world.x, world.z);
-			if (near && near !== dragStart) editor.toggleConnection(dragStart, near);
+			const near = endpointNear(editor, world.x, world.z);
+			if (near && near !== dragStart) toggleConnection(editor, dragStart, near);
 			dragStart = null;
 			setCursor('default');
 			return;
@@ -124,7 +482,7 @@ export function setupConnectorMode(editor: Editor): ModeHandlers {
 
 		if (pendingExit) {
 			pendingExit = false;
-			editor.exitConnectorMode();
+			exit();
 		}
 	};
 
@@ -132,15 +490,15 @@ export function setupConnectorMode(editor: Editor): ModeHandlers {
 	const onDoubleClick = (event: MouseEvent) => {
 		if (event.button !== 0) return;
 		const world = editor.sceneManager.screenToWorld(event.clientX, event.clientY);
-		if (editor.crossingHandleAt(world.x, world.z)) return;
-		const near = editor.connectorEndpointNear(world.x, world.z);
-		if (near) editor.toggleAllConnections(near);
+		if (crossingHandleAt(editor, world.x, world.z)) return;
+		const near = endpointNear(editor, world.x, world.z);
+		if (near) toggleAllConnections(editor, near);
 	};
 
 	const onKeyDown = (event: KeyboardEvent) => {
 		if (event.key === 'Escape') {
 			event.preventDefault();
-			editor.exitConnectorMode();
+			exit();
 		}
 	};
 
@@ -151,5 +509,13 @@ export function setupConnectorMode(editor: Editor): ModeHandlers {
 		editor.connectionRenderer.clear();
 	};
 
-	return { onMouseDown, onMouseMove, onMouseUp, onDoubleClick, onKeyDown, cleanup };
+	return {
+		onMouseDown,
+		onMouseMove,
+		onMouseUp,
+		onDoubleClick,
+		onKeyDown,
+		refresh: () => refreshConnectors(editor),
+		cleanup
+	};
 }

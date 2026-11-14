@@ -1,42 +1,33 @@
 import { expect, test, type Page } from '@playwright/test';
 import type { GraphData } from '../src/lib/core/types';
-import { attachedEnd } from './attached-end';
-import { saveCity } from './save';
-import { openScene } from './scenes';
+import { openScene, liveGraph, screenAt, type Pt } from './app';
+import { attachedEnd } from '../unit/model';
 
 // Scene two-way-end: a Street from a (0, 0) east to b (60, 0). At a, its
 // north edge (z < 0) carries the lane running out of the road (backward,
 // b to a), its south edge the lane running in (forward, a to b).
 const ZOOM = 4;
-const PX = (720 / 500) * ZOOM;
-const at = (x: number, z: number) => ({ x: 640 + x * PX, y: 360 + z * PX });
+const at = screenAt(ZOOM);
 const NORTH = at(-0.5, -3);
 const SOUTH = at(-0.5, 3);
 
 interface Look {
-	arrow: { at: { x: number; y: number }; dir: { x: number; y: number } } | null;
+	arrow: { at: Pt; dir: Pt } | null;
 	blocked: boolean;
 }
 
 const open = async (page: Page, preset = 'One-way lane') => {
 	await openScene(page, 'two-way-end', `topdown&model&cam=0,0,${ZOOM}`);
-	await expect(page.locator('canvas')).toBeVisible();
 	await page.getByRole('button', { name: preset }).click();
 };
 
-const hover = (page: Page, p: { x: number; y: number }) =>
-	page.locator('canvas').hover({ position: p, force: true });
-const click = (page: Page, p: { x: number; y: number }) =>
-	page.locator('canvas').click({ position: p, force: true });
+const hover = (page: Page, p: Pt) => page.locator('canvas').hover({ position: p, force: true });
+const click = (page: Page, p: Pt) => page.locator('canvas').click({ position: p, force: true });
 
 const ghostGraph = (page: Page) =>
 	page.evaluate(() => (window as unknown as { __ghostGraph: () => GraphData }).__ghostGraph());
 const ghostLook = (page: Page) =>
 	page.evaluate(() => (window as unknown as { __ghostLook: () => Look }).__ghostLook());
-const saved = async (page: Page): Promise<GraphData> => {
-	await saveCity(page);
-	return page.evaluate(() => JSON.parse(localStorage.getItem('citynista-graph-v2') ?? 'null'));
-};
 
 const added = (data: GraphData) => data.segments.filter((s) => s.id !== 'street');
 const directions = (data: GraphData) => added(data)[0].lanes.map((l) => l.direction);
@@ -64,7 +55,7 @@ test.describe('Drawing at a road edge', () => {
 		await page.screenshot({ path: testInfo.outputPath('edge-kept-flipped.png') });
 		await click(page, at(-5, 25));
 
-		const data = await saved(page);
+		const data = await liveGraph(page);
 		expect(attachedEnd(data, added(data)[0].id, 'a').y).toBeLessThan(-1);
 	});
 
@@ -75,7 +66,7 @@ test.describe('Drawing at a road edge', () => {
 		await open(page);
 		await click(page, NORTH);
 		await click(page, at(-30, -10));
-		let data = await saved(page);
+		let data = await liveGraph(page);
 		expect(added(data)[0].startNodeId).toBe('a');
 		expect(directions(data)).toEqual(['forward']);
 
@@ -85,14 +76,14 @@ test.describe('Drawing at a road edge', () => {
 		await click(page, at(-30, 10));
 		await page.keyboard.press('Escape');
 		await page.screenshot({ path: testInfo.outputPath('runs-with-lane.png') });
-		data = await saved(page);
+		data = await liveGraph(page);
 		expect(added(data)[0].startNodeId).toBe('a');
 		expect(directions(data)).toEqual(['backward']);
 
 		// The slot is untouched: on open ground the road runs as drawn.
 		await click(page, at(-30, 40));
 		await click(page, at(-60, 40));
-		data = await saved(page);
+		data = await liveGraph(page);
 		const free = added(data).find((s) => !['a', 'b'].includes(s.startNodeId))!;
 		expect(free.lanes.map((l) => l.direction)).toEqual(['forward']);
 	});
@@ -105,7 +96,7 @@ test.describe('Drawing at a road edge', () => {
 		await click(page, at(-40, 20));
 		await click(page, at(-60, 20));
 		await page.keyboard.press('Escape');
-		const first = added(await saved(page))[0];
+		const first = added(await liveGraph(page))[0];
 
 		// From p, where its traffic leaves, a new road feeds it: its traffic
 		// runs toward p, though drawn away from it.
@@ -118,7 +109,7 @@ test.describe('Drawing at a road edge', () => {
 		await page.keyboard.press('Escape');
 		await page.screenshot({ path: testInfo.outputPath('carries-on.png') });
 
-		const data = await saved(page);
+		const data = await liveGraph(page);
 		const from = (nodeId: string) =>
 			added(data).find((s) => s.id !== first.id && s.startNodeId === nodeId)!;
 		expect(from(first.startNodeId).lanes.map((l) => l.direction)).toEqual(['backward']);
@@ -159,14 +150,14 @@ test.describe('Drawing at a road edge', () => {
 		expect((await ghostLook(page)).blocked).toBe(true);
 		await page.screenshot({ path: testInfo.outputPath('head-on-edge.png') });
 		await click(page, NORTH);
-		expect(added(await saved(page))).toHaveLength(0);
+		expect(added(await liveGraph(page))).toHaveLength(0);
 
 		// The south edge takes it.
 		await hover(page, SOUTH);
 		expect((await ghostLook(page)).blocked).toBe(false);
 		await click(page, SOUTH);
 		await page.keyboard.press('Escape');
-		expect(added(await saved(page))).toHaveLength(1);
+		expect(added(await liveGraph(page))).toHaveLength(1);
 
 		// A node every lane only runs into: a one-way road's far end.
 		await click(page, at(-40, 20));
@@ -177,7 +168,7 @@ test.describe('Drawing at a road edge', () => {
 		expect((await ghostLook(page)).blocked).toBe(true);
 		await page.screenshot({ path: testInfo.outputPath('head-on-node.png') });
 		await click(page, at(-60, 20));
-		expect(added(await saved(page))).toHaveLength(2);
+		expect(added(await liveGraph(page))).toHaveLength(2);
 		// Its start, where traffic leaves, takes it.
 		await hover(page, at(-40, 20));
 		expect((await ghostLook(page)).blocked).toBe(false);

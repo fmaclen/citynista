@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { createLanesFrom } from '../src/lib/core/lane-template';
-import { openGraph } from './scenes';
+import { openGraph } from './app';
 
 const GRAPH_DATA = {
 	nodes: [
@@ -20,8 +20,6 @@ const GRAPH_DATA = {
 test.describe('Camera Pan', () => {
 	test('space+drag pans the camera without selecting', async ({ page }) => {
 		await openGraph(page, GRAPH_DATA);
-		await expect(page.locator('canvas')).toBeVisible();
-		await expect(page.locator('nav')).toBeVisible();
 
 		// Hold space and drag 400px to the right; the world shifts with the drag.
 		await page.keyboard.down('Space');

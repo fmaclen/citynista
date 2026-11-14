@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import type { Pt as Point } from '../lab/model';
+import type { Pt as Point } from '../road-model/model';
 import { editorLineGeometry, createEditorLineMaterial } from './editor-line';
 import { HANDLE_FILL, type HandleState } from './editor-palette';
 import {
@@ -24,7 +24,7 @@ const STEM_Y = 0.3;
 const HANDLE_Y = 0.31;
 const RENDER_ORDER = 8;
 
-export type HandleKind = 'taper' | 'offset' | 'crossing';
+type HandleKind = 'taper' | 'offset' | 'crossing';
 
 function shapeOf(kind: HandleKind, hollow: boolean): HandleShape {
 	if (kind === 'taper') return TAPER_HANDLE;

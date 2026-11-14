@@ -4,7 +4,7 @@ import type { Editor } from '../editor.svelte';
 import type { Graph } from '../core/graph.svelte';
 import type { Segment } from '../core/segment.svelte';
 import type { Lane } from '../core/types';
-import { cloneLanes, getTotalWidth, reverseLanes } from '../core/lane-template';
+import { cloneLanes, getTotalWidth, oneWay, reverseLanes } from '../core/lane-template';
 import { nodePoint } from '../core/road-line';
 import { ENDPOINT_EXCLUSION, splitSegment } from '../core/crossings';
 import { getQuadraticBezierPoint } from '../geometry/bezier';
@@ -78,13 +78,10 @@ export function setupCircleMode(editor: Editor): ModeHandlers {
 	// backward is turned round, so traffic always runs the ring's way.
 	const ringLanes = () => {
 		const lanes = editor.activeBrush?.lanes ?? [];
-		const vehicles = lanes.filter((lane) => lane.role === 'vehicle');
-		const all = (direction: Lane['direction']) =>
-			vehicles.length > 0 && vehicles.every((lane) => lane.direction === direction);
-		const backward = all('backward');
+		const dir = oneWay(lanes);
 		return {
-			lanes: backward ? reverseLanes(lanes) : cloneLanes(lanes),
-			oneWay: backward || all('forward')
+			lanes: dir === 'backward' ? reverseLanes(lanes) : cloneLanes(lanes),
+			oneWay: dir !== null
 		};
 	};
 
@@ -228,7 +225,6 @@ export function setupCircleMode(editor: Editor): ModeHandlers {
 			}
 			const { piece, span } = kept.get(x.segment) ?? { piece: x.segment, span: 1 };
 			const node = editor.graph.createNode(x.point.x, x.point.y);
-			editor.nodeRenderer.createNode(node);
 			const halves = splitSegment(editor.graph, piece, x.t / span, node.id);
 			if (halves) kept.set(x.segment, { piece: halves.left, span: x.t });
 			ids.set(x, node.id);
@@ -242,11 +238,7 @@ export function setupCircleMode(editor: Editor): ModeHandlers {
 		if (freeHeld) return { at: { x, y }, snapped: false };
 		const node = nodeHitAt(editor, x, y).node;
 		if (node) return { at: nodePoint(editor.graph, node), snapped: true };
-		if (editor.gridEnabled) {
-			const g = editor.gridSize;
-			return { at: { x: Math.round(x / g) * g, y: Math.round(y / g) * g }, snapped: false };
-		}
-		return { at: { x, y }, snapped: false };
+		return { at: editor.gridPoint(x, y), snapped: false };
 	};
 
 	// The ring through the cursor, or null while it is too small to lay: its
@@ -322,9 +314,7 @@ export function setupCircleMode(editor: Editor): ModeHandlers {
 			const id = point.crossing && ids.get(point.crossing);
 			if (id) return id;
 			const p = onRing(ring.c, ring.r, point.angle);
-			const node = editor.graph.createNode(p.x, p.y);
-			editor.nodeRenderer.createNode(node);
-			return node.id;
+			return editor.graph.createNode(p.x, p.y).id;
 		});
 		editor.clearSelection();
 		editor.rebuildRoads();

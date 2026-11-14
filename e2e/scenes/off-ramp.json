@@ -10,7 +10,6 @@
 			"x": 0,
 			"y": 0,
 			"junction": {
-				"connections": [],
 				"sides": {
 					"ramp": "right"
 				},

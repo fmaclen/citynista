@@ -91,7 +91,6 @@ export class ConnectionRenderer {
 
 		const arcGroup = new THREE.Group();
 		for (const c of connections) {
-			if (!c.active) continue; // blocked movements simply aren't drawn
 			const mesh = new THREE.Mesh(arcGeometry(c), this.activeMaterial);
 			mesh.renderOrder = ARC_ORDER;
 			arcGroup.add(mesh);

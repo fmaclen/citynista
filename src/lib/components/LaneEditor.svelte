@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { getEditorContext } from '$lib/editor.svelte';
+	import { press } from '$lib/utils';
 	import { getTotalWidth, laneSwatchColor } from '$lib/core/lane-template';
 	import type { Lane, LaneMaterial, LaneRole } from '$lib/core/types';
 	import { HOVER_COLOR } from '$lib/rendering/editor-palette';
@@ -237,17 +238,8 @@
 		editor.editLanes((lanes) => lanes.splice(index + 1, 0, { ...lanes[index] }));
 	}
 
-	// Panel buttons hand focus back to the page after acting: shortcuts only
-	// fire on events targeted at <body>. Width fields keep focus while typed in.
-	function press(action: () => void) {
-		return (event: MouseEvent) => {
-			action();
-			const target = event.currentTarget;
-			if (target instanceof HTMLElement) target.blur();
-		};
-	}
-
-	// The same for a dropdown once its menu has closed.
+	// A dropdown hands focus back to the page once its menu has closed, as
+	// panel buttons do (`press`); width fields keep focus while typed in.
 	function menuClosed(open: boolean) {
 		const focused = document.activeElement;
 		if (!open && focused instanceof HTMLElement) focused.blur();

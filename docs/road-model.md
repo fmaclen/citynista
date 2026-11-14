@@ -1,93 +1,74 @@
-# How the map would be stored
+# How the road model is drawn
 
-Draft for review. Nothing here is built.
+`PlaceBuilder` (`src/lib/core/place.ts`) reads the graph into the road model (`src/lib/road-model/model.ts`): roads with one cross-section each, and junctions of road ends with their connections, walkways and approach controls. This page covers what happens next, in `src/lib/road-model/`.
 
-The idea in one line: the map stores what you mean, and the drawing only draws what is stored. The drawing never guesses what kind of junction or road it is looking at.
+## Descriptions
 
-## Roads
+Each drawer hands on a description of one road (`describeRoad`, `road.ts`) or one node (`describeJunction`, `node.ts`): its surfaces, markings, signs, crossings and lane paths as plain shapes in metres, not finished polygons or meshes. That buys three things:
 
-A road is a line you draw, straight or curved. Across it sits a list of lanes, side by side: car lanes, buffers and medians, grass, sidewalks. Later there will be bus and bike lanes too.
+- **One place makes triangles.** `rendering/road-meshes.ts` is the only code that turns shapes into triangles, so layer order, colours and earcut's limits are handled once, and another renderer (3D, say) could read the same descriptions.
+- **The drawing can be checked.** `checks.ts` and the unit tests read the descriptions the renderer draws, in Node, without a browser.
+- **Pieces are cached.** `Drawing` (`drawing.ts`) keeps one description per node by its key and one per road by its key and end cuts; the renderer rebuilds a piece's meshes only when its description changed.
 
-Along its length, a road is split into stretches. At the start of a stretch a lane can begin, end, or change width over a distance you set (a taper). A turn pocket is a lane that begins 50 m before the junction. It's one road with a few stretches, and there's no cutting and no extra nodes.
+Nodes are described first, because each says where the paint of every road ending at it stops (`cuts`). Paint is cut by distance and by line, not by clipping painted polygons: a road cuts its lines by distance along it at crossings and end cuts, and a node cuts its lines against the ground paint may cover (`cutLine`, `geometry.ts`).
 
-![A block with a pocket at each end](road-model/pocket.svg)
+## The types (`description.ts`)
 
-Each stretch has an alignment that says which part of the lanes sits on the line you drew: the left edge, the centre or the right edge. Centre is the default. When a lane is added on the left with left alignment, everything else stays put. With centre alignment the road widens evenly on both sides.
+- `Line`: an open polyline.
+- `Ring`: a closed polygon that never crosses itself, wound to a positive area, with no holes. `toRings` (`clip.ts`) slices holed clipper results into rings; where it cannot, the point is recorded in the description's `faults` and the checks fail.
+- `Material` and `Role`: what a surface is made of and what it is for (walk, paving, lane, verge, median). Together they set its layer (`layerOf` in `rendering/road-meshes.ts`).
+- `Ribbon`: a strip between two lines of equal point count, never folded. Lane `k` of a road lies between `edges[k]` and `edges[k + 1]`, so neighbours share points. `ribbonOf` (`geometry.ts`) turns a folded strip into rings instead.
+- `Surface`: a role and material over a ribbon or rings, the lane it is (if any), and its hatch bars, already clipped.
+- `Marking`: a painted line's middle, its colour and dash, and its distance `along` at each point, which sets the dash rhythm. A piece cut from a longer line keeps that line's rhythm.
+- `Sign`: the bar across a lane that goes nowhere, a stop line, a yield line, or a turn arrow.
+- `Crossing`: its middle line, its runs (zebra stripes, sidewalk paving, a refuge in a median), and its body, where markings stop and which must stay one piece.
+- `LanePath`: one connection's path across a node, with its kind, line and widths.
+- `EndCut`: where a road's paint stops at one end, and where a median stops in its nose.
+- `RoadDescription`: the sampled path, the cross-section at the start, the lane edges, the surfaces, markings and crossings, the two end cuts, and faults.
+- `NodeDescription`: the road ends; the curb outline (rings, the curb between neighbouring ends, the mouth across each roadway); paths, surfaces, markings, signs and crossings; each approach's control and badge; the cut it asks of each road; faults.
 
-Every road also stores its height along its length. It is flat for now, so bridges can come later without changing the map again.
+## Lane lines (`lines.ts`)
 
-## Junctions
+One rule says what goes between two neighbours across a row of slots (a `Slot` is a span with a kind and, for travel, a direction), and its table is at the top of the file. A road passes its lanes once (`laneLines`). A node of two roads passes the car paths across it at each station and chains each station's marks into lines (`pathLines`). Where roads are attached at an edge the paths don't all run the same way across (one turns off square while its neighbour carries straight on), so each path is read on its own: at every point along it, the paths whose drawn lanes its cross-section meets there make its row (`linesBeside`). Two-way lanes take no path across a node, so they get no line there.
 
-A junction is a group of road ends. It has no centre point and no fixed shape. A road ends at the junction's edge wherever you drop it.
+A line a node carries on from a road starts on the end of the road's own line and leaves the way that line runs (`EndFrame.run` in `geometry.ts`: the road's direction turned by its lean, where it is shifted differently at its two ends), so the two are one line.
 
-![A road joining off-centre](road-model/offcentre.svg)
+Which lines run on through a junction is decided where the junction is drawn: at a node of two sides every line runs across; a road carried past side roads that only join it keeps each line that pairs with the far end's and that no turning path crosses (`carry.ts`); a free priority road keeps its dashes and edge lines where nothing crosses or runs beside them (the priority-road block in `node.ts`); elsewhere lines stop at the junction.
 
-A junction stores its connections. Each one says "this incoming lane can drive into that outgoing lane". Crosswalks are connections between walking ends, and bike crossings will work the same way.
+## Walkways and car lanes
 
-The drawing follows from those connections:
+Where car lanes cross a walkway, the walkway carries on over them as a crossing, zebra stripes laid along the traffic, and the sidewalk itself stops at the lanes' edge. It is never paved over them and never just stops. `crossingOver` (`corners.ts`) is the one place that crossing is made, for all three ways it comes about:
 
-- Asphalt goes wherever a connection runs.
-- An area the connections surround but never cross is an island. The triangle at US 1 is one.
-- Outside the asphalt is ground, and sidewalks follow the asphalt's edge.
-- Stop lines and turn arrows come from each lane's connections and the junction's settings.
+- A junction's corner sidewalk passing the mouth of a road with no sidewalk of its own. Round a road with curb corners it follows the corners and crosses at the mouth, a landing either side. Past a narrow road that stops on the curb line (`stopsOnCurb` in `core/setbacks.ts`) it runs straight on along its own road's curb and crosses whatever asphalt lies in its line, however that road is slanted.
+- A footpath across a street.
+- A sidewalk carried across a node of two sides that a lane cuts through: a road attached at the edge of a road with sidewalks (`lanesAcross` in `node.ts`). These crossings belong to the node. A crossing the user can move or switch off (`crossings` in a node's stored junction) lies across one road between two of its own sidewalks, which a lane with none cannot hold.
 
-Any place where paths connect or cross is a junction. A driveway is a small junction. So is a mid-block crosswalk, and so is the point where an avenue splits into two roads.
+## Roads attached at an edge
 
-![The avenue splitting into two roads](road-model/split.svg)
+Across a node of two sides the paving lies between the outermost roadway lanes that run between each two road ends (`outlinesAcross`, `outline.ts`). Two roads make one such pair. A road attached at an edge makes another with each road it joins, and what lies between two pairs is ground: only lanes are paved, never the gore between a road and one leaving it, but for the seam between two paths still within 0.6 m of each other (`linesBeside`). The node reaches along the attached road until none of its width lies over the roads it joins, sidewalks and verges included (`clearOf`, `core/place.ts`), so every place its lanes cut through them is the node's to draw.
 
-![A driveway](road-model/driveway.svg)
+Two things there are deliberate, not gaps to fill. The attached road's own sidewalks stop at its mouth: pedestrian lanes join another road's only where the user connects them. And the crosswalks over its lanes are automatic, with no handle to move them or switch them off: to cross somewhere else, the user drops the sidewalk from that stretch of road and routes the path by hand.
 
-## What you control
+## Drawing rules (`checks.ts`)
 
-These are stored on the map and always win over anything the app would pick:
+`check` reads every description of a built place and reports what breaks these rules:
 
-- Lane alignment on each stretch of road.
-- Each crosswalk, on or off.
-- Stop, yield or signal on each approach to a junction.
-- Each island's surface: grass, concrete or paved.
-- The connections themselves.
+- Paint stays on asphalt: inside roads and outlines, never on grass, concrete or sidewalk; hatching stays off car paths.
+- Sidewalk never lies over car lanes or a node's paving, neither a sidewalk's surface nor the paving of a crossing; and wherever car paths cross the line of a sidewalk carried across a node, a crossing covers them.
+- Lane lines never cross each other, and end where paint stops, not in the middle of the asphalt.
+- Nothing opens between a road and its node: no hole across the roadway at the mouth, no open seam at a lane edge, no thin crack round a node or bare ground inside its outline.
+- Sidewalk has no spikes, no outer corner sharper than 30°, but where it ends on the edge of its own crossing.
+- A crossing is one piece with no holes.
+- Every ring is simple and wound positively, no ribbon is folded, and no fault is left.
+- One owner per ground: nothing is drawn twice over the same ground in one layer.
 
-## Defaults and your edits
+The unit tests run it on their graphs, and the jitter test (`unit/jitter.ts`) on every frame; what that test excludes is listed under "Known drawing bugs" in `backlog.md`.
 
-When you draw, the app fills in sensible connections, crosswalks and controls, and saves them. They are ordinary data from then on. You can see them and change them, and the app never quietly recalculates them.
+## Left for later
 
-If you change a road later, your edits stay for as long as the lanes they refer to still exist. A new lane gets defaults. When a lane you edited disappears, that edit goes, and the junction gets marked so you can see something changed.
+- Curbs: a description does not say which edges are real curbs and which are only where a surface was sliced, which 3D needs.
+- A lane network: lane paths are tied to their connections, but nothing joins them with the roads' lanes into one network, and two-way lanes have no path across a node of two roads.
+- Corner sidewalks are built by polygon clipping, the slowest part of a junction and the source of most known drawing bugs.
+- Heights, bridges and overpasses: everything is drawn flat.
 
-## Two levels of editing
-
-Drawing works like today. Drag a road preset across another road and you get a junction with predictable defaults. Plain crossings, T junctions, side streets and driveways never need more than that.
-
-Double-clicking a junction opens the intersection editor. There you can drag a road end or a single lane end along the junction's edge, add or remove connections, flip crosswalks and controls, and set island surfaces. Later it could also turn a junction into a roundabout in one step.
-
-## Your examples
-
-The pocket is one road with stretches: the middle median ends, the turn lane opens beside it, and the pocket buffer runs to the stop line.
-
-The off-centre road ends at the junction's edge under the right-hand half and connects to the other roads lane by lane.
-
-The avenue splitting is a junction of three road ends. Each one-way road continues its own carriageway in a straight line, and the median carries on as the gap between them.
-
-The roundabout's ring is a set of one-way roads. Each entry is a junction where traffic coming in yields to the ring. Splitter islands appear where an entering road has a median.
-
-US 1 and SW 152nd is one big junction where the busway crossing and US 1 sit a few metres apart. It has about 60 lane ends and 70 connections. The driveways and bus bays along SW 152nd are small junctions of their own, and the turn lanes, bus lane and centre turn lane are stretches of road.
-
-## Why changing a layout shouldn't break it
-
-This is the failure you've seen before. A design works for the cases it was shown and falls apart the moment you draw something slightly different. The usual reason is a drawing step that recognises "a pocket" or "a roundabout" and has a special rule for each. Draw something in between and no rule fits.
-
-Here, the drawing has no list of junction or road types. It only knows lanes, stretches, connections and the gaps between them. A layout nobody planned for is more of the same pieces, not an unknown case.
-
-Two things can still go wrong:
-
-- The defaults can be poor for an unusual layout. You fix them by editing, and the edit sticks.
-- Deciding whether a small gap between connections is an island or gets paved over is a judgement call. The island setting lets you overrule it.
-
-None of this is proven yet. The test is to write a few real places into this model by hand, draw them, and compare them with the photos: your SW 136th pocket, the roundabout reference and US 1. Next comes a set of deliberately awkward layouts: skewed and offset junctions, two junctions close together, driveways near a junction, and a six-way. If any of those fail, it shows up before the editor is built.
-
-## Not covered yet
-
-- Drawing bridges and overpasses. Heights are stored, but nothing draws them yet.
-- Signal timing.
-- Parking.
-- Bike lanes.
-- Moving existing maps over. Each current road would become a road with a single stretch.
+These are under "Next projects" in `backlog.md`.

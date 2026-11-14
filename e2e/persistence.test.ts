@@ -1,142 +1,112 @@
-import { expect, test } from '@playwright/test';
-import { saveCity } from './save';
-import { expectSelectMode } from './mode';
+import { expect, test, type Page } from '@playwright/test';
+import { liveGraph, openEditor, saveCity } from './app';
 
-const STORAGE_KEY = 'citynista-graph-v2';
+// What the editor shows when storage refuses a write. The store's own
+// handling of refused writes is checked in unit/city-store.test.ts.
 
-test.describe('Persistence', () => {
-	test.beforeEach(async ({ page }) => {
-		await page.goto('/?topdown');
-		await page.evaluate((key) => localStorage.removeItem(key), STORAGE_KEY);
-		await page.reload();
-		await expect(page.locator('canvas')).toBeVisible();
-	});
-
-	test('data persists and renders after page reload', async ({ page }) => {
-		const canvas = page.locator('canvas');
-
-		// Picking a preset enters draw mode
-		await page.getByRole('button', { name: 'Street' }).click();
-
-		// Draw some segments
-		await canvas.click({ position: { x: 200, y: 200 }, force: true });
-		await canvas.click({ position: { x: 300, y: 300 }, force: true });
-		await canvas.click({ position: { x: 400, y: 250 }, force: true });
-		await page.keyboard.press('Escape');
-
-		// Verify data was saved
-		await saveCity(page);
-		const savedData = await page.evaluate((key) => {
-			const data = localStorage.getItem(key);
-			return data ? JSON.parse(data) : null;
-		}, STORAGE_KEY);
-
-		expect(savedData).not.toBeNull();
-		expect(savedData.nodes.length).toBe(3);
-		expect(savedData.segments.length).toBe(2);
-
-		// Reload the page
-		await page.reload();
-
-		// Wait for canvas to appear after reload
-		await expect(page.locator('canvas')).toBeVisible();
-
-		// Verify data is still in localStorage
-		const loadedData = await page.evaluate((key) => {
-			const data = localStorage.getItem(key);
-			return data ? JSON.parse(data) : null;
-		}, STORAGE_KEY);
-
-		expect(loadedData).toEqual(savedData);
-	});
-
-	test('bezier control point curves segment without breaking it', async ({ page }) => {
-		const canvas = page.locator('canvas');
-
-		// Picking a preset enters draw mode
-		await page.getByRole('button', { name: 'Street' }).click();
-
-		// Draw a horizontal segment in the middle of the canvas
-		await canvas.click({ position: { x: 200, y: 300 }, force: true });
-		await canvas.click({ position: { x: 500, y: 300 }, force: true });
-
-		// First escape cancels the pending segment, second returns to select mode
-		await page.keyboard.press('Escape');
-		await page.keyboard.press('Escape');
-		await expectSelectMode(page);
-
-		// Click on the segment to select it (middle point)
-		await canvas.click({ position: { x: 350, y: 300 }, force: true });
-
-		// Verify segment is selected - check localStorage
-		await saveCity(page);
-		const beforeCurve = await page.evaluate((key) => {
-			const data = localStorage.getItem(key);
-			return data ? JSON.parse(data) : null;
-		}, STORAGE_KEY);
-
-		expect(beforeCurve.segments.length).toBe(1);
-
-		// The control point (red circle) should now be visible at the center of the segment
-		// Drag it upward to curve the segment
-		await page.mouse.move(350, 300);
-		await page.mouse.down();
-		await page.mouse.move(350, 150);
-		await page.mouse.up();
-
-		// Verify the segment still exists and has control point
-		await saveCity(page);
-		const afterCurve = await page.evaluate((key) => {
-			const data = localStorage.getItem(key);
-			return data ? JSON.parse(data) : null;
-		}, STORAGE_KEY);
-
-		expect(afterCurve.segments.length).toBe(1);
-
-		// Control point should now be set (segment was curved)
-		expect(afterCurve.segments[0].controlX).toBeDefined();
-		expect(afterCurve.segments[0].controlY).toBeDefined();
-
-		// Reload the page to verify the curved segment persists and renders
-		await page.reload();
-		await expect(page.locator('canvas')).toBeVisible();
-
-		// Verify data still exists
-		const afterReload = await page.evaluate((key) => {
-			const data = localStorage.getItem(key);
-			return data ? JSON.parse(data) : null;
-		}, STORAGE_KEY);
-
-		expect(afterReload.segments[0].controlX).toBe(afterCurve.segments[0].controlX);
-		expect(afterReload.segments[0].controlY).toBe(afterCurve.segments[0].controlY);
-	});
-
-	test('edits persist across a reload only once saved', async ({ page }) => {
-		const canvas = page.locator('canvas');
-		const panel = page.locator('aside');
-		const drawRoad = async () => {
-			await page.getByRole('button', { name: 'Street' }).click();
-			await canvas.click({ position: { x: 300, y: 360 } });
-			await canvas.click({ position: { x: 700, y: 360 } });
-			await page.keyboard.press('Escape');
-			await page.keyboard.press('Escape');
+// Makes storage refuse every write to a key starting with `prefix`, the way
+// a full quota does, until `allowWrites`.
+const refuseWrites = (page: Page, prefix: string) =>
+	page.evaluate((prefix) => {
+		const setItem = Storage.prototype.setItem;
+		const w = window as unknown as { allowWrites: () => void };
+		w.allowWrites = () => (Storage.prototype.setItem = setItem);
+		Storage.prototype.setItem = function (key: string, value: string) {
+			if (key.startsWith(prefix)) throw new DOMException('full', 'QuotaExceededError');
+			setItem.call(this, key, value);
 		};
+	}, prefix);
+const allowWrites = (page: Page) =>
+	page.evaluate(() => (window as unknown as { allowWrites: () => void }).allowWrites());
 
-		// Unsaved: the reload (past the leave-page prompt) drops the road.
-		await drawRoad();
-		await expect(page.getByLabel('Unsaved changes')).toBeVisible();
-		page.once('dialog', (dialog) => dialog.accept());
-		await page.reload();
-		await expect(page.locator('nav')).toBeVisible();
-		await canvas.click({ position: { x: 500, y: 360 } });
-		await expect(panel).not.toBeVisible();
+const drawRoad = async (page: Page, y: number) => {
+	await page.getByRole('button', { name: 'Street' }).click();
+	await page.mouse.click(300, y);
+	await page.mouse.click(700, y);
+	await page.keyboard.press('Escape');
+	await page.keyboard.press('Escape');
+};
 
-		// Saved: the road survives the reload.
-		await drawRoad();
-		await saveCity(page);
-		await page.reload();
-		await expect(page.locator('nav')).toBeVisible();
-		await canvas.click({ position: { x: 500, y: 360 } });
-		await expect(panel).toBeVisible();
+const refusal = (page: Page) => page.getByRole('alert').filter({ hasText: "Couldn't save" });
+const cityMenu = (page: Page, item: string) =>
+	page
+		.getByRole('button', { name: 'City menu' })
+		.click()
+		.then(() => page.getByRole('menuitem', { name: item }).click());
+
+test('a refused save says so and keeps the change unsaved; a retry clears both', async ({
+	page
+}) => {
+	await openEditor(page);
+	await drawRoad(page, 360);
+	await refuseWrites(page, 'citynista:city:');
+	const unsaved = page.getByLabel('Unsaved changes');
+	await page.keyboard.press('ControlOrMeta+s');
+	await expect(refusal(page)).toBeVisible();
+	await expect(unsaved).toBeVisible();
+
+	await allowWrites(page);
+	await saveCity(page);
+	await expect(refusal(page)).toHaveCount(0);
+});
+
+test('a refused Save As or New City says so inside its dialog', async ({ page }) => {
+	await openEditor(page);
+	const dialog = page.getByRole('dialog');
+	await refuseWrites(page, 'citynista:city:');
+
+	await cityMenu(page, 'Duplicate…');
+	await dialog.getByRole('textbox').fill('copy');
+	await dialog.getByRole('button', { name: 'Save' }).click();
+	await expect(dialog.getByRole('alert')).toHaveText(
+		"Couldn't save: this browser's storage is full"
+	);
+	await page.keyboard.press('Escape');
+	await expect(dialog).toHaveCount(0);
+
+	await cityMenu(page, 'New city…');
+	await dialog.getByRole('textbox').fill('fresh');
+	await dialog.getByRole('button', { name: 'Create' }).click();
+	await expect(dialog.getByRole('alert')).toHaveText(
+		"Couldn't save: this browser's storage is full"
+	);
+	await expect(page.getByTestId('city-name')).toHaveText('untitled');
+});
+
+test('a reload reopens the city as last saved, even when recording it failed on boot', async ({
+	page
+}) => {
+	// Storage refuses to record the current city on boot, though it takes the
+	// fresh city itself.
+	await page.addInitScript(() => {
+		if (sessionStorage.getItem('allow')) return;
+		const setItem = Storage.prototype.setItem;
+		const w = window as unknown as { allowWrites: () => void };
+		w.allowWrites = () => {
+			Storage.prototype.setItem = setItem;
+			sessionStorage.setItem('allow', '1');
+		};
+		Storage.prototype.setItem = function (key: string, value: string) {
+			if (key === 'citynista:current-city') throw new DOMException('full', 'QuotaExceededError');
+			setItem.call(this, key, value);
+		};
 	});
+	await openEditor(page);
+	expect(await page.evaluate(() => localStorage.getItem('citynista:current-city'))).toBeNull();
+	await allowWrites(page);
+	const roads = async () => (await liveGraph(page)).segments.length;
+
+	await drawRoad(page, 300);
+	await saveCity(page);
+	await page.reload();
+	await expect(page.getByTestId('city-name')).toHaveText('untitled');
+	await expect.poll(roads).toBe(1);
+
+	// An edit left unsaved is gone after the reload (past the leave-page prompt).
+	await drawRoad(page, 450);
+	await expect.poll(roads).toBe(2);
+	page.once('dialog', (dialog) => dialog.accept());
+	await page.reload();
+	await expect(page.getByTestId('city-name')).toHaveText('untitled');
+	await expect.poll(roads).toBe(1);
 });

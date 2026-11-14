@@ -24,8 +24,8 @@ const NODE_SEGMENTS = 48;
 export function nodeRingGeometry() {
 	return new THREE.RingGeometry(NODE_RING_PX - RING_THICKNESS_PX, NODE_RING_PX, NODE_SEGMENTS);
 }
-// Above the whole lane-layer stack (which now reaches ~0.31 with composite
-// material layers) so hover/selection rings are never hidden under the road.
+// Above every road layer so hover/selection rings are never hidden under the
+// road.
 export const NODE_Y_OFFSET = 0.4;
 
 export class NodeRenderer {
@@ -63,18 +63,16 @@ export class NodeRenderer {
 		return mesh;
 	}
 
-	updateNode(node: Node) {
-		const mesh = this.meshes.get(node.id);
-		if (mesh) {
-			mesh.position.set(node.x, NODE_Y_OFFSET, node.y);
-		}
+	// Where the ring shows (see nodePoint); a node without a ring gets one.
+	setPosition(node: Node, p: { x: number; y: number }) {
+		const mesh = this.meshes.get(node.id) ?? this.createNode(node);
+		if (mesh.position.x !== p.x || mesh.position.z !== p.y)
+			mesh.position.set(p.x, NODE_Y_OFFSET, p.y);
 	}
 
-	// Where the ring shows (see nodePoint).
-	setPosition(nodeId: string, p: { x: number; y: number }) {
-		const mesh = this.meshes.get(nodeId);
-		if (mesh && (mesh.position.x !== p.x || mesh.position.z !== p.y))
-			mesh.position.set(p.x, NODE_Y_OFFSET, p.y);
+	// Drops the rings of nodes that are gone.
+	keepOnly(nodes: ReadonlyMap<string, unknown>) {
+		for (const nodeId of [...this.meshes.keys()]) if (!nodes.has(nodeId)) this.removeNode(nodeId);
 	}
 
 	removeNode(nodeId: string) {
@@ -159,9 +157,5 @@ export class NodeRenderer {
 		for (const [nodeId] of this.meshes) {
 			this.removeNode(nodeId);
 		}
-	}
-
-	getMesh(nodeId: string) {
-		return this.meshes.get(nodeId);
 	}
 }

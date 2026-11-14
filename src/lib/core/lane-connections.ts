@@ -20,5 +20,4 @@ export interface LaneConnection {
 	// Travel tangent entering the node (at `from`) and leaving it (at `to`).
 	fromDir: Point;
 	toDir: Point;
-	active: boolean;
 }

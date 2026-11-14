@@ -3,23 +3,22 @@ import { SvelteSet } from 'svelte/reactivity';
 import type { CameraState } from '$lib/core/types';
 import { screenSizedMap } from './handle-shapes';
 import { frameHooks } from './guide-renderer';
+import { fromPage } from '$lib/utils';
 
-// Default extent of the buildable world, in metres (world units). The map is a
-// finite diorama slab rather than an endless plane; overridable per SceneManager
-// so a settings UI can resize the world later.
-const DEFAULT_WORLD_SIZE = 5000;
+// Extent of the buildable world, in metres (world units). The map is a finite
+// diorama slab rather than an endless plane.
+const WORLD_SIZE = 5000;
 // How deep the slab sits below the ground surface — only visible once the camera
 // can tilt, but it gives the world a solid edge instead of a paper-thin plane.
 const GROUND_DEPTH = 200;
-// Matches the grass lane color in road-renderer's LAYER_COLORS — the slab's top
-// face reads as the same grass.
+// The slab's top face, grass.
 const GROUND_COLOR = 0x52a06b;
 // Earthy tone for the slab's sides and underside.
 const SOIL_COLOR = 0x5c4a37;
 // Map-wide snapping grid: fine sub lines every GRID_SUB metres, bolder main lines
 // every GRID_MAIN. Fixed for now — a settings UI can expose these later.
 export const GRID_SUB = 10;
-export const GRID_MAIN = 50;
+const GRID_MAIN = 50;
 const GRID_COLOR = 0xffffff;
 const GRID_SUB_OPACITY = 0.09;
 const GRID_MAIN_OPACITY = 0.26;
@@ -28,15 +27,14 @@ const BASE_FRUSTUM = 500;
 // How far past the world edge you can zoom out — 1.1 leaves a slim margin of
 // void around the diorama at full zoom-out so the whole slab stays framed.
 const WORLD_VIEW_MARGIN = 1.1;
-// Perspective camera. A narrow-ish field of view keeps distortion mild, so the
-// near-top-down default still reads like the old flat map and tilting reveals
-// depth. logarithmicDepthBuffer keeps the road layers' tiny Y-offsets from
-// z-fighting across the much larger depth range a tilted perspective view spans.
+// Perspective camera. A narrow-ish field of view keeps distortion mild, so a
+// top-down view reads as a flat map and tilting reveals depth. logarithmicDepthBuffer keeps the road's plane and the grid, a few
+// centimetres apart, from z-fighting across the much larger depth range a tilted perspective view spans.
 const CAMERA_FOV = 45;
 const CAMERA_NEAR = 1;
 const CAMERA_FAR = 50000;
-// Distance from the target at zoom 1, chosen so a top-down view frames the same
-// BASE_FRUSTUM height the old orthographic camera did — zoom feel is unchanged.
+// Distance from the target at zoom 1, chosen so a top-down view frames
+// BASE_FRUSTUM world units of height.
 const BASE_DISTANCE = BASE_FRUSTUM / (2 * Math.tan((CAMERA_FOV * Math.PI) / 360));
 // Orbit tilt limits: a hair off straight-down (avoids the look-straight-down
 // singularity) up to a steep oblique that keeps the horizon off-screen.
@@ -74,7 +72,6 @@ export class SceneManager {
 	scene: THREE.Scene;
 	camera: THREE.PerspectiveCamera;
 	renderer: THREE.WebGLRenderer;
-	readonly worldSize: number;
 	// Editor handles drawn at a fixed size on screen (see handle-shapes.ts):
 	// each is scaled to world units per pixel, at most its value, every frame.
 	readonly screenSized = screenSizedMap();
@@ -131,18 +128,12 @@ export class SceneManager {
 	private raycaster = new THREE.Raycaster();
 	private groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
 
-	constructor(
-		container: HTMLElement,
-		onFps?: (fps: number) => void,
-		worldSize = DEFAULT_WORLD_SIZE
-	) {
+	constructor(container: HTMLElement, onFps?: (fps: number) => void) {
 		this.container = container;
 		this.onFps = onFps ?? null;
-		this.worldSize = worldSize;
 
 		// Create scene
 		this.scene = new THREE.Scene();
-		this.scene.background = new THREE.Color(0x1a1a1a);
 
 		// Create perspective camera orbiting a ground target
 		const aspect = container.clientWidth / container.clientHeight;
@@ -175,7 +166,7 @@ export class SceneManager {
 		// just above), the sides and underside are soil so the world reads as a
 		// diorama block once the camera tilts. BoxGeometry face order is
 		// [+X, -X, +Y, -Y, +Z, -Z], so index 2 is the top.
-		const geometry = new THREE.BoxGeometry(this.worldSize, GROUND_DEPTH, this.worldSize);
+		const geometry = new THREE.BoxGeometry(WORLD_SIZE, GROUND_DEPTH, WORLD_SIZE);
 		const grass = new THREE.MeshBasicMaterial({ color: GROUND_COLOR });
 		const soil = new THREE.MeshBasicMaterial({ color: SOIL_COLOR });
 		const ground = new THREE.Mesh(geometry, [soil, soil, grass, soil, soil, soil]);
@@ -189,8 +180,8 @@ export class SceneManager {
 	private createGrid() {
 		const make = (spacing: number, opacity: number) => {
 			const helper = new THREE.GridHelper(
-				this.worldSize,
-				Math.round(this.worldSize / spacing),
+				WORLD_SIZE,
+				Math.round(WORLD_SIZE / spacing),
 				GRID_COLOR,
 				GRID_COLOR
 			);
@@ -237,8 +228,7 @@ export class SceneManager {
 	}
 
 	private handleKeyDown = (event: KeyboardEvent) => {
-		const target = event.target;
-		if (target instanceof HTMLElement && target.tagName !== 'BODY') return;
+		if (!fromPage(event)) return;
 
 		if (event.code === 'Space') {
 			if (event.repeat) return;
@@ -464,13 +454,13 @@ export class SceneManager {
 
 	// Lowest zoom: frames the whole world plus a slim margin of void around it.
 	private minZoom() {
-		return BASE_FRUSTUM / (this.worldSize * WORLD_VIEW_MARGIN);
+		return BASE_FRUSTUM / (WORLD_SIZE * WORLD_VIEW_MARGIN);
 	}
 
 	// Keep the look-at target within the world so you can't pan off into the void
 	// around the diorama. Clamps both rendered and goal so they stay in lock-step.
 	private clampTarget() {
-		const half = this.worldSize / 2;
+		const half = WORLD_SIZE / 2;
 		this.goalTargetX = Math.max(-half, Math.min(half, this.goalTargetX));
 		this.goalTargetZ = Math.max(-half, Math.min(half, this.goalTargetZ));
 		this.targetX = Math.max(-half, Math.min(half, this.targetX));

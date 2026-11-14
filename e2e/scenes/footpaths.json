@@ -75,7 +75,6 @@
 			"x": 360,
 			"y": 0,
 			"junction": {
-				"connections": [],
 				"setbacks": {
 					"eased-street": 2,
 					"eased-path": 14
@@ -97,7 +96,6 @@
 			"x": 480,
 			"y": 0,
 			"junction": {
-				"connections": [],
 				"added": [
 					{
 						"from": {

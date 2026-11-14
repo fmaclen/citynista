@@ -7,7 +7,7 @@ import { closestOnRoad, nodePoint } from '../core/road-line';
 // uncovers the roads between close nodes. A road's is its own half width
 // with a screen-pixel floor: zoomed in, the whole road body is hoverable;
 // zoomed out, it keeps a clickable minimum.
-export const SEGMENT_HIT_PX = 14;
+const SEGMENT_HIT_PX = 14;
 
 export function nodeHitAt(editor: Editor, worldX: number, worldZ: number) {
 	const radius = editor.nodeRingRadius();

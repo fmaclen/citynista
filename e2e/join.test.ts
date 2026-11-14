@@ -1,17 +1,8 @@
-import { expect, test } from '@playwright/test';
-import { openGraph } from './scenes';
-import { saveCity } from './save';
+import { expect, test, type Page } from '@playwright/test';
+import { createLanesFrom } from '../src/lib/core/lane-template';
+import { openGraph, liveGraph, toScreen } from './app';
 
-const STORAGE_KEY = 'citynista-graph-v2';
-const SCALE = 720 / 500;
-const toScreen = (x: number, y: number) => ({ x: 640 + x * SCALE, y: 360 + y * SCALE });
-
-const LANES = [
-	{ type: 'sidewalk', width: 2, direction: 'bidirectional' },
-	{ type: 'road', width: 3, direction: 'backward' },
-	{ type: 'road', width: 3, direction: 'forward' },
-	{ type: 'sidewalk', width: 2, direction: 'bidirectional' }
-];
+const LANES = createLanesFrom('street');
 
 // node-1 passes through two same-section halves of one straight road.
 const PASS_THROUGH = {
@@ -43,44 +34,25 @@ const JUNCTION = {
 	]
 };
 
-interface SavedGraph {
-	nodes: { id: string }[];
-	segments: { id: string; lanes: unknown[] }[];
-}
-
-const savedGraph = async (page: import('@playwright/test').Page) => {
-	await saveCity(page);
-	return page.evaluate((key) => {
-		const data = localStorage.getItem(key);
-		return data ? (JSON.parse(data) as SavedGraph) : null;
-	}, STORAGE_KEY);
-};
-
-async function seed(page: import('@playwright/test').Page, data: object) {
-	await openGraph(page, data);
-	await expect(page.locator('nav')).toBeVisible();
-}
-
-const joinButton = (page: import('@playwright/test').Page) =>
-	page.getByTitle('Join — dissolve this node back into one road');
+const joinButton = (page: Page) => page.getByTitle('Join — dissolve this node back into one road');
 
 test.describe('Join', () => {
 	test('appears for a pass-through node and merges the two halves', async ({ page }) => {
-		await seed(page, PASS_THROUGH);
+		await openGraph(page, PASS_THROUGH);
 
 		await page.locator('canvas').click({ position: toScreen(0, 0) });
 		await expect(joinButton(page)).toBeVisible();
 
 		await joinButton(page).click();
 
-		await expect.poll(async () => (await savedGraph(page))?.nodes.length).toBe(2);
-		const graph = (await savedGraph(page))!;
+		await expect.poll(async () => (await liveGraph(page)).nodes.length).toBe(2);
+		const graph = await liveGraph(page);
 		expect(graph.segments.length).toBe(1);
 		expect(graph.segments[0].lanes.length).toBe(4);
 	});
 
 	test('does not appear for a junction with three or more arms', async ({ page }) => {
-		await seed(page, JUNCTION);
+		await openGraph(page, JUNCTION);
 
 		await page.locator('canvas').click({ position: toScreen(0, 0) });
 		await expect(joinButton(page)).not.toBeVisible();

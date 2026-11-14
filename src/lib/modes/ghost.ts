@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import type { Editor } from '../editor.svelte';
 import { Graph } from '../core/graph.svelte';
 import type { GraphData } from '../core/types';
-import { LabRenderer } from '../rendering/lab-renderer';
+import { RoadRenderer } from '../rendering/road-renderer';
 import { DANGER_COLOR, HOVER_COLOR, SELECT_COLOR } from '../rendering/editor-palette';
 import { nodeRingGeometry } from '../rendering/node-renderer';
 import {
@@ -35,7 +35,7 @@ interface Pt {
 // one-way road runs; `block` turns the roads red where the click would lay
 // nothing.
 export function roadGhost(editor: Editor) {
-	const renderer = new LabRenderer(editor.sceneManager.scene, {
+	const renderer = new RoadRenderer(editor.sceneManager.scene, {
 		opacity: GHOST_OPACITY,
 		lift: GHOST_ELEVATION
 	});

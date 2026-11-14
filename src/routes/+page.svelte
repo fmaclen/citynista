@@ -4,7 +4,6 @@
 	import CityBar from '$lib/components/CityBar.svelte';
 	import FpsCounter from '$lib/components/FpsCounter.svelte';
 	import LaneEditor from '$lib/components/LaneEditor.svelte';
-	import NodeLabels from '$lib/components/NodeLabels.svelte';
 	import ControlBadges from '$lib/components/ControlBadges.svelte';
 	import { untrack } from 'svelte';
 
@@ -87,8 +86,5 @@
 	<LaneEditor />
 	<CityBar />
 	<ControlBadges />
-	{#if import.meta.env.DEV}
-		<NodeLabels />
-	{/if}
 	<div bind:this={containerElement} class="h-full w-full"></div>
 </div>

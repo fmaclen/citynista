@@ -7,7 +7,7 @@ export function laneSwatchColor(lane: { role: LaneRole; material: LaneMaterial }
 
 // Templates are presets: drawing (or applying one in the lane editor) copies
 // its lanes onto the segment, which owns them from then on.
-export const LANE_TEMPLATES: LaneTemplate[] = [
+const LANE_TEMPLATES: LaneTemplate[] = [
 	{
 		id: 'street',
 		name: 'Street',
@@ -68,11 +68,11 @@ export const LANE_TEMPLATES: LaneTemplate[] = [
 	}
 ];
 
-export function getLaneTemplate(id: string): LaneTemplate | undefined {
+function getLaneTemplate(id: string): LaneTemplate | undefined {
 	return LANE_TEMPLATES.find((t) => t.id === id);
 }
 
-export function getDefaultTemplate(): LaneTemplate {
+function getDefaultTemplate(): LaneTemplate {
 	return LANE_TEMPLATES[0];
 }
 
@@ -97,6 +97,15 @@ export function defaultHotbar(): (Brush | null)[] {
 
 export function getTotalWidth(lanes: Lane[]): number {
 	return lanes.reduce((sum, lane) => sum + lane.width, 0);
+}
+
+// The one way a cross-section's vehicle lanes all run, if they all run one
+// way; null for none or for two-way traffic.
+export function oneWay(lanes: Lane[]) {
+	const vehicles = lanes.filter((lane) => lane.role === 'vehicle');
+	const dir = vehicles[0]?.direction;
+	if (dir === 'bidirectional' || !vehicles.every((lane) => lane.direction === dir)) return null;
+	return dir ?? null;
 }
 
 export function serializeLanes(lanes: Lane[]): string {

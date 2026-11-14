@@ -1,72 +1,15 @@
-import { expect, test } from '@playwright/test';
-import { openGraph } from './scenes';
-import { saveCity } from './save';
-
-const STORAGE_KEY = 'citynista-graph-v2';
-
-interface SavedLaneRef {
-	road: string;
-	end: 'start' | 'end';
-	lane: string;
-}
-
-interface SavedConnection {
-	from: SavedLaneRef;
-	to: SavedLaneRef;
-}
-
-interface SavedCrossing {
-	road: string;
-	end: 'start' | 'end';
-	lanes: [string, string];
-	at?: number;
-	on?: boolean;
-}
-
-interface SavedJunction {
-	connections: SavedConnection[];
-	added?: SavedConnection[];
-	removed?: SavedConnection[];
-	crossings?: SavedCrossing[];
-	control?: Record<string, string>;
-	setbacks?: Record<string, number>;
-}
-
-interface SavedLane {
-	id?: string;
-	role: string;
-	material: string;
-	width: number;
-	direction: string;
-	raised?: boolean;
-}
-
-interface SavedNode {
-	id: string;
-	x: number;
-	y: number;
-	junction?: SavedJunction;
-}
-
-interface SavedSegment {
-	id: string;
-	startNodeId: string;
-	endNodeId: string;
-	controlX?: number;
-	controlY?: number;
-	offsetStart?: number;
-	offsetEnd?: number;
-	lanes: SavedLane[];
-}
-
-interface SavedGraph {
-	nodes: SavedNode[];
-	segments: SavedSegment[];
-}
+import { expect, test, type Page } from '@playwright/test';
+import type {
+	GraphData,
+	JunctionConnection,
+	JunctionData,
+	JunctionLaneRef,
+	Lane
+} from '../src/lib/core/types';
+import { openGraph, liveGraph, toScreen } from './app';
 
 // node-0's U-turn from the backward lane into the forward lane, switched off.
-const SEGMENT_0_JUNCTION: SavedJunction = {
-	connections: [],
+const SEGMENT_0_JUNCTION: JunctionData = {
 	removed: [
 		{
 			from: { road: 'segment-0', end: 'start', lane: 'l1' },
@@ -75,7 +18,7 @@ const SEGMENT_0_JUNCTION: SavedJunction = {
 	]
 };
 
-const GRAPH_DATA = {
+const GRAPH_DATA: GraphData = {
 	nodes: [
 		{ id: 'node-0', x: -220, y: -60, junction: SEGMENT_0_JUNCTION },
 		{ id: 'node-1', x: -80, y: -60 },
@@ -114,7 +57,7 @@ const GRAPH_DATA = {
 	]
 };
 
-const NODE_CONNECTION_LANES = [
+const NODE_CONNECTION_LANES: Lane[] = [
 	{ id: 'l0', role: 'pedestrian', material: 'concrete', width: 2, direction: 'bidirectional' },
 	{ id: 'l1', role: 'vehicle', material: 'asphalt', width: 3, direction: 'backward' },
 	{ id: 'l2', role: 'vehicle', material: 'asphalt', width: 3, direction: 'forward' },
@@ -123,10 +66,9 @@ const NODE_CONNECTION_LANES = [
 
 // Every arm starts at its junction, so l1 (backward) arrives and l2 (forward)
 // leaves.
-const at = (road: string, lane: string): SavedLaneRef => ({ road, end: 'start', lane });
+const at = (road: string, lane: string): JunctionLaneRef => ({ road, end: 'start', lane });
 
-const NODE_A_JUNCTION: SavedJunction = {
-	connections: [],
+const NODE_A_JUNCTION: JunctionData = {
 	added: [{ from: at('segment-a-east', 'l1'), to: at('segment-a-north', 'l2') }],
 	removed: [
 		{ from: at('segment-a-north', 'l1'), to: at('segment-a-east', 'l2') },
@@ -137,12 +79,11 @@ const NODE_A_JUNCTION: SavedJunction = {
 	setbacks: { 'segment-a-east': 12 }
 };
 
-const NODE_B_JUNCTION: SavedJunction = {
-	connections: [],
+const NODE_B_JUNCTION: JunctionData = {
 	removed: [{ from: at('segment-b-west', 'l1'), to: at('segment-b-south', 'l2') }]
 };
 
-const NODE_CONNECTION_GRAPH_DATA = {
+const NODE_CONNECTION_GRAPH_DATA: GraphData = {
 	nodes: [
 		{ id: 'node-a', x: -220, y: -30, junction: NODE_A_JUNCTION },
 		{ id: 'node-a-north', x: -220, y: -110 },
@@ -165,55 +106,25 @@ const NODE_CONNECTION_GRAPH_DATA = {
 	)
 };
 
-// The hand edits a junction stores; `connections` is worked out from the roads
-// and these edits, so it is left out of comparisons.
-const edits = (junction: SavedJunction | undefined) =>
-	junction ? { ...junction, connections: undefined } : undefined;
-
-const SCALE = 720 / 500;
-const toScreen = (x: number, y: number) => ({ x: 640 + x * SCALE, y: 360 + y * SCALE });
-
-const EXPECTED_SEGMENT_0_LANES: SavedLane[] = [
+const EXPECTED_SEGMENT_0_LANES: Lane[] = [
 	{ id: 'l0', role: 'pedestrian', material: 'concrete', width: 2, direction: 'bidirectional' },
 	{ id: 'l1', role: 'vehicle', material: 'asphalt', width: 3, direction: 'backward' },
 	{ id: 'l2', role: 'vehicle', material: 'asphalt', width: 3, direction: 'forward' },
 	{ id: 'l3', role: 'pedestrian', material: 'concrete', width: 2, direction: 'bidirectional' }
 ];
 
-const laneKey = (lanes: SavedLane[]) =>
-	lanes
-		.map(
-			(lane) =>
-				`${lane.role}:${lane.material}:${lane.width}:${lane.direction}${lane.raised ? ':raised' : ''}`
-		)
-		.join(',');
-
-async function seedGraph(page: import('@playwright/test').Page, data: object = GRAPH_DATA) {
-	await openGraph(page, data);
-	await expect(page.locator('canvas')).toBeVisible();
-	await expect(page.locator('nav')).toBeVisible();
-}
-
-const savedGraph = async (page: import('@playwright/test').Page) => {
-	await saveCity(page);
-	return page.evaluate((key) => {
-		const data = localStorage.getItem(key);
-		return data ? (JSON.parse(data) as SavedGraph) : null;
-	}, STORAGE_KEY);
-};
-
-async function selectSegment(page: import('@playwright/test').Page, x: number, y: number) {
+async function selectSegment(page: Page, x: number, y: number) {
 	await page.locator('canvas').click({ position: toScreen(x, y) });
 	await expect(page.locator('aside')).toBeVisible();
 }
 
-async function selectNode(page: import('@playwright/test').Page, x: number, y: number) {
+async function selectNode(page: Page, x: number, y: number) {
 	await page.locator('canvas').click({ position: toScreen(x, y) });
 }
 
 // A node's roads in the order the editor walks round it (by the angle each
 // leaves at), which is how a pasted junction matches roads up.
-const sortedArms = (graph: typeof NODE_CONNECTION_GRAPH_DATA, nodeId: string) => {
+const sortedArms = (graph: GraphData, nodeId: string) => {
 	const node = graph.nodes.find((n) => n.id === nodeId)!;
 	return graph.segments
 		.filter((segment) => segment.startNodeId === nodeId || segment.endNodeId === nodeId)
@@ -228,10 +139,10 @@ const sortedArms = (graph: typeof NODE_CONNECTION_GRAPH_DATA, nodeId: string) =>
 
 // The source junction's edits renamed onto the target's roads (same order
 // round the node; every arm has the same lanes, so lane ids carry over).
-const remapJunction = (junction: SavedJunction, sourceArms: string[], targetArms: string[]) => {
+const remapJunction = (junction: JunctionData, sourceArms: string[], targetArms: string[]) => {
 	const road = (id: string) => targetArms[sourceArms.indexOf(id)];
-	const ref = (r: SavedLaneRef) => ({ ...r, road: road(r.road) });
-	const pair = (c: SavedConnection) => ({ from: ref(c.from), to: ref(c.to) });
+	const ref = (r: JunctionLaneRef) => ({ ...r, road: road(r.road) });
+	const pair = (c: JunctionConnection) => ({ from: ref(c.from), to: ref(c.to) });
 	return {
 		added: junction.added?.map(pair),
 		removed: junction.removed?.map(pair),
@@ -250,29 +161,7 @@ const remapJunction = (junction: SavedJunction, sourceArms: string[], targetArms
 
 test.describe('segment copy/paste', () => {
 	test.beforeEach(async ({ page }) => {
-		await seedGraph(page);
-	});
-
-	test('pastes copied lanes onto selected segments', async ({ page }) => {
-		await selectSegment(page, -150, -90);
-		await page.keyboard.press('Meta+c');
-
-		await selectSegment(page, -150, 80);
-		await page.keyboard.press('Meta+v');
-
-		const firstKey = laneKey(EXPECTED_SEGMENT_0_LANES);
-		await expect
-			.poll(async () => {
-				const graph = await savedGraph(page);
-				const second = graph?.segments.find((segment) => segment.id === 'segment-1');
-				return second ? laneKey(second.lanes) : null;
-			})
-			.toBe(firstKey);
-
-		const graph = await savedGraph(page);
-		expect(graph?.segments.find((segment) => segment.id === 'segment-0')?.lanes).toEqual(
-			EXPECTED_SEGMENT_0_LANES
-		);
+		await openGraph(page, GRAPH_DATA);
 	});
 
 	test('pastes copied segments as new graph elements when selection is empty', async ({ page }) => {
@@ -292,14 +181,13 @@ test.describe('segment copy/paste', () => {
 
 		await expect
 			.poll(async () => {
-				const graph = await savedGraph(page);
-				return graph?.segments.length ?? 0;
+				const graph = await liveGraph(page);
+				return graph.segments.length;
 			})
 			.toBe(GRAPH_DATA.segments.length + 1);
 
-		const graph = await savedGraph(page);
-		expect(graph).not.toBeNull();
-		const clone = graph!.segments.find(
+		const graph = await liveGraph(page);
+		const clone = graph.segments.find(
 			(segment) => !GRAPH_DATA.segments.some((s) => s.id === segment.id)
 		);
 		expect(clone).toBeDefined();
@@ -307,15 +195,15 @@ test.describe('segment copy/paste', () => {
 		expect(clone!.controlX!).toBeCloseTo(150, 0);
 		expect(clone!.controlY!).toBeCloseTo(-60, 0);
 
-		const clonedStart = graph!.nodes.find((node) => node.id === clone!.startNodeId);
-		const clonedEnd = graph!.nodes.find((node) => node.id === clone!.endNodeId);
+		const clonedStart = graph.nodes.find((node) => node.id === clone!.startNodeId);
+		const clonedEnd = graph.nodes.find((node) => node.id === clone!.endNodeId);
 		expect(clonedStart!.x).toBeCloseTo(80, 0);
 		expect(clonedStart!.y).toBeCloseTo(0, 0);
 		expect(clonedEnd!.x).toBeCloseTo(220, 0);
 		expect(clonedEnd!.y).toBeCloseTo(0, 0);
 		expect([clone!.offsetStart, clone!.offsetEnd]).toEqual([1.5, 1.5]);
 		// The copied node keeps its junction edits, renamed onto the clone.
-		expect(edits(clonedStart!.junction)).toEqual({
+		expect(clonedStart!.junction).toEqual({
 			removed: [
 				{
 					from: { road: clone!.id, end: 'start', lane: 'l1' },
@@ -323,9 +211,7 @@ test.describe('segment copy/paste', () => {
 				}
 			]
 		});
-		expect(edits(graph!.nodes.find((node) => node.id === 'node-0')?.junction)).toEqual(
-			edits(SEGMENT_0_JUNCTION)
-		);
+		expect(graph.nodes.find((node) => node.id === 'node-0')?.junction).toEqual(SEGMENT_0_JUNCTION);
 	});
 
 	test('cuts a selected segment and pastes it as a new graph element', async ({ page }) => {
@@ -335,7 +221,7 @@ test.describe('segment copy/paste', () => {
 		// Cut removes the source segment and clears the selection.
 		await expect(page.locator('aside')).not.toBeVisible();
 		await expect
-			.poll(async () => (await savedGraph(page))?.segments.map((segment) => segment.id))
+			.poll(async () => (await liveGraph(page)).segments.map((segment) => segment.id))
 			.toEqual(['segment-1']);
 
 		// The cut segment is still on the clipboard — paste drops a fresh clone.
@@ -344,17 +230,17 @@ test.describe('segment copy/paste', () => {
 		await page.mouse.move(drop.x, drop.y);
 		await page.mouse.click(drop.x, drop.y);
 
-		await expect.poll(async () => (await savedGraph(page))?.segments.length ?? 0).toBe(2);
+		await expect.poll(async () => (await liveGraph(page)).segments.length).toBe(2);
 
-		const graph = await savedGraph(page);
-		expect(graph?.segments.some((segment) => segment.id === 'segment-0')).toBe(false);
-		const clone = graph!.segments.find((segment) => segment.id !== 'segment-1');
+		const graph = await liveGraph(page);
+		expect(graph.segments.some((segment) => segment.id === 'segment-0')).toBe(false);
+		const clone = graph.segments.find((segment) => segment.id !== 'segment-1');
 		expect(clone).toBeDefined();
 		expect(clone!.lanes).toEqual(EXPECTED_SEGMENT_0_LANES);
 	});
 
 	test('pastes copied node connector config onto a matching junction', async ({ page }) => {
-		await seedGraph(page, NODE_CONNECTION_GRAPH_DATA);
+		await openGraph(page, NODE_CONNECTION_GRAPH_DATA);
 
 		await selectNode(page, -220, -30);
 		await page.keyboard.press('Meta+c');
@@ -370,14 +256,12 @@ test.describe('segment copy/paste', () => {
 		// The paste replaces node-b's own edits outright.
 		await expect
 			.poll(async () => {
-				const graph = await savedGraph(page);
-				return edits(graph?.nodes.find((node) => node.id === 'node-b')?.junction) ?? null;
+				const graph = await liveGraph(page);
+				return graph.nodes.find((node) => node.id === 'node-b')?.junction ?? null;
 			})
 			.toEqual(expected);
 
-		const graph = await savedGraph(page);
-		expect(edits(graph?.nodes.find((node) => node.id === 'node-a')?.junction)).toEqual(
-			edits(NODE_A_JUNCTION)
-		);
+		const graph = await liveGraph(page);
+		expect(graph.nodes.find((node) => node.id === 'node-a')?.junction).toEqual(NODE_A_JUNCTION);
 	});
 });

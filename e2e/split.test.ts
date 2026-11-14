@@ -1,10 +1,6 @@
-import { expect, test } from '@playwright/test';
-import { openGraph } from './scenes';
-import { saveCity } from './save';
-
-const STORAGE_KEY = 'citynista-graph-v2';
-const SCALE = 720 / 500;
-const toScreen = (x: number, y: number) => ({ x: 640 + x * SCALE, y: 360 + y * SCALE });
+import { expect, test, type Page } from '@playwright/test';
+import { createLanesFrom } from '../src/lib/core/lane-template';
+import { openGraph, liveGraph, toScreen } from './app';
 
 const GRAPH_DATA = {
 	nodes: [
@@ -16,45 +12,26 @@ const GRAPH_DATA = {
 			id: 'segment-0',
 			startNodeId: 'node-0',
 			endNodeId: 'node-1',
-			lanes: [
-				{ type: 'sidewalk', width: 2, direction: 'bidirectional' },
-				{ type: 'road', width: 3, direction: 'backward' },
-				{ type: 'road', width: 3, direction: 'forward' },
-				{ type: 'sidewalk', width: 2, direction: 'bidirectional' }
-			]
+			lanes: createLanesFrom('street')
 		}
 	]
 };
 
-interface SavedGraph {
-	nodes: { id: string; x: number; y: number }[];
-	segments: { id: string; startNodeId: string; endNodeId: string; lanes: unknown[] }[];
-}
-
-const savedGraph = async (page: import('@playwright/test').Page) => {
-	await saveCity(page);
-	return page.evaluate((key) => {
-		const data = localStorage.getItem(key);
-		return data ? (JSON.parse(data) as SavedGraph) : null;
-	}, STORAGE_KEY);
-};
-
-const enterSplitMode = (page: import('@playwright/test').Page) =>
+const enterSplitMode = (page: Page) =>
 	page.getByTitle('Split (click a road to cut it at that point)').click();
 
 test.describe('Split tool', () => {
 	test.beforeEach(async ({ page }) => {
 		await openGraph(page, GRAPH_DATA);
-		await expect(page.locator('nav')).toBeVisible();
 	});
 
 	test('clicking a road cuts it into two segments at that point', async ({ page }) => {
 		await enterSplitMode(page);
 		await page.locator('canvas').click({ position: toScreen(20, 0) });
 
-		await expect.poll(async () => (await savedGraph(page))?.nodes.length).toBe(3);
+		await expect.poll(async () => (await liveGraph(page)).nodes.length).toBe(3);
 
-		const graph = (await savedGraph(page))!;
+		const graph = await liveGraph(page);
 		expect(graph.segments.length).toBe(2);
 
 		const newNode = graph.nodes.find((node) => node.id !== 'node-0' && node.id !== 'node-1')!;
@@ -75,6 +52,6 @@ test.describe('Split tool', () => {
 		// instead of cutting it.
 		await page.locator('canvas').click({ position: toScreen(20, 0) });
 		await expect(page.locator('aside')).toBeVisible();
-		expect((await savedGraph(page))?.segments.length).toBe(1);
+		expect((await liveGraph(page)).segments.length).toBe(1);
 	});
 });

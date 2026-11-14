@@ -27,10 +27,8 @@ import {
 // revealed node rings mark its ends (no end caps, which would double the tint
 // where they overlap the ribbon). Hover, selection and delete-hover are the *same* highlight
 // and differ only in color — cyan for hover, yellow for selection, red for
-// delete. The fill sits just above the road and does not write depth, so it
-// composites cleanly over the network at any camera tilt without z-fighting
-// (an earlier LessDepth/depth-write trick relied on bit-equal coplanar depth,
-// which the perspective + logarithmic depth buffer no longer guarantees).
+// delete. The fill ignores depth, so it composites cleanly over the network at
+// any camera tilt without z-fighting.
 // A selected road also shows its curvature handle: a square on the control
 // point, on beaded guides from the road's ends (see handle-shapes.ts).
 const HIGHLIGHT_OPACITY = 0.2;
@@ -107,10 +105,9 @@ function createHighlight(color: number): Highlight {
 		color,
 		transparent: true,
 		opacity: HIGHLIGHT_OPACITY,
-		// A transparent overlay over the road: skip depth entirely. The lane
-		// layers now stack above this fill's Y, so depth-testing would let the
-		// road occlude the highlight (it only peeked through at verges/gaps).
-		// renderOrder keeps it beneath the guides and control handle.
+		// A transparent overlay over the road: skip depth entirely, so nothing
+		// drawn at the road's height hides it. renderOrder keeps it beneath the
+		// guides and control handle.
 		depthTest: false,
 		depthWrite: false,
 		side: THREE.DoubleSide

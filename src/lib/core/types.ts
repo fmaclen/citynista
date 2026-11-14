@@ -1,6 +1,6 @@
 export type LaneRole = 'vehicle' | 'pedestrian' | 'buffer';
 export type LaneMaterial = 'asphalt' | 'concrete' | 'grass' | 'dirt';
-export type LaneDirection = 'forward' | 'backward' | 'bidirectional';
+type LaneDirection = 'forward' | 'backward' | 'bidirectional';
 
 export interface Lane {
 	// Stable within its road, so junction connections can name it across
@@ -47,7 +47,6 @@ export interface JunctionCrossing {
 	lanes: [string, string];
 	at?: number;
 	on?: boolean;
-	crossing?: 'painted';
 }
 
 export interface JunctionConnection {
@@ -55,13 +54,12 @@ export interface JunctionConnection {
 	to: JunctionLaneRef;
 }
 
-// What a node stores about the junction its segment ends form: every lane
-// connection across it, of every kind, as the drawing uses them. They are
-// the default ones plus the user's edits: connections `added` by hand and
-// default ones `removed` by hand, each kept for as long as its lanes exist,
-// so the defaults keep following the roads everywhere else.
+// What a node stores about the junction its segment ends form: the user's
+// edits only. Its lane connections are worked out on every build from the
+// defaults plus connections `added` by hand, less default ones `removed` by
+// hand, each edit kept for as long as its lanes exist, so the defaults keep
+// following the roads everywhere else.
 export interface JunctionData {
-	connections: JunctionConnection[];
 	added?: JunctionConnection[];
 	removed?: JunctionConnection[];
 	// How far each road (by segment id) stops short of the node, set by hand:
@@ -78,15 +76,12 @@ export interface JunctionData {
 	// way they sit off them, looking out of the node along the attached road
 	// (see core/attach.ts).
 	sides?: Record<string, 'left' | 'right'>;
-	islands?: { shape: { x: number; y: number }[]; surface: 'grass' | 'concrete' | 'pavement' }[];
 }
 
 export interface NodeData {
 	id: string;
 	x: number;
 	y: number;
-	// Optional debug annotation, drawn by the dev-only node label overlay.
-	label?: string;
 	junction?: JunctionData;
 }
 

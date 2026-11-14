@@ -1,0 +1,53 @@
+{
+	"nodes": [
+		{
+			"id": "a",
+			"x": 0,
+			"y": 0
+		},
+		{
+			"id": "b",
+			"x": 20,
+			"y": 0
+		}
+	],
+	"segments": [
+		{
+			"id": "hairpin",
+			"startNodeId": "a",
+			"endNodeId": "b",
+			"controlX": 10,
+			"controlY": 40,
+			"lanes": [
+				{
+					"id": "w0",
+					"role": "pedestrian",
+					"material": "concrete",
+					"width": 2,
+					"direction": "bidirectional"
+				},
+				{
+					"id": "f",
+					"role": "vehicle",
+					"material": "asphalt",
+					"width": 3.5,
+					"direction": "forward"
+				},
+				{
+					"id": "b",
+					"role": "vehicle",
+					"material": "asphalt",
+					"width": 3.5,
+					"direction": "backward"
+				},
+				{
+					"id": "w1",
+					"role": "pedestrian",
+					"material": "concrete",
+					"width": 2,
+					"direction": "bidirectional"
+				}
+			]
+		}
+	]
+}

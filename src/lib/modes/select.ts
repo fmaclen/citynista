@@ -1,15 +1,17 @@
 import type { ModeHandlers } from './types';
-import type { Editor, HandleRef, TaperHandleInfo } from '../editor.svelte';
+import type { Editor, HandleRef } from '../editor.svelte';
 import { beginOffsetDrag, dragOffset, type OffsetDrag } from './offset';
+import { dragSetback, setbackHandleAt, type SetbackHandle } from './setback';
 import { segmentEnds } from '../core/attach';
 import { controlHandle } from '../rendering/selection-renderer';
 import type { Segment } from '../core/segment.svelte';
 import type { Node } from '../core/node.svelte';
-import { getQuadraticBezierTangent } from '../geometry/bezier';
+import { controlFrame, outOf, toFrame } from '../core/segment-curve';
 import { HOVER_COLOR } from '../rendering/editor-palette';
 import { CURVE_HANDLE, hitsHandle } from '../rendering/handle-shapes';
-import { nodeHitAt, segmentHitAt } from './picking';
+import { nodeHitAt, pickAt } from './picking';
 import { createMarquee } from './marquee';
+import { openConnector } from './connector';
 
 // Snap radii are sized in screen pixels and converted to world units at
 // the current zoom; hit areas live in modes/picking.
@@ -31,7 +33,7 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 	// follows — a shift+drag instead smooths the node's tangent live.
 	let pendingShiftToggle: string | null = null;
 	// Dragging a setback handle of the selected node sets that road's setback.
-	let taperDrag: TaperHandleInfo | null = null;
+	let taperDrag: SetbackHandle | null = null;
 	// Dragging the selected road's lateral offset handle, and the nodes it
 	// has moved.
 	let offsetDrag: OffsetDrag | null = null;
@@ -45,64 +47,26 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 
 	const captureControlFrames = () => {
 		controlFrames.clear();
-
 		for (const segment of editor.graph.segments.values()) {
-			if (!segment.hasControlPoint) continue;
 			if (
 				!editor.selectedNodes.has(segment.startNodeId) &&
 				!editor.selectedNodes.has(segment.endNodeId)
 			) {
 				continue;
 			}
-
-			const startNode = editor.graph.nodes.get(segment.startNodeId);
-			const endNode = editor.graph.nodes.get(segment.endNodeId);
-			if (!startNode || !endNode) continue;
-
-			const dx = endNode.x - startNode.x;
-			const dy = endNode.y - startNode.y;
-			const lengthSq = dx * dx + dy * dy;
-			if (lengthSq < 0.0001) continue;
-
-			const rx = segment.controlX! - startNode.x;
-			const ry = segment.controlY! - startNode.y;
-			controlFrames.set(segment.id, {
-				u: (rx * dx + ry * dy) / lengthSq,
-				v: (dx * ry - dy * rx) / lengthSq
-			});
+			const frame = controlFrame(editor.graph, segment);
+			if (frame) controlFrames.set(segment.id, frame);
 		}
 	};
 
 	const restoreControlFrames = () => {
 		for (const [segmentId, frame] of controlFrames) {
 			const segment = editor.graph.segments.get(segmentId);
-			if (!segment) continue;
-
-			const startNode = editor.graph.nodes.get(segment.startNodeId);
-			const endNode = editor.graph.nodes.get(segment.endNodeId);
-			if (!startNode || !endNode) continue;
-
-			const dx = endNode.x - startNode.x;
-			const dy = endNode.y - startNode.y;
-			segment.setControlPoint(
-				startNode.x + frame.u * dx - frame.v * dy,
-				startNode.y + frame.u * dy + frame.v * dx
-			);
+			if (segment) toFrame(editor.graph, segment, frame);
 		}
 	};
 
 	const worldPerPixel = () => editor.sceneManager.worldPerPixel();
-
-	// Inside a node's ring the node wins outright; shared logic lives in
-	// modes/picking.
-	const pickAt = (
-		worldX: number,
-		worldZ: number
-	): { node: Node | null; segment: Segment | null } => {
-		const nodeHit = nodeHitAt(editor, worldX, worldZ);
-		if (nodeHit.node) return { node: nodeHit.node, segment: null };
-		return { node: null, segment: segmentHitAt(editor, worldX, worldZ).segment };
-	};
 
 	const findControlPointAt = (worldX: number, worldZ: number) => {
 		for (const segmentId of editor.selectedSegments) {
@@ -127,7 +91,7 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 
 	// The handle a press here would grab, in the order onMouseDown tries them.
 	const handleAt = (worldX: number, worldZ: number): HandleRef | null => {
-		const taper = editor.selectedNodes.size === 1 && editor.taperHandleAt(worldX, worldZ);
+		const taper = editor.selectedNodes.size === 1 && setbackHandleAt(editor, worldX, worldZ);
 		if (taper) return { kind: 'taper', index: taper.index };
 		if (editor.offsetHandleAt(worldX, worldZ)) return { kind: 'offset', index: 0 };
 		const curve = findControlPointAt(worldX, worldZ);
@@ -156,31 +120,9 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 		for (const segmentId of node.connectedSegments) {
 			if (segmentId === segment.id) continue;
 			const adjacent = editor.graph.segments.get(segmentId);
-			if (!adjacent) continue;
-
-			const adjacentStart = editor.graph.nodes.get(adjacent.startNodeId);
-			const adjacentEnd = editor.graph.nodes.get(adjacent.endNodeId);
-			if (!adjacentStart || !adjacentEnd) continue;
-
-			const atStart = adjacent.startNodeId === node.id;
-			const cx = adjacent.controlX ?? (adjacentStart.x + adjacentEnd.x) / 2;
-			const cy = adjacent.controlY ?? (adjacentStart.y + adjacentEnd.y) / 2;
-			const tangent = getQuadraticBezierTangent(
-				adjacentStart.x,
-				adjacentStart.y,
-				cx,
-				cy,
-				adjacentEnd.x,
-				adjacentEnd.y,
-				atStart ? 0 : 1
-			);
-			const length = Math.hypot(tangent.x, tangent.y);
-			if (length < 0.0001) continue;
-
+			const out = adjacent && outOf(editor.graph, adjacent, node.id);
 			// Inward along the neighbor's continuation, into this segment.
-			const outX = (atStart ? tangent.x : -tangent.x) / length;
-			const outY = (atStart ? tangent.y : -tangent.y) / length;
-			directions.push({ x: -outX, y: -outY });
+			if (out) directions.push({ x: -out.x, y: -out.y });
 		}
 
 		return directions;
@@ -323,7 +265,6 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 
 		node.x = best.x;
 		node.y = best.y;
-		editor.nodeRenderer.updateNode(node);
 		for (const segment of best.pair) {
 			segment.clearControlPoint();
 			controlFrames.delete(segment.id);
@@ -359,7 +300,6 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 
 		node.x = best.x;
 		node.y = best.y;
-		editor.nodeRenderer.updateNode(node);
 		segment.clearControlPoint();
 		controlFrames.delete(segment.id);
 		return true;
@@ -437,7 +377,7 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 		// road's together). The handles sit out where each road stops short,
 		// so node dragging still works at the centre.
 		if (editor.selectedNodes.size === 1) {
-			const handle = editor.taperHandleAt(worldPos.x, worldPos.z);
+			const handle = setbackHandleAt(editor, worldPos.x, worldPos.z);
 			if (handle) {
 				taperDrag = handle;
 				return;
@@ -458,7 +398,7 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 			return;
 		}
 
-		const { node, segment: pickedSegment } = pickAt(worldPos.x, worldPos.z);
+		const { node, segment: pickedSegment } = pickAt(editor, worldPos.x, worldPos.z);
 		if (node) {
 			if (event.shiftKey) {
 				if (editor.selectedNodes.has(node.id)) {
@@ -506,16 +446,12 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 		const worldPos = editor.sceneManager.screenToWorld(event.clientX, event.clientY);
 
 		if (taperDrag) {
-			editor.setTaperFromDrag(taperDrag, worldPos.x, worldPos.z, event.shiftKey);
+			dragSetback(editor, taperDrag, worldPos.x, worldPos.z, event.shiftKey);
 			return;
 		}
 
 		if (offsetDrag) {
 			offsetMoved = dragOffset(editor, offsetDrag, worldPos.x, worldPos.z, event.shiftKey);
-			for (const id of offsetMoved) {
-				const node = editor.graph.nodes.get(id);
-				if (node) editor.nodeRenderer.updateNode(node);
-			}
 			scheduleApply();
 			return;
 		}
@@ -527,7 +463,7 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 
 		if (!isDragging || !dragTarget) {
 			editor.lightHandle(handleAt(worldPos.x, worldPos.z));
-			const { node, segment } = pickAt(worldPos.x, worldPos.z);
+			const { node, segment } = pickAt(editor, worldPos.x, worldPos.z);
 			editor.setHoveredNode(node?.id ?? null);
 			// With a node selected, stay focused on it — don't light up other
 			// segments on hover. Click still reselects; Esc/empty ground clears.
@@ -547,7 +483,6 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 				if (node) {
 					node.x += dx;
 					node.y += dz;
-					editor.nodeRenderer.updateNode(node);
 				}
 			}
 			restoreControlFrames();
@@ -588,7 +523,6 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 					if (node) {
 						node.x += dx;
 						node.y += dz;
-						editor.nodeRenderer.updateNode(node);
 					}
 				}
 				if (segment.hasControlPoint) {
@@ -604,7 +538,7 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 
 	const release = (event: MouseEvent) => {
 		if (taperDrag) {
-			editor.finishTaper();
+			editor.graph.save();
 			taperDrag = null;
 			return;
 		}
@@ -682,7 +616,7 @@ export function setupSelectMode(editor: Editor): ModeHandlers {
 		const worldPos = editor.sceneManager.screenToWorld(event.clientX, event.clientY);
 		const { node } = nodeHitAt(editor, worldPos.x, worldPos.z);
 		if (node && node.connectedSegments.length >= 2) {
-			editor.enterConnectorMode(node.id);
+			openConnector(editor, node.id);
 		} else if (node && node.connectedSegments.length === 1) {
 			// A dangling endpoint: continue its road onward with the same lanes.
 			editor.continueFromNode(node.id);

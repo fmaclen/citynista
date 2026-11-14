@@ -1,14 +1,9 @@
 import { expect, test } from '@playwright/test';
-import { saveCity } from './save';
-import { expectSelectMode } from './mode';
-
-const STORAGE_KEY = 'citynista-graph-v2';
+import { expectSelectMode, openEditor, pixels, saveCity, liveGraph, PX_PER_M } from './app';
 
 test.describe('Preset Hotbar', () => {
 	test('picking a preset enters draw mode, escape returns to select', async ({ page }) => {
-		await page.goto('/?topdown');
-		await expect(page.locator('canvas')).toBeVisible();
-		await expect(page.locator('nav')).toBeVisible();
+		await openEditor(page);
 
 		const street = page.getByRole('button', { name: 'Street' });
 		const avenue = page.getByRole('button', { name: 'Avenue' });
@@ -30,16 +25,12 @@ test.describe('Preset Hotbar', () => {
 		await page.locator('canvas').click({ position: { x: 450, y: 300 } });
 		await page.locator('canvas').click({ position: { x: 760, y: 420 } });
 
-		await saveCity(page);
-		const segments = await page.evaluate((key) => {
-			const data = localStorage.getItem(key);
-			return data ? JSON.parse(data).segments : null;
-		}, STORAGE_KEY);
+		const { segments } = await liveGraph(page);
 
 		expect(segments).toHaveLength(1);
 		// Highway: 3 asphalt lanes, raised concrete median, 3 asphalt lanes.
 		expect(segments[0].lanes).toHaveLength(7);
-		expect(segments[0].lanes.map((lane: { material: string }) => lane.material)).toEqual([
+		expect(segments[0].lanes.map((lane) => lane.material)).toEqual([
 			'asphalt',
 			'asphalt',
 			'asphalt',
@@ -60,8 +51,7 @@ test.describe('Preset Hotbar', () => {
 	});
 
 	test('Delete empties the armed slot; slot changes survive a reload', async ({ page }) => {
-		await page.goto('/?topdown');
-		await expect(page.locator('nav')).toBeVisible();
+		await openEditor(page);
 		const nav = page.locator('nav');
 
 		await nav.getByRole('button', { name: 'Path' }).click();
@@ -87,7 +77,7 @@ test.describe('Preset Hotbar', () => {
 	});
 
 	test('an empty slot opens the lane panel; it draws only once it has lanes', async ({ page }) => {
-		await page.goto('/?topdown');
+		await openEditor(page);
 		const nav = page.locator('nav');
 		const panel = page.locator('aside');
 		const canvas = page.locator('canvas');
@@ -106,8 +96,7 @@ test.describe('Preset Hotbar', () => {
 		// Armed but empty: clicks on the map draw nothing.
 		await canvas.click({ position: { x: 450, y: 360 } });
 		await canvas.click({ position: { x: 760, y: 360 } });
-		await saveCity(page);
-		expect(await savedSegments(page)).toEqual([]);
+		expect((await liveGraph(page)).segments).toEqual([]);
 
 		// Add lane stays under the rows and appends each time.
 		await addLane.click();
@@ -120,12 +109,12 @@ test.describe('Preset Hotbar', () => {
 
 		await canvas.click({ position: { x: 450, y: 360 } });
 		await canvas.click({ position: { x: 760, y: 360 } });
-		await saveCity(page);
-		const segments = await savedSegments(page);
+		const { segments } = await liveGraph(page);
 		expect(segments).toHaveLength(1);
-		expect(segments[0].lanes.map((l: { width: number }) => l.width)).toEqual([5, 3.5]);
+		expect(segments[0].lanes.map((l) => l.width)).toEqual([5, 3.5]);
 
-		// The preset itself survives a reload.
+		// The preset itself survives a reload, the unsaved road discarded.
+		page.once('dialog', (dialog) => dialog.accept());
 		await page.reload();
 		await nav.getByRole('button', { name: 'Custom road' }).click();
 		await expect(panel.locator('input[type="number"]').first()).toHaveValue('5');
@@ -134,7 +123,7 @@ test.describe('Preset Hotbar', () => {
 	test('I copies the road under the cursor into the first empty slot and draws with it', async ({
 		page
 	}) => {
-		await page.goto('/?topdown');
+		await openEditor(page);
 		const nav = page.locator('nav');
 		const canvas = page.locator('canvas');
 
@@ -160,8 +149,7 @@ test.describe('Preset Hotbar', () => {
 		// Drawing straight away uses the copied lanes.
 		await canvas.click({ position: { x: 450, y: 520 } });
 		await canvas.click({ position: { x: 760, y: 520 } });
-		await saveCity(page);
-		const segments = await savedSegments(page);
+		const { segments } = await liveGraph(page);
 		expect(segments).toHaveLength(2);
 		expect(segments[1].lanes).toHaveLength(7);
 	});
@@ -170,33 +158,18 @@ test.describe('Preset Hotbar', () => {
 		// At 10x zoom a metre is 14.4 px; even a one-lane road's circle reaches
 		// past the 20 px cursor ring.
 		const ZOOM = 10;
-		const PX = (720 / 500) * ZOOM;
-		await page.goto(`/?topdown&cam=0,0,${ZOOM}`);
-		await expect(page.locator('nav')).toBeVisible();
+		const PX = PX_PER_M * ZOOM;
+		await openEditor(page, `topdown&cam=0,0,${ZOOM}`);
 		const at = { x: 640, y: 300 };
 		const REACH = 220;
 
 		// How far left of the cursor (the lane panel covers the right) the
 		// screen leans bluer than it did before (the cursor's tint is cyan), in
 		// pixels.
-		const tintAlong = async () => {
-			const png = await page.screenshot({
-				clip: { x: at.x - REACH, y: at.y, width: REACH, height: 1 }
-			});
-			return page.evaluate(async (data) => {
-				const img = new Image();
-				img.src = `data:image/png;base64,${data}`;
-				await img.decode();
-				const canvas = document.createElement('canvas');
-				canvas.width = img.width;
-				canvas.height = 1;
-				const ctx = canvas.getContext('2d');
-				if (!ctx) return [];
-				ctx.drawImage(img, 0, 0);
-				const px = ctx.getImageData(0, 0, img.width, 1).data;
-				return Array.from({ length: img.width }, (_, i) => px[i * 4 + 2] - px[i * 4]).reverse();
-			}, png.toString('base64'));
-		};
+		const tintAlong = async () =>
+			(await pixels(page, { x: at.x - REACH, y: at.y, width: REACH, height: 1 }))
+				.map(([r, , b]) => b - r)
+				.reverse();
 		const plain = await tintAlong();
 		const reach = async () => {
 			const now = await tintAlong();
@@ -229,10 +202,3 @@ test.describe('Preset Hotbar', () => {
 		await expect.poll(reach).toBe(0);
 	});
 });
-
-async function savedSegments(page: import('@playwright/test').Page) {
-	return page.evaluate((key) => {
-		const data = localStorage.getItem(key);
-		return data ? JSON.parse(data).segments : null;
-	}, STORAGE_KEY);
-}

@@ -51,10 +51,10 @@ export interface HandleShape {
 	detail?: Piece[];
 }
 
-export const CORNER_PX = 1.5;
-export const HEAD_TIP_DEG = 60;
-export const HEAD_LENGTH_PX = 10;
-export const STEM_PX = 4;
+const CORNER_PX = 1.5;
+const HEAD_TIP_DEG = 60;
+const HEAD_LENGTH_PX = 10;
+const STEM_PX = 4;
 const HEAD_HALF_WIDTH = HEAD_LENGTH_PX * Math.tan(((HEAD_TIP_DEG / 2) * Math.PI) / 180);
 // How far a stem runs on into its head, so the two read as one piece.
 const STEM_INTO_HEAD = HEAD_LENGTH_PX * 0.4;

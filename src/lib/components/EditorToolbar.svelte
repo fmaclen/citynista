@@ -1,10 +1,11 @@
 <script lang="ts">
 	import { getEditorContext } from '$lib/editor.svelte';
+	import { fromPage, press } from '$lib/utils';
 	import { getTotalWidth, laneSwatchColor } from '$lib/core/lane-template';
 	import type { Lane } from '$lib/core/types';
-	import { labLane } from '$lib/core/place';
-	import { rowMarks } from '$lib/lab/road';
-	import { COLOURS } from '$lib/lab/scene';
+	import { modelLane } from '$lib/core/place';
+	import { laneLines } from '$lib/road-model/lines';
+	import { COLOURS } from '$lib/rendering/road-palette';
 	import { Button } from '$lib/components/ui/button';
 	import {
 		Circle,
@@ -27,7 +28,7 @@
 		Math.max(1, ...editor.hotbar.flatMap((b) => (b ? [getTotalWidth(b.lanes)] : [])))
 	);
 
-	// The paint a preset's thumbnail shows: the road's own rule (rowMarks) run
+	// The paint a preset's thumbnail shows: the road's own rule (laneLines) run
 	// over the preset's lanes laid side by side, each line placed as a
 	// fraction of the preset's width. A line at the preset's outer edge is
 	// held 2 px in, or a white edge line would vanish into the toolbar.
@@ -35,11 +36,11 @@
 		const total = getTotalWidth(lanes);
 		let left = 0;
 		const spans = lanes.map((lane, i) => {
-			const span = { lane: labLane(lane, `l${i}`), left, right: left + lane.width };
+			const span = { lane: modelLane(lane, `l${i}`), left, right: left + lane.width };
 			left = span.right;
 			return span;
 		});
-		return rowMarks(spans).map((mark) => ({ ...mark, at: (mark.o / total) * 100 }));
+		return laneLines(spans).map((mark) => ({ ...mark, at: (mark.o / total) * 100 }));
 	}
 	const DASHES = (colour: string) =>
 		`repeating-linear-gradient(${colour} 0 4px, transparent 4px 8px)`;
@@ -69,17 +70,6 @@
 		(editor.mode === 'draw' || editor.mode === 'circle') && !!editor.activeBrush
 	);
 
-	// Toolbar buttons return focus to the page after acting, so mode keys
-	// (Escape, Tab, Delete) and shortcuts keep working right after a click —
-	// the keydown guards only pass events targeted at <body>.
-	function press(action: () => void) {
-		return (event: MouseEvent) => {
-			action();
-			const target = event.currentTarget;
-			if (target instanceof HTMLElement) target.blur();
-		};
-	}
-
 	function onKeyDown(event: KeyboardEvent) {
 		const target = event.target;
 		if (
@@ -106,8 +96,7 @@
 		if (
 			event.key === 'Tab' &&
 			armed &&
-			target instanceof HTMLElement &&
-			target.tagName === 'BODY' &&
+			fromPage(event) &&
 			!event.shiftKey &&
 			!event.metaKey &&
 			!event.ctrlKey &&
