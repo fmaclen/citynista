@@ -12,6 +12,8 @@ Stack: SvelteKit + Svelte 5 runes, Three.js, clipper-lib for polygon booleans (t
 - `bun run test:jitter` moves the nodes of every `e2e/scenes/` graph and the neighbourhood example, checking each frame against the drawing rules (`road-model/checks.ts`) and a fresh build; about two and a half minutes, run it when you change the drawing. Its `KNOWN` and `WALKS` lists record known drawing bugs (in `docs/backlog.md`) and may only shrink.
 - `bun run test -- e2e/split.test.ts` or `-g 'partial name'` builds, serves and runs those Playwright tests, each writing a screenshot to `test-results/`. Run only the tests your change touches.
 
+Logic changes get tests, and tests assert on what the app does: the graph, the road model, DOM state, and the `?model` hooks in `src/routes/+page.svelte` (`__editorLook()` for the lane, handle and guides shown). Never on pixels, widths, alignment or whether text fits; how things look is checked by eye in the screenshots.
+
 Helpers: `e2e/app.ts` drives the editor in the browser; `unit/model.ts` builds the road model from a saved graph in Node. To check what an action stored, read localStorage, with `saveCity()` first only where saving is the user's step. The camera is a tilted perspective by default; tests open with `?topdown` (or `?cam=x,z,zoom`), a straight-down view where `screenAt(zoom, centre)` maps world to screen linearly (`720 / 500` px per metre at zoom 1 in 1280×720). Wait with `expect(...)` assertions, never `waitForTimeout()`.
 
 ## How it fits together

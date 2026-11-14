@@ -2,6 +2,8 @@ import { expect, type Page } from '@playwright/test';
 import { SCHEMA_VERSION } from '../src/lib/core/city-store';
 import { shownAt } from '../src/lib/core/road-line';
 import type { CameraState, GraphData } from '../src/lib/core/types';
+import type { HandleRef } from '../src/lib/editor.svelte';
+import type { HandleState } from '../src/lib/rendering/editor-palette';
 import type { Place } from '../src/lib/road-model/model';
 import { nodeOf, readScene, segmentOf } from '../unit/model';
 
@@ -79,35 +81,16 @@ export const screenAt =
 	});
 export const toScreen = screenAt();
 
-// The red, green and blue (0-255) of each screen pixel in a box, row by row.
-export async function pixels(
-	page: Page,
-	clip: { x: number; y: number; width: number; height: number }
-) {
-	const png = await page.screenshot({ clip });
-	return page.evaluate(async (data) => {
-		const img = new Image();
-		img.src = `data:image/png;base64,${data}`;
-		await img.decode();
-		const canvas = document.createElement('canvas');
-		canvas.width = img.width;
-		canvas.height = img.height;
-		const ctx = canvas.getContext('2d')!;
-		ctx.drawImage(img, 0, 0);
-		const px = ctx.getImageData(0, 0, img.width, img.height).data;
-		return Array.from({ length: px.length / 4 }, (_, i) => [
-			px[i * 4],
-			px[i * 4 + 1],
-			px[i * 4 + 2]
-		]);
-	}, png.toString('base64'));
+// What the editor shows over the map, as it reports it: the lane lit from
+// the panel, the handle lit for its state, a selected node's setback guides.
+// Needs `model` in the query.
+export interface EditorLook {
+	lane: number | null;
+	handle: { ref: HandleRef; state: HandleState } | null;
+	guides: [Pt, Pt][];
 }
-
-// Mean red, green and blue of the 3x3 screen pixels around a point.
-export async function colourAt(page: Page, at: Pt) {
-	const all = await pixels(page, { x: at.x - 1.5, y: at.y - 1.5, width: 3, height: 3 });
-	return [0, 1, 2].map((c) => all.reduce((sum, p) => sum + p[c], 0) / all.length);
-}
+export const editorLook = (page: Page) =>
+	page.evaluate(() => (window as unknown as { __editorLook: () => EditorLook }).__editorLook());
 
 // Selects a road by clicking where it shows, drags its offset handle `by`
 // metres across it (to its right as drawn), holding Shift when `snap`, and

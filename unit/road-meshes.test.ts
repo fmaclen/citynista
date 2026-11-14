@@ -82,6 +82,14 @@ test('ground stacks by material, paving with the asphalt', () => {
 	expect(at(s('verge', 'grass'))).toBeLessThan(at(s('median', 'concrete')));
 });
 
+test('a concrete car lane is painted in the concrete of the sidewalk, not asphalt', () => {
+	const concrete = road();
+	concrete.surfaces[0].material = 'concrete';
+	const batches = trianglesOf(concrete).filter((b) => b.layer !== 'white');
+	expect(batches.map((b) => [b.layer, b.colour])).toEqual([['pavement', COLOURS.concrete]]);
+	expect(area(batches[0].tris)).toBeCloseTo(30 * 3.5 + 30 * 2, 6);
+});
+
 test('a strip folded over by a tight bend leaves as rings', () => {
 	const left = [
 		{ x: 0, y: 0 },

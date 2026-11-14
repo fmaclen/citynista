@@ -49,6 +49,7 @@
 						__ghostGraph?: () => unknown;
 						__ghostModel?: () => unknown;
 						__ghostLook?: () => unknown;
+						__editorLook?: () => unknown;
 					};
 					w.__roadModel = () => editor.roadRenderer.derived?.place;
 					w.__graph = () => editor.graph.toJSON();
@@ -57,6 +58,13 @@
 					w.__ghostLook = () => ({
 						arrow: editor.ghost?.arrow ?? null,
 						blocked: editor.ghost?.blocked ?? false
+					});
+					// What the editor shows over the map: the lane lit from the
+					// panel, the handle lit for its state, a node's setback guides.
+					w.__editorLook = () => ({
+						lane: editor.highlightedLane,
+						handle: editor.litHandle,
+						guides: editor.guideRenderer.shown
 					});
 				}
 

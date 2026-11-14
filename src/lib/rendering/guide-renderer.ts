@@ -88,6 +88,11 @@ export class GuideRenderer {
 		}
 	}
 
+	// The lines shown now, for ?model scripts.
+	get shown() {
+		return this.lines;
+	}
+
 	// Laid out at the next frame's zoom.
 	show(lines: [Point, Point][]) {
 		this.lines = lines;

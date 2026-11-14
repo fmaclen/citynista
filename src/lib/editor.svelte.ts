@@ -112,6 +112,8 @@ export class Editor {
 	currentOffsetHandle: OffsetHandle | null = null;
 	connectionRenderer!: ConnectionRenderer;
 	currentTaperHandles: SetbackHandle[] = [];
+	// The handle last lit for its state (lightHandle); null when all rest.
+	litHandle: { ref: HandleRef; state: HandleState } | null = null;
 	// The junction being edited in connector mode (modes/connector.ts), and
 	// the lane dots it shows there.
 	connectorNodeId: string | null = null;
@@ -1013,6 +1015,7 @@ export class Editor {
 	// Tints one handle for its state (the one under the pointer, or in hand)
 	// and every other back to rest; null for none.
 	lightHandle(ref: HandleRef | null, state: HandleState = 'hover') {
+		this.litHandle = ref && { ref, state };
 		const at = (kind: HandleRef['kind']) =>
 			ref?.kind === kind && 'index' in ref ? ref.index : null;
 		this.selectionRenderer?.lightControl(ref?.kind === 'curve' ? ref.segmentId : null, state);

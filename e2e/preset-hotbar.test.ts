@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { expectSelectMode, openEditor, pixels, saveCity, liveGraph, PX_PER_M } from './app';
+import { expectSelectMode, openEditor, saveCity, liveGraph } from './app';
 
 test.describe('Preset Hotbar', () => {
 	test('picking a preset enters draw mode, escape returns to select', async ({ page }) => {
@@ -152,53 +152,5 @@ test.describe('Preset Hotbar', () => {
 		const { segments } = await liveGraph(page);
 		expect(segments).toHaveLength(2);
 		expect(segments[1].lanes).toHaveLength(7);
-	});
-
-	test('the cursor carries a circle as wide as the armed preset', async ({ page }) => {
-		// At 10x zoom a metre is 14.4 px; even a one-lane road's circle reaches
-		// past the 20 px cursor ring.
-		const ZOOM = 10;
-		const PX = PX_PER_M * ZOOM;
-		await openEditor(page, `topdown&cam=0,0,${ZOOM}`);
-		const at = { x: 640, y: 300 };
-		const REACH = 220;
-
-		// How far left of the cursor (the lane panel covers the right) the
-		// screen leans bluer than it did before (the cursor's tint is cyan), in
-		// pixels.
-		const tintAlong = async () =>
-			(await pixels(page, { x: at.x - REACH, y: at.y, width: REACH, height: 1 }))
-				.map(([r, , b]) => b - r)
-				.reverse();
-		const plain = await tintAlong();
-		const reach = async () => {
-			const now = await tintAlong();
-			return now.findLastIndex((v, i) => v - plain[i] > 12) + 1;
-		};
-
-		// One-way lane: 3.5 m across.
-		await page.getByRole('button', { name: 'One-way lane' }).click();
-		await page.mouse.move(at.x, at.y);
-		await expect.poll(reach).toBeGreaterThan(20);
-		expect(Math.abs((await reach()) - (3.5 / 2) * PX)).toBeLessThan(3);
-		await page.screenshot({
-			path: 'test-results/width-cue-narrow.png',
-			clip: { x: at.x - 200, y: at.y - 200, width: 400, height: 400 }
-		});
-
-		// Highway: six 3.5 m lanes and a 3 m median, 24 m across.
-		await page.locator('body').press('3');
-		await page.mouse.move(at.x + 1, at.y);
-		await page.mouse.move(at.x, at.y);
-		await expect.poll(reach).toBeGreaterThan((24 / 2) * PX - 3);
-		expect(Math.abs((await reach()) - (24 / 2) * PX)).toBeLessThan(3);
-		await page.screenshot({
-			path: 'test-results/width-cue-wide.png',
-			clip: { x: at.x - 200, y: at.y - 200, width: 400, height: 400 }
-		});
-
-		// Nothing armed: no circle.
-		await page.locator('body').press('Escape');
-		await expect.poll(reach).toBe(0);
 	});
 });

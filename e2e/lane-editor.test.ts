@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import { createLanesFrom } from '../src/lib/core/lane-template';
-import { colourAt, openGraph, liveGraph, toScreen, type Pt } from './app';
+import { editorLook, openGraph, liveGraph, roadModel, toScreen } from './app';
 
 const GRAPH_DATA = {
 	nodes: [
@@ -32,18 +32,6 @@ async function selectSegment(page: Page) {
 	const point = toScreen(-50, 0);
 	await page.locator('canvas').click({ position: point });
 	await expect(page.locator('aside')).toBeVisible();
-}
-
-// Mean brightness (0-255) of the 3x3 screen pixels around a point.
-async function brightnessAt(page: Page, at: Pt) {
-	const [r, g, b] = await colourAt(page, at);
-	return (r + g + b) / 3;
-}
-
-// How far a point leans blue over red: the lane highlight is cyan.
-async function blueAt(page: Page, at: Pt) {
-	const [r, , b] = await colourAt(page, at);
-	return b - r;
 }
 
 test.describe('Lane Editor', () => {
@@ -78,32 +66,6 @@ test.describe('Lane Editor', () => {
 			width: 5,
 			direction: 'bidirectional'
 		});
-	});
-
-	test('the panel never scrolls sideways and the longest labels fit', async ({ page }) => {
-		await seedGraph(page);
-		await selectSegment(page);
-		const panel = page.locator('aside');
-		await expect(panel.getByText('Pedestrian').first()).toBeVisible();
-		await expect(panel.getByText('Concrete').first()).toBeVisible();
-
-		const overflow = () =>
-			panel.evaluate((el) => ({
-				panel: el.scrollWidth - el.clientWidth,
-				labels: [...el.querySelectorAll('button span.truncate')].map(
-					(span) => span.scrollWidth - span.clientWidth
-				)
-			}));
-		const roomy = await overflow();
-		expect(roomy.panel).toBe(0);
-		expect(Math.max(...roomy.labels)).toBe(0);
-
-		// A short window gives the panel a vertical scrollbar, which takes
-		// width from the rows; still no sideways scroll.
-		await page.setViewportSize({ width: 1280, height: 300 });
-		await expect.poll(() => panel.evaluate((el) => el.scrollHeight > el.clientHeight)).toBe(true);
-		expect((await overflow()).panel).toBe(0);
-		await panel.screenshot({ path: 'test-results/lane-panel-short.png' });
 	});
 
 	test('panel hides when the selection is cleared', async ({ page }) => {
@@ -145,7 +107,6 @@ test.describe('Lane Editor', () => {
 		// The slot is the third row, where row 2 was; the rows above made room.
 		await expect(slot).toHaveCount(1);
 		await expect(rows.nth(2)).toHaveAttribute('data-drop-slot', '');
-		await expect.poll(async () => (await slot.boundingBox())?.y).toBeCloseTo(target.y, 0);
 		// Held near the top of that place, the lifted row shows the slot below it.
 		await page.mouse.move(grip.x + grip.width / 2, target.y - 6);
 		await expect(rows.nth(2)).toHaveAttribute('data-drop-slot', '');
@@ -366,28 +327,20 @@ test.describe('Lane Editor', () => {
 		await seedGraph(page);
 		await selectSegment(page);
 		const rows = page.locator('aside').getByRole('listitem');
-		// The street's car lanes: row 1 left of the line as drawn (west to
-		// east, so north, up the screen), row 2 right of it.
-		const left = toScreen(-120, -1.75);
-		const right = toScreen(-120, 1.75);
-		const plain = { left: await blueAt(page, left), right: await blueAt(page, right) };
+		const lit = async () => (await editorLook(page)).lane;
+		expect(await lit()).toBeNull();
 
+		// The street's car lanes, rows 1 and 2.
 		await rows.nth(1).hover();
-		await expect.poll(() => blueAt(page, left)).toBeGreaterThan(plain.left + 30);
-		expect(await blueAt(page, right)).toBeLessThan(plain.right + 10);
+		await expect.poll(lit).toBe(1);
 		await page.screenshot({ path: 'test-results/lane-hover-left.png' });
-
 		await rows.nth(2).hover();
-		await expect.poll(() => blueAt(page, right)).toBeGreaterThan(plain.right + 30);
-		expect(await blueAt(page, left)).toBeLessThan(plain.left + 10);
-		// The hovered row is lit in the panel too, in the map's hover cyan.
-		await expect(rows.nth(2)).toHaveCSS('background-color', 'rgba(103, 232, 249, 0.25)');
-		await expect(rows.nth(1)).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+		await expect.poll(lit).toBe(2);
 		await page.screenshot({ path: 'test-results/lane-hover-right.png' });
 		await page.locator('aside').screenshot({ path: 'test-results/lane-panel-hover.png' });
 
 		await page.mouse.move(200, 600);
-		await expect.poll(() => blueAt(page, right)).toBeLessThan(plain.right + 10);
+		await expect.poll(lit).toBeNull();
 	});
 
 	test('panel buttons hand keyboard focus back to the map', async ({ page }) => {
@@ -425,12 +378,14 @@ test.describe('Lane Editor', () => {
 		await expect(widthInputs.first()).toBeFocused();
 	});
 
-	test('a vehicle lane set to concrete draws light grey', async ({ page }) => {
+	test('a vehicle lane set to concrete is concrete in the graph and the road model', async ({
+		page
+	}) => {
 		await seedGraph(page);
 		const panel = page.locator('aside');
-		// The street's two car lanes sit either side of its centre line.
-		const lanes = [toScreen(-100, -1.75), toScreen(-100, 1.75)];
-		for (const p of lanes) expect(await brightnessAt(page, p)).toBeLessThan(90);
+		const surfaces = async () =>
+			(await roadModel(page))?.roads.find((r) => r.id === 'segment-0')?.lanes.map((l) => l.surface);
+		await expect.poll(surfaces).toEqual(['pavement', 'asphalt', 'asphalt', 'pavement']);
 
 		await selectSegment(page);
 		for (const row of [1, 2]) {
@@ -438,8 +393,10 @@ test.describe('Lane Editor', () => {
 			await expect(page.getByRole('option')).toHaveText(['Asphalt', 'Concrete', 'Grass', 'Dirt']);
 			await page.getByRole('option', { name: 'Concrete' }).click();
 		}
-		// Deselect so the selection tint doesn't colour the road.
-		await panel.getByTitle('Close').click();
-		for (const p of lanes) await expect.poll(() => brightnessAt(page, p)).toBeGreaterThan(130);
+		const materials = async () =>
+			(await liveSegments(page)).find((s) => s.id === 'segment-0')!.lanes.map((l) => l.material);
+		await expect.poll(materials).toEqual(Array(4).fill('concrete'));
+		// Concrete under cars is the sidewalk's paving (core/place.ts).
+		await expect.poll(surfaces).toEqual(Array(4).fill('pavement'));
 	});
 });
