@@ -7,8 +7,6 @@ type End = 'start' | 'end';
 // roads they name, pasted onto another node, or kept when two roads are
 // joined into one. `end` maps a road end to its new road end (or drops it);
 // `lane` maps a lane id on an old road to the lane id on the new one.
-// The connections list itself is left out: it is worked out again from the
-// defaults and these edits.
 export function mapJunction(
 	data: JunctionData,
 	end: (road: string, end: End) => { road: string; end: End } | null,
@@ -37,7 +35,7 @@ export function mapJunction(
 		const e = end(road, at);
 		if (e) control[`${e.road}:${e.end}`] = value;
 	}
-	const out: JunctionData = { connections: [] };
+	const out: JunctionData = {};
 	const added = pairs(data.added);
 	const removed = pairs(data.removed);
 	if (added.length) out.added = added;
@@ -51,7 +49,5 @@ export function mapJunction(
 		if (e) setbacks[e.road] = value;
 	}
 	if (Object.keys(setbacks).length) out.setbacks = setbacks;
-	if (data.islands?.length) out.islands = data.islands;
-	const edited = Object.keys(out).length > 1;
-	return edited ? out : undefined;
+	return Object.keys(out).length ? out : undefined;
 }

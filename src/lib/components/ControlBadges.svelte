@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { getEditorContext } from '$lib/editor.svelte';
+	import { cycleControl } from '$lib/modes/connector';
 
 	// In the lane connector: a badge beside each approach saying how its
 	// traffic is controlled. Clicking it steps through none, stop, yield and
@@ -45,7 +46,7 @@
 			onclick={(event) => {
 				// Keys go back to the map (Escape leaves the connector).
 				event.currentTarget.blur();
-				editor.cycleControl(badge.key);
+				cycleControl(editor, badge.key);
 			}}
 		>
 			{LOOK[badge.control].text}

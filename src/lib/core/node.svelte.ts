@@ -5,11 +5,9 @@ export class Node {
 	x = $state(0);
 	y = $state(0);
 	connectedSegments: string[] = [];
-	// The junction this node's segment ends form: stored connections and
-	// placed islands (see JunctionData).
+	// The user's edits to the junction this node's segment ends form (see
+	// JunctionData).
 	junction = $state<JunctionData | undefined>(undefined);
-	// Optional debug annotation, drawn by the dev-only node label overlay.
-	label: string | undefined;
 
 	constructor(id: string, x: number, y: number) {
 		this.id = id;
@@ -36,18 +34,12 @@ export class Node {
 			x: this.x,
 			y: this.y
 		};
-		if (this.label) {
-			data.label = this.label;
-		}
 		if (this.junction) data.junction = $state.snapshot(this.junction);
 		return data;
 	}
 
 	static fromJSON(data: NodeData) {
 		const node = new Node(data.id, data.x, data.y);
-		if (data.label) {
-			node.label = data.label;
-		}
 		if (data.junction) node.junction = data.junction;
 		return node;
 	}

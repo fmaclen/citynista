@@ -5,7 +5,6 @@
 			"x": 0,
 			"y": 0,
 			"junction": {
-				"connections": [],
 				"setbacks": {
 					"sw": 24,
 					"se": 32

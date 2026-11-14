@@ -1,9 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { createLanesFrom } from '../src/lib/core/lane-template';
-import { openGraph } from './scenes';
-import { saveCity } from './save';
-
-const STORAGE_KEY = 'citynista-graph-v2';
+import { openGraph, liveGraph, toScreen } from './app';
 
 const GRAPH_DATA = {
 	nodes: [
@@ -27,15 +24,9 @@ const GRAPH_DATA = {
 	]
 };
 
-// world -> screen at the default camera: screen = center + world * (720 / 500)
-const SCALE = 720 / 500;
-const toScreen = (x: number, y: number) => ({ x: 640 + x * SCALE, y: 360 + y * SCALE });
-
 test.describe('Marquee Selection', () => {
 	test('dragging a rectangle selects the contained nodes and segments', async ({ page }) => {
 		await openGraph(page, GRAPH_DATA);
-		await expect(page.locator('canvas')).toBeVisible();
-		await expect(page.locator('nav')).toBeVisible();
 
 		// Drag a rectangle around only the street and its endpoints.
 		const start = toScreen(-250, -60);
@@ -65,11 +56,7 @@ test.describe('Marquee Selection', () => {
 
 		// Delete removes the whole marquee selection.
 		await page.locator('body').press('Delete');
-		await saveCity(page);
-		const saved = await page.evaluate((key) => {
-			const data = localStorage.getItem(key);
-			return data ? JSON.parse(data) : null;
-		}, STORAGE_KEY);
+		const saved = await liveGraph(page);
 		expect(saved.nodes).toHaveLength(0);
 		expect(saved.segments).toHaveLength(0);
 	});

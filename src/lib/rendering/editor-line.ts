@@ -6,7 +6,7 @@ import * as THREE from 'three';
 // place to change how those lines look (bead size, spacing, opacity); they
 // are drawn in the handle fill, or a state's tint (editor-palette.ts). Every
 // editor line is built from `editorLineGeometry` + `createEditorLineMaterial`.
-export const EDITOR_LINE_OPACITY = 0.95;
+const EDITOR_LINE_OPACITY = 0.95;
 
 const BEAD_DIAMETER = 0.5;
 const BEAD_SPACING = 0.95;

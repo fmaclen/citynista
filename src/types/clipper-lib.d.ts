@@ -16,6 +16,8 @@ declare module 'clipper-lib' {
 		// 0 outside, 1 inside, -1 on the boundary.
 		static Area(path: Path): number;
 		static PointInPolygon(point: IntPoint, path: Path): number;
+		// Results never touch themselves (more work).
+		StrictlySimple: boolean;
 		AddPaths(paths: Paths, polyType: number, closed: boolean): boolean;
 		Execute(
 			clipType: number,
@@ -40,7 +42,7 @@ declare module 'clipper-lib' {
 		ClipType: { ctUnion: number; ctDifference: number; ctIntersection: number };
 		PolyType: { ptSubject: number; ptClip: number };
 		PolyFillType: { pftNonZero: number };
-		JoinType: { jtRound: number };
+		JoinType: { jtRound: number; jtMiter: number };
 		EndType: { etClosedPolygon: number; etOpenButt: number };
 	};
 

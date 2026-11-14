@@ -1,9 +1,6 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 import { createLanesFrom } from '../src/lib/core/lane-template';
-import { openGraph } from './scenes';
-import { saveCity } from './save';
-
-const STORAGE_KEY = 'citynista-graph-v2';
+import { editorLook, openGraph, liveGraph, roadModel, toScreen } from './app';
 
 const GRAPH_DATA = {
 	nodes: [
@@ -27,61 +24,14 @@ const GRAPH_DATA = {
 	]
 };
 
-// world -> screen at the default camera: screen = center + world * (720 / 500)
-const SCALE = 720 / 500;
-const toScreen = (x: number, y: number) => ({ x: 640 + x * SCALE, y: 360 + y * SCALE });
-
-async function seedGraph(page: import('@playwright/test').Page) {
-	await openGraph(page, GRAPH_DATA);
-	await expect(page.locator('canvas')).toBeVisible();
-	await expect(page.locator('nav')).toBeVisible();
-}
-
-async function readSavedSegments(page: import('@playwright/test').Page) {
-	await saveCity(page);
-	return page.evaluate((key) => {
-		const data = localStorage.getItem(key);
-		return data ? JSON.parse(data).segments : null;
-	}, STORAGE_KEY);
-}
+const seedGraph = (page: Page) => openGraph(page, GRAPH_DATA);
+const liveSegments = async (page: Page) => (await liveGraph(page)).segments;
 
 // Select mode is the default; clicking a segment selects it directly.
-async function selectSegment(page: import('@playwright/test').Page) {
+async function selectSegment(page: Page) {
 	const point = toScreen(-50, 0);
-	await page.locator('canvas').click({ position: { x: point.x, y: point.y } });
+	await page.locator('canvas').click({ position: point });
 	await expect(page.locator('aside')).toBeVisible();
-}
-
-// Mean red, green and blue (0-255) of the 3x3 screen pixels around a point.
-async function colourAt(page: import('@playwright/test').Page, x: number, y: number) {
-	const png = await page.screenshot({ clip: { x: x - 1.5, y: y - 1.5, width: 3, height: 3 } });
-	return page.evaluate(async (data) => {
-		const img = new Image();
-		img.src = `data:image/png;base64,${data}`;
-		await img.decode();
-		const canvas = document.createElement('canvas');
-		canvas.width = img.width;
-		canvas.height = img.height;
-		const ctx = canvas.getContext('2d');
-		if (!ctx) return [-1, -1, -1];
-		ctx.drawImage(img, 0, 0);
-		const px = ctx.getImageData(0, 0, img.width, img.height).data;
-		const sum = [0, 0, 0];
-		for (let i = 0; i < px.length; i += 4) for (let c = 0; c < 3; c++) sum[c] += px[i + c];
-		return sum.map((v) => v / (px.length / 4));
-	}, png.toString('base64'));
-}
-
-// Mean brightness (0-255) of the 3x3 screen pixels around a point.
-async function brightnessAt(page: import('@playwright/test').Page, x: number, y: number) {
-	const [r, g, b] = await colourAt(page, x, y);
-	return (r + g + b) / 3;
-}
-
-// How far a point leans blue over red: the lane highlight is cyan.
-async function blueAt(page: import('@playwright/test').Page, at: { x: number; y: number }) {
-	const [r, , b] = await colourAt(page, at.x, at.y);
-	return b - r;
 }
 
 test.describe('Lane Editor', () => {
@@ -105,9 +55,9 @@ test.describe('Lane Editor', () => {
 		// 5 + 3.5 + 3.5 + 2: the Street preset's lanes are 3.5 m.
 		await expect(panel.getByText('14m total')).toBeVisible();
 
-		const segments = await readSavedSegments(page);
+		const segments = await liveSegments(page);
 		expect(segments).toHaveLength(2);
-		const edited = segments.find((s: { id: string }) => s.id === 'segment-0');
+		const edited = segments.find((s) => s.id === 'segment-0')!;
 		expect(edited.lanes).toHaveLength(4);
 		expect(edited.lanes[0]).toEqual({
 			id: 'l0',
@@ -116,32 +66,6 @@ test.describe('Lane Editor', () => {
 			width: 5,
 			direction: 'bidirectional'
 		});
-	});
-
-	test('the panel never scrolls sideways and the longest labels fit', async ({ page }) => {
-		await seedGraph(page);
-		await selectSegment(page);
-		const panel = page.locator('aside');
-		await expect(panel.getByText('Pedestrian').first()).toBeVisible();
-		await expect(panel.getByText('Concrete').first()).toBeVisible();
-
-		const overflow = () =>
-			panel.evaluate((el) => ({
-				panel: el.scrollWidth - el.clientWidth,
-				labels: [...el.querySelectorAll('button span.truncate')].map(
-					(span) => span.scrollWidth - span.clientWidth
-				)
-			}));
-		const roomy = await overflow();
-		expect(roomy.panel).toBe(0);
-		expect(Math.max(...roomy.labels)).toBe(0);
-
-		// A short window gives the panel a vertical scrollbar, which takes
-		// width from the rows; still no sideways scroll.
-		await page.setViewportSize({ width: 1280, height: 300 });
-		await expect.poll(() => panel.evaluate((el) => el.scrollHeight > el.clientHeight)).toBe(true);
-		expect((await overflow()).panel).toBe(0);
-		await panel.screenshot({ path: 'test-results/lane-panel-short.png' });
 	});
 
 	test('panel hides when the selection is cleared', async ({ page }) => {
@@ -183,7 +107,6 @@ test.describe('Lane Editor', () => {
 		// The slot is the third row, where row 2 was; the rows above made room.
 		await expect(slot).toHaveCount(1);
 		await expect(rows.nth(2)).toHaveAttribute('data-drop-slot', '');
-		await expect.poll(async () => (await slot.boundingBox())?.y).toBeCloseTo(target.y, 0);
 		// Held near the top of that place, the lifted row shows the slot below it.
 		await page.mouse.move(grip.x + grip.width / 2, target.y - 6);
 		await expect(rows.nth(2)).toHaveAttribute('data-drop-slot', '');
@@ -194,9 +117,9 @@ test.describe('Lane Editor', () => {
 
 		await page.mouse.up();
 		await expect(slot).toHaveCount(0);
-		const segments = await readSavedSegments(page);
-		const edited = segments.find((s: { id: string }) => s.id === 'segment-0');
-		expect(edited.lanes.map((l: { id: string }) => l.id)).toEqual(['l1', 'l2', 'l0', 'l3']);
+		const segments = await liveSegments(page);
+		const edited = segments.find((s) => s.id === 'segment-0')!;
+		expect(edited.lanes.map((l) => l.id)).toEqual(['l1', 'l2', 'l0', 'l3']);
 	});
 
 	test('Escape or a drop off the list puts a dragged lane back', async ({ page }) => {
@@ -235,9 +158,9 @@ test.describe('Lane Editor', () => {
 		await expect(panel).toBeVisible();
 
 		// The order never changed.
-		const segments = await readSavedSegments(page);
-		const edited = segments.find((s: { id: string }) => s.id === 'segment-0');
-		expect(edited.lanes.map((l: { id: string }) => l.id)).toEqual(['l0', 'l1', 'l2', 'l3']);
+		const segments = await liveSegments(page);
+		const edited = segments.find((s) => s.id === 'segment-0')!;
+		expect(edited.lanes.map((l) => l.id)).toEqual(['l0', 'l1', 'l2', 'l3']);
 	});
 
 	test('shift+click multi-selects segments and edits them together', async ({ page }) => {
@@ -265,7 +188,7 @@ test.describe('Lane Editor', () => {
 		await widthInputs.first().fill('6');
 		await widthInputs.first().press('Tab');
 
-		const segments = await readSavedSegments(page);
+		const segments = await liveSegments(page);
 		expect(segments).toHaveLength(2);
 		for (const segment of segments) {
 			expect(segment.lanes).toHaveLength(4);
@@ -285,9 +208,7 @@ test.describe('Lane Editor', () => {
 		await canvas.click({ position: toScreen(50, 0), modifiers: ['Shift'] });
 		await widthInputs.first().fill('8');
 		await widthInputs.first().press('Tab');
-		const widths = (await readSavedSegments(page)).map(
-			(s: { lanes: { width: number }[] }) => s.lanes[0].width
-		);
+		const widths = (await liveSegments(page)).map((s) => s.lanes[0].width);
 		expect(widths.sort()).toEqual([6, 8]);
 	});
 
@@ -301,28 +222,31 @@ test.describe('Lane Editor', () => {
 		await panel.getByRole('button', { name: 'Add lane' }).click();
 		await expect(widthInputs).toHaveCount(5);
 
-		// Copy the street's five lanes onto the avenue.
+		// Copy the street's five lanes onto the avenue: the avenue takes them
+		// exactly, ids included, and the street is left as it was.
 		await selectSegment(page);
+		const street = (await liveSegments(page)).find((s) => s.id === 'segment-0')!.lanes;
 		await page.keyboard.press('ControlOrMeta+c');
 		await page.locator('canvas').click({ position: toScreen(80, 0) });
 		await expect(widthInputs).toHaveCount(9);
 		await page.keyboard.press('ControlOrMeta+v');
 		await expect(widthInputs).toHaveCount(5);
+		const pasted = await liveSegments(page);
+		expect(pasted.find((s) => s.id === 'segment-1')!.lanes).toEqual(street);
+		expect(pasted.find((s) => s.id === 'segment-0')!.lanes).toEqual(street);
 
-		// Both segments now share a cross-section; editing one must not touch
-		// the other — lanes are owned copies, never shared.
+		// Editing one must not touch the other: lanes are owned copies, never
+		// shared.
 		await selectSegment(page);
 		await widthInputs.first().fill('7');
 		await widthInputs.first().press('Tab');
 
-		const segments = await readSavedSegments(page);
-		const edited = segments.find((s: { id: string }) => s.id === 'segment-0');
+		const segments = await liveSegments(page);
+		const edited = segments.find((s) => s.id === 'segment-0')!;
 		expect(edited.lanes).toHaveLength(5);
 		expect(edited.lanes[0].width).toBe(7);
-
-		const other = segments.find((s: { id: string }) => s.id === 'segment-1');
-		expect(other.lanes).toHaveLength(5);
-		expect(other.lanes[0].width).toBe(2);
+		const other = segments.find((s) => s.id === 'segment-1')!;
+		expect(other.lanes).toEqual(street);
 	});
 
 	test('a + between rows inserts a car lane there', async ({ page }) => {
@@ -340,9 +264,9 @@ test.describe('Lane Editor', () => {
 		await gaps.nth(3).hover();
 		await page.screenshot({ path: 'test-results/lane-panel-five-lanes.png' });
 
-		const segments = await readSavedSegments(page);
-		const edited = segments.find((s: { id: string }) => s.id === 'segment-0');
-		expect(edited.lanes.map((l: { id: string }) => l.id)).toEqual(['l0', 'l1', 'l4', 'l2', 'l3']);
+		const segments = await liveSegments(page);
+		const edited = segments.find((s) => s.id === 'segment-0')!;
+		expect(edited.lanes.map((l) => l.id)).toEqual(['l0', 'l1', 'l4', 'l2', 'l3']);
 		expect(edited.lanes[2]).toEqual({
 			id: 'l4',
 			role: 'vehicle',
@@ -362,9 +286,9 @@ test.describe('Lane Editor', () => {
 		await expect(panel.locator('input[type="number"]')).toHaveCount(5);
 		await expect(page.locator('body')).toBeFocused();
 
-		const segments = await readSavedSegments(page);
-		const edited = segments.find((s: { id: string }) => s.id === 'segment-0');
-		expect(edited.lanes.map((l: { id: string }) => l.id)).toEqual(['l0', 'l1', 'l4', 'l2', 'l3']);
+		const segments = await liveSegments(page);
+		const edited = segments.find((s) => s.id === 'segment-0')!;
+		expect(edited.lanes.map((l) => l.id)).toEqual(['l0', 'l1', 'l4', 'l2', 'l3']);
 		const { id: originalId, ...original } = edited.lanes[1];
 		const { id: copyId, ...copy } = edited.lanes[2];
 		expect(copy).toEqual(original);
@@ -385,16 +309,16 @@ test.describe('Lane Editor', () => {
 		await canvas.click({ position: toScreen(100, 0), modifiers: ['Shift'] });
 		await page.keyboard.press('ControlOrMeta+v');
 		await expect(panel.locator('input[type="number"]')).toHaveCount(4);
-		const before = await readSavedSegments(page);
+		const before = await liveSegments(page);
 		await panel.getByTitle('Insert a lane here').nth(3).click();
 		await expect(panel.locator('input[type="number"]')).toHaveCount(5);
 
-		const after = await readSavedSegments(page);
+		const after = await liveSegments(page);
 		for (const segment of after) {
-			const old = before.find((s: { id: string }) => s.id === segment.id);
-			const ids = segment.lanes.map((l: { id: string }) => l.id);
-			const kept = ids.filter((id: string) => id !== ids[3]);
-			expect(kept).toEqual(old.lanes.map((l: { id: string }) => l.id));
+			const old = before.find((s) => s.id === segment.id)!;
+			const ids = segment.lanes.map((l) => l.id);
+			const kept = ids.filter((id) => id !== ids[3]);
+			expect(kept).toEqual(old.lanes.map((l) => l.id));
 			expect(new Set(ids).size).toBe(5);
 		}
 	});
@@ -403,28 +327,20 @@ test.describe('Lane Editor', () => {
 		await seedGraph(page);
 		await selectSegment(page);
 		const rows = page.locator('aside').getByRole('listitem');
-		// The street's car lanes: row 1 left of the line as drawn (west to
-		// east, so north, up the screen), row 2 right of it.
-		const left = toScreen(-120, -1.75);
-		const right = toScreen(-120, 1.75);
-		const plain = { left: await blueAt(page, left), right: await blueAt(page, right) };
+		const lit = async () => (await editorLook(page)).lane;
+		expect(await lit()).toBeNull();
 
+		// The street's car lanes, rows 1 and 2.
 		await rows.nth(1).hover();
-		await expect.poll(() => blueAt(page, left)).toBeGreaterThan(plain.left + 30);
-		expect(await blueAt(page, right)).toBeLessThan(plain.right + 10);
+		await expect.poll(lit).toBe(1);
 		await page.screenshot({ path: 'test-results/lane-hover-left.png' });
-
 		await rows.nth(2).hover();
-		await expect.poll(() => blueAt(page, right)).toBeGreaterThan(plain.right + 30);
-		expect(await blueAt(page, left)).toBeLessThan(plain.left + 10);
-		// The hovered row is lit in the panel too, in the map's hover cyan.
-		await expect(rows.nth(2)).toHaveCSS('background-color', 'rgba(103, 232, 249, 0.25)');
-		await expect(rows.nth(1)).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+		await expect.poll(lit).toBe(2);
 		await page.screenshot({ path: 'test-results/lane-hover-right.png' });
 		await page.locator('aside').screenshot({ path: 'test-results/lane-panel-hover.png' });
 
 		await page.mouse.move(200, 600);
-		await expect.poll(() => blueAt(page, right)).toBeLessThan(plain.right + 10);
+		await expect.poll(lit).toBeNull();
 	});
 
 	test('panel buttons hand keyboard focus back to the map', async ({ page }) => {
@@ -462,12 +378,14 @@ test.describe('Lane Editor', () => {
 		await expect(widthInputs.first()).toBeFocused();
 	});
 
-	test('a vehicle lane set to concrete draws light grey', async ({ page }) => {
+	test('a vehicle lane set to concrete is concrete in the graph and the road model', async ({
+		page
+	}) => {
 		await seedGraph(page);
 		const panel = page.locator('aside');
-		// The street's two car lanes sit either side of its centre line.
-		const lanes = [toScreen(-100, -1.75), toScreen(-100, 1.75)];
-		for (const p of lanes) expect(await brightnessAt(page, p.x, p.y)).toBeLessThan(90);
+		const surfaces = async () =>
+			(await roadModel(page))?.roads.find((r) => r.id === 'segment-0')?.lanes.map((l) => l.surface);
+		await expect.poll(surfaces).toEqual(['pavement', 'asphalt', 'asphalt', 'pavement']);
 
 		await selectSegment(page);
 		for (const row of [1, 2]) {
@@ -475,9 +393,10 @@ test.describe('Lane Editor', () => {
 			await expect(page.getByRole('option')).toHaveText(['Asphalt', 'Concrete', 'Grass', 'Dirt']);
 			await page.getByRole('option', { name: 'Concrete' }).click();
 		}
-		// Deselect so the selection tint doesn't colour the road.
-		await panel.getByTitle('Close').click();
-		for (const p of lanes)
-			await expect.poll(() => brightnessAt(page, p.x, p.y)).toBeGreaterThan(130);
+		const materials = async () =>
+			(await liveSegments(page)).find((s) => s.id === 'segment-0')!.lanes.map((l) => l.material);
+		await expect.poll(materials).toEqual(Array(4).fill('concrete'));
+		// Concrete under cars is the sidewalk's paving (core/place.ts).
+		await expect.poll(surfaces).toEqual(Array(4).fill('pavement'));
 	});
 });

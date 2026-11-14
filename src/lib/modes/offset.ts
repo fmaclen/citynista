@@ -31,6 +31,7 @@ import type { Editor } from '../editor.svelte';
 import type { Segment } from '../core/segment.svelte';
 import { segmentEnds } from '../core/attach';
 import { carriesOn } from '../core/place';
+import { controlFrame, toFrame } from '../core/segment-curve';
 import { offsetAt, roadAt, shownAt, type Pt } from '../core/road-line';
 
 export interface OffsetHandle {
@@ -245,17 +246,9 @@ export function beginOffsetDrag(
 	for (const end of ends) {
 		if (!end.free) continue;
 		for (const id of editor.graph.nodes.get(end.nodeId)?.connectedSegments ?? []) {
-			const other = editor.graph.segments.get(id);
-			const a = other && editor.graph.nodes.get(other.startNodeId);
-			const b = other && editor.graph.nodes.get(other.endNodeId);
-			if (!other || !a || !b || id === segment.id || !other.hasControlPoint) continue;
-			const dx = b.x - a.x;
-			const dy = b.y - a.y;
-			const l2 = dx * dx + dy * dy;
-			if (l2 < 1e-4) continue;
-			const rx = other.controlX! - a.x;
-			const ry = other.controlY! - a.y;
-			frames.set(id, { u: (rx * dx + ry * dy) / l2, v: (dx * ry - dy * rx) / l2 });
+			const other = id !== segment.id && editor.graph.segments.get(id);
+			const frame = other && controlFrame(editor.graph, other);
+			if (frame) frames.set(id, frame);
 		}
 	}
 	const limit = {
@@ -314,14 +307,9 @@ function shiftRoad(editor: Editor, drag: OffsetDrag, by: number) {
 		};
 		segment.setControlPoint(c.x, c.y);
 	}
-	for (const [id, f] of drag.frames) {
+	for (const [id, frame] of drag.frames) {
 		const other = editor.graph.segments.get(id);
-		const a = other && editor.graph.nodes.get(other.startNodeId);
-		const b = other && editor.graph.nodes.get(other.endNodeId);
-		if (!other || !a || !b) continue;
-		const dx = b.x - a.x;
-		const dy = b.y - a.y;
-		other.setControlPoint(a.x + f.u * dx - f.v * dy, a.y + f.u * dy + f.v * dx);
+		if (other) toFrame(editor.graph, other, frame);
 	}
 	// A kept end keeps its shift, grown by the drag; where the road turned
 	// (its far end moved and it is straight) it grows a little more, so the

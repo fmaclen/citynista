@@ -1,0 +1,160 @@
+{
+	"nodes": [
+		{
+			"id": "avenue-straight-a",
+			"x": 0,
+			"y": 0,
+			"junction": {
+				"crossings": [
+					{
+						"road": "avenue-straight",
+						"end": "start",
+						"lanes": ["w0", "w1"],
+						"at": 30
+					}
+				]
+			}
+		},
+		{
+			"id": "avenue-straight-b",
+			"x": 60,
+			"y": 0
+		},
+		{
+			"id": "avenue-curved-a",
+			"x": 0,
+			"y": 50,
+			"junction": {
+				"crossings": [
+					{
+						"road": "avenue-curved",
+						"end": "start",
+						"lanes": ["w0", "w1"],
+						"at": 30
+					}
+				]
+			}
+		},
+		{
+			"id": "avenue-curved-b",
+			"x": 60,
+			"y": 50
+		}
+	],
+	"segments": [
+		{
+			"id": "avenue-straight",
+			"startNodeId": "avenue-straight-a",
+			"endNodeId": "avenue-straight-b",
+			"lanes": [
+				{
+					"id": "w0",
+					"role": "pedestrian",
+					"material": "concrete",
+					"width": 2,
+					"direction": "bidirectional"
+				},
+				{
+					"id": "f1",
+					"role": "vehicle",
+					"material": "asphalt",
+					"width": 3.5,
+					"direction": "forward"
+				},
+				{
+					"id": "f2",
+					"role": "vehicle",
+					"material": "asphalt",
+					"width": 3.5,
+					"direction": "forward"
+				},
+				{
+					"id": "m",
+					"role": "buffer",
+					"material": "grass",
+					"width": 2.5,
+					"direction": "bidirectional"
+				},
+				{
+					"id": "b1",
+					"role": "vehicle",
+					"material": "asphalt",
+					"width": 3.5,
+					"direction": "backward"
+				},
+				{
+					"id": "b2",
+					"role": "vehicle",
+					"material": "asphalt",
+					"width": 3.5,
+					"direction": "backward"
+				},
+				{
+					"id": "w1",
+					"role": "pedestrian",
+					"material": "concrete",
+					"width": 2,
+					"direction": "bidirectional"
+				}
+			]
+		},
+		{
+			"id": "avenue-curved",
+			"startNodeId": "avenue-curved-a",
+			"endNodeId": "avenue-curved-b",
+			"controlX": 30,
+			"controlY": 75,
+			"lanes": [
+				{
+					"id": "w0",
+					"role": "pedestrian",
+					"material": "concrete",
+					"width": 2,
+					"direction": "bidirectional"
+				},
+				{
+					"id": "f1",
+					"role": "vehicle",
+					"material": "asphalt",
+					"width": 3.5,
+					"direction": "forward"
+				},
+				{
+					"id": "f2",
+					"role": "vehicle",
+					"material": "asphalt",
+					"width": 3.5,
+					"direction": "forward"
+				},
+				{
+					"id": "m",
+					"role": "buffer",
+					"material": "grass",
+					"width": 2.5,
+					"direction": "bidirectional"
+				},
+				{
+					"id": "b1",
+					"role": "vehicle",
+					"material": "asphalt",
+					"width": 3.5,
+					"direction": "backward"
+				},
+				{
+					"id": "b2",
+					"role": "vehicle",
+					"material": "asphalt",
+					"width": 3.5,
+					"direction": "backward"
+				},
+				{
+					"id": "w1",
+					"role": "pedestrian",
+					"material": "concrete",
+					"width": 2,
+					"direction": "bidirectional"
+				}
+			]
+		}
+	]
+}

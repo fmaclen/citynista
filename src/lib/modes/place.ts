@@ -1,17 +1,15 @@
 import * as THREE from 'three';
-import { SvelteMap, SvelteSet } from 'svelte/reactivity';
-import type { ClipboardNodeSnapshot, Editor } from '../editor.svelte';
-import type { SegmentClipboard } from '../editor.svelte';
+import type { Editor } from '../editor.svelte';
+import type { SegmentClipboard } from '../clipboard';
+import type { Graph } from '../core/graph.svelte';
+import type { NodeData } from '../core/types';
 import { cloneLanes } from '../core/lane-template';
-import { Graph } from '../core/graph.svelte';
 import { findCrossingsBetweenSegments } from '../core/crossings';
-import { LabRenderer } from '../rendering/lab-renderer';
 import { mapJunction } from '../core/junction-data';
 import { NODE_Y_OFFSET, nodeRingGeometry } from '../rendering/node-renderer';
 import { SELECT_COLOR } from '../rendering/editor-palette';
+import { roadGhost } from './ghost';
 
-const GHOST_OPACITY = 0.45;
-const GHOST_ELEVATION = 0.06;
 const MARKER_COLOR = SELECT_COLOR;
 const MARKER_Y = NODE_Y_OFFSET;
 
@@ -30,16 +28,49 @@ interface Placement {
 	snap: PlacementSnap | null;
 }
 
+const translatedNode = (node: NodeData, translation: Translation) => ({
+	x: node.x + translation.dx,
+	y: node.y + translation.dy
+});
+
+// Lays the copied roads into `graph` where the placement puts them, a copied
+// node it snaps onto taking the existing node's place. Returns the new id of
+// each copied node and road.
+function layPaste(graph: Graph, clipboard: SegmentClipboard, placement: Placement) {
+	const nodeIds = new Map<string, string>();
+	const segmentIds = new Map<string, string>();
+	for (const snapshot of clipboard.nodes) {
+		if (placement.snap?.clipboardNodeId === snapshot.id) {
+			nodeIds.set(snapshot.id, placement.snap.existingNodeId);
+			continue;
+		}
+		const at = translatedNode(snapshot, placement.translation);
+		nodeIds.set(snapshot.id, graph.createNode(at.x, at.y).id);
+	}
+	for (const snapshot of clipboard.segments) {
+		const startNodeId = nodeIds.get(snapshot.startNodeId);
+		const endNodeId = nodeIds.get(snapshot.endNodeId);
+		if (!startNodeId || !endNodeId || startNodeId === endNodeId) continue;
+		const segment = graph.createSegment(startNodeId, endNodeId, cloneLanes(snapshot.lanes));
+		segmentIds.set(snapshot.id, segment.id);
+		segment.offsetStart = snapshot.offsetStart ?? 0;
+		segment.offsetEnd = snapshot.offsetEnd ?? 0;
+		if (snapshot.controlX !== undefined && snapshot.controlY !== undefined) {
+			segment.setControlPoint(
+				snapshot.controlX + placement.translation.dx,
+				snapshot.controlY + placement.translation.dy
+			);
+		}
+	}
+	return { nodeIds, segmentIds };
+}
+
 export function setupPlaceMode(editor: Editor) {
 	const clipboard = editor.pendingPlacement;
 	if (!clipboard) return {};
 
 	const centroid = clipboardCentroid(clipboard);
-	const ghostRenderer = new LabRenderer(editor.sceneManager.scene, {
-		opacity: GHOST_OPACITY,
-		lift: GHOST_ELEVATION
-	});
-	const previewGraph = new Graph();
+	const ghost = roadGhost(editor);
 	const markerMaterial = new THREE.MeshBasicMaterial({
 		color: MARKER_COLOR,
 		transparent: true,
@@ -49,11 +80,6 @@ export function setupPlaceMode(editor: Editor) {
 	const markerGeometry = nodeRingGeometry();
 	const crossingMarkers: THREE.Mesh[] = [];
 	let lastPlacement: Placement | null = null;
-
-	const translatedNode = (node: ClipboardNodeSnapshot, translation: Translation) => ({
-		x: node.x + translation.dx,
-		y: node.y + translation.dy
-	});
 
 	const findNodeSnap = (translation: Translation) => {
 		// A pasted node snaps inside an existing node's ring.
@@ -107,11 +133,11 @@ export function setupPlaceMode(editor: Editor) {
 		crossingMarkers.length = 0;
 	};
 
-	const showCrossingMarkers = () => {
+	const showCrossingMarkers = (preview: Graph) => {
 		clearCrossingMarkers();
 		const crossings = findCrossingsBetweenSegments(
-			previewGraph,
-			previewGraph.segments.values(),
+			preview,
+			preview.segments.values(),
 			editor.graph,
 			editor.graph.segments.values()
 		);
@@ -126,92 +152,23 @@ export function setupPlaceMode(editor: Editor) {
 		}
 	};
 
-	const buildPreview = (placement: Placement) => {
-		previewGraph.clear();
-		const nodeIds = new SvelteMap<string, string>();
-
-		for (const snapshot of clipboard.nodes) {
-			const translated = translatedNode(snapshot, placement.translation);
-			const node = previewGraph.createNode(translated.x, translated.y);
-			nodeIds.set(snapshot.id, node.id);
-		}
-
-		for (const snapshot of clipboard.segments) {
-			const startNodeId = nodeIds.get(snapshot.startNodeId);
-			const endNodeId = nodeIds.get(snapshot.endNodeId);
-			if (!startNodeId || !endNodeId) continue;
-
-			const segment = previewGraph.createSegment(
-				startNodeId,
-				endNodeId,
-				cloneLanes(snapshot.lanes)
-			);
-			segment.offsetStart = snapshot.offsetStart;
-			segment.offsetEnd = snapshot.offsetEnd;
-			if (snapshot.controlX !== undefined && snapshot.controlY !== undefined) {
-				segment.setControlPoint(
-					snapshot.controlX + placement.translation.dx,
-					snapshot.controlY + placement.translation.dy
-				);
-			}
-		}
-
-		ghostRenderer.update(previewGraph);
-		showCrossingMarkers();
-	};
-
+	// The preview lays every copied node anew, the one it snaps onto included.
 	const updatePreview = (worldX: number, worldZ: number) => {
 		const placement = resolvePlacement(worldX, worldZ);
 		lastPlacement = placement;
 		editor.setHoveredNode(placement.snap?.existingNodeId ?? null);
-		buildPreview(placement);
+		ghost.show((graph) => {
+			layPaste(graph, clipboard, { ...placement, snap: null });
+			showCrossingMarkers(graph);
+		});
 	};
 
 	const commitPlacement = (placement: Placement) => {
-		const nodeIds = new SvelteMap<string, string>();
-		const segmentIds = new SvelteMap<string, string>();
-		const newNodeIds = new SvelteSet<string>();
-
-		for (const snapshot of clipboard.nodes) {
-			if (placement.snap?.clipboardNodeId === snapshot.id) {
-				nodeIds.set(snapshot.id, placement.snap.existingNodeId);
-				continue;
-			}
-
-			const translated = translatedNode(snapshot, placement.translation);
-			const node = editor.graph.createNode(translated.x, translated.y);
-			nodeIds.set(snapshot.id, node.id);
-			newNodeIds.add(node.id);
-			editor.nodeRenderer.createNode(node);
-		}
-
-		for (const snapshot of clipboard.segments) {
-			const startNodeId = nodeIds.get(snapshot.startNodeId);
-			const endNodeId = nodeIds.get(snapshot.endNodeId);
-			if (!startNodeId || !endNodeId || startNodeId === endNodeId) continue;
-
-			const segment = editor.graph.createSegment(
-				startNodeId,
-				endNodeId,
-				cloneLanes(snapshot.lanes)
-			);
-			segmentIds.set(snapshot.id, segment.id);
-			segment.offsetStart = snapshot.offsetStart;
-			segment.offsetEnd = snapshot.offsetEnd;
-			if (snapshot.controlX !== undefined && snapshot.controlY !== undefined) {
-				segment.setControlPoint(
-					snapshot.controlX + placement.translation.dx,
-					snapshot.controlY + placement.translation.dy
-				);
-			}
-		}
-
+		const { nodeIds, segmentIds } = layPaste(editor.graph, clipboard, placement);
 		// Each new node keeps its junction edits on the copied roads.
 		for (const snapshot of clipboard.nodes) {
-			const nodeId = nodeIds.get(snapshot.id);
-			if (!nodeId || !newNodeIds.has(nodeId) || !snapshot.junction) continue;
-			const node = editor.graph.nodes.get(nodeId);
-			if (!node) continue;
+			const node = editor.graph.nodes.get(nodeIds.get(snapshot.id) ?? '');
+			if (!node || !snapshot.junction || placement.snap?.clipboardNodeId === snapshot.id) continue;
 			node.junction = mapJunction(snapshot.junction, (road, end) => {
 				const id = segmentIds.get(road);
 				return id ? { road: id, end } : null;
@@ -252,7 +209,7 @@ export function setupPlaceMode(editor: Editor) {
 
 	const cleanup = () => {
 		editor.setHoveredNode(null);
-		ghostRenderer.destroy();
+		ghost.destroy();
 		clearCrossingMarkers();
 		markerGeometry.dispose();
 		markerMaterial.dispose();

@@ -90,10 +90,11 @@ async function save() {
 async function shot(name: string) {
 	if (!shotsDir) return;
 	await save();
-	writeFileSync(
-		`${shotsDir}/${name}.json`,
-		(await page.evaluate(() => localStorage.getItem('citynista-graph-v2'))) ?? ''
-	);
+	const graph = await page.evaluate(() => {
+		const id = localStorage.getItem('citynista:current-city');
+		return JSON.parse(localStorage.getItem(`citynista:city:${id}`) ?? 'null')?.graph;
+	});
+	writeFileSync(`${shotsDir}/${name}.json`, JSON.stringify(graph));
 	await page.mouse.move(W - 4, H / 2);
 	await page.screenshot({ path: `${shotsDir}/${name}.png` });
 }

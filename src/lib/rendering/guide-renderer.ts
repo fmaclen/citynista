@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import type { Pt as Point } from '../lab/model';
+import type { Pt as Point } from '../road-model/model';
 import { createEditorLineMaterial } from './editor-line';
 import { HANDLE_FILL, HANDLE_OUTLINE_COLOR, HANDLE_OUTLINE_PX } from './editor-palette';
 
@@ -18,7 +18,7 @@ const RENDER_ORDER = 6;
 // Hooks called with world units per pixel before each frame draws (the
 // scene manager's `beforeFrame`). A plain set: nothing reacts to it, the
 // render loop reads it each frame.
-export type FrameHooks = Set<(worldPerPixel: number) => void>;
+type FrameHooks = Set<(worldPerPixel: number) => void>;
 export function frameHooks(): FrameHooks {
 	return new Set();
 }
@@ -86,6 +86,11 @@ export class GuideRenderer {
 			mesh.geometry.dispose();
 			mesh.geometry = dashes(this.lines, wpp, grow);
 		}
+	}
+
+	// The lines shown now, for ?model scripts.
+	get shown() {
+		return this.lines;
 	}
 
 	// Laid out at the next frame's zoom.

@@ -1,6 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { openScene } from './scenes';
-import { saveCity } from './save';
+import { expectSelectMode, liveGraph, openScene, screenAt, type Pt } from './app';
 
 // Node rings are a fixed 20 px on screen and are the node's click area, so
 // zooming in uncovers short roads between close nodes. The scene: a straight
@@ -9,35 +8,16 @@ import { saveCity } from './save';
 const RING_PX = 20;
 const MAX_ZOOM = 10;
 
-interface SavedGraph {
-	nodes: { id: string; x: number; y: number }[];
-	segments: { id: string }[];
-}
-
-const savedGraph = async (page: Page) => {
-	await saveCity(page);
-	return page.evaluate(
-		() => JSON.parse(localStorage.getItem('citynista-graph-v2') ?? 'null') as SavedGraph
-	);
-};
-
-// World to screen with the camera centred on (cx, 0) at `zoom`.
-const screenAt = (zoom: number, cx: number) => (x: number, y: number) => {
-	const scale = (720 / 500) * zoom;
-	return { x: 640 + (x - cx) * scale, y: 360 + y * scale };
-};
-
 const open = async (page: Page, zoom: number, cx: number) => {
-	await openScene(page, 'tight-junction', `topdown&cam=${cx},0,${zoom}`);
-	await expect(page.locator('nav')).toBeVisible();
-	await expect.poll(async () => (await savedGraph(page)).nodes.length).toBe(6);
+	await openScene(page, 'tight-junction', `topdown&model&cam=${cx},0,${zoom}`);
+	return screenAt(zoom, { x: cx, y: 0 });
 };
 
 const lanePanel = (page: Page) => page.locator('aside');
 
 // Along the road east of `node`: inside the ring picks the node (no lane
 // panel), just outside picks the road.
-const ringEdge = async (page: Page, node: { x: number; y: number }) => {
+const ringEdge = async (page: Page, node: Pt) => {
 	await page.mouse.click(node.x + RING_PX - 1, node.y);
 	await expect(lanePanel(page)).not.toBeVisible();
 	await page.mouse.click(node.x + RING_PX + 1, node.y);
@@ -45,11 +25,10 @@ const ringEdge = async (page: Page, node: { x: number; y: number }) => {
 };
 
 test.describe('Tight junction', () => {
-	test('at the default zoom a ring is 20 px and a split near a road end still lands', async ({
+	test('at the default zoom a ring is 20 px, a split near a road end lands, and the wheel uncovers a short road', async ({
 		page
 	}) => {
-		const toScreen = screenAt(1, 0);
-		await open(page, 1, 0);
+		const toScreen = await open(page, 1, 0);
 		await ringEdge(page, toScreen(-60, 0));
 
 		// 12 m from the end of a one-lane road: closer than a node ring here,
@@ -59,14 +38,29 @@ test.describe('Tight junction', () => {
 		const cut = toScreen(-48, 60);
 		await page.mouse.move(cut.x, cut.y);
 		await page.mouse.click(cut.x, cut.y);
-		await expect.poll(async () => (await savedGraph(page)).segments.length).toBe(5);
+		await expect.poll(async () => (await liveGraph(page)).segments.length).toBe(5);
+
+		// 24 px right of b: inside c's ring here, so it picks a node. Wheeled in
+		// to the furthest zoom (about b, the camera target) it lands on b–c
+		// between the two rings and picks the road.
+		await page.keyboard.press('Escape');
+		await expectSelectMode(page);
+		const gap = { x: 664, y: 360 };
+		await page.mouse.click(gap.x, gap.y);
+		await expect(lanePanel(page)).not.toBeVisible();
+		await page.keyboard.press('Escape');
+		await page.mouse.move(640, 360);
+		for (let i = 0; i < 25; i++) await page.mouse.wheel(0, -100);
+		await expect(async () => {
+			await page.mouse.click(gap.x, gap.y);
+			await expect(lanePanel(page)).toBeVisible({ timeout: 500 });
+		}).toPass();
 	});
 
 	test('zoomed in, the ring stays 20 px and a 5 m road is hovered, clicked and dragged', async ({
 		page
 	}, testInfo) => {
-		const toScreen = screenAt(MAX_ZOOM, 2.5);
-		await open(page, MAX_ZOOM, 2.5);
+		const toScreen = await open(page, MAX_ZOOM, 2.5);
 		await ringEdge(page, toScreen(0, 0));
 
 		// The middle of b–c sits between the two rings.
@@ -90,7 +84,7 @@ test.describe('Tight junction', () => {
 		await page.mouse.up();
 		await expect
 			.poll(async () => {
-				const nodes = (await savedGraph(page)).nodes;
+				const nodes = (await liveGraph(page)).nodes;
 				const y = (id: string) => nodes.find((n) => n.id === id)?.y ?? NaN;
 				return ['a', 'b', 'c', 'd'].map((id) => Math.round(y(id) * 10) / 10);
 			})

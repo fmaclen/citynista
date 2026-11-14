@@ -1,7 +1,7 @@
 {
 	"nodes": [
 		{ "id": "n", "x": 0, "y": -200 },
-		{ "id": "m", "x": 0, "y": 0, "junction": { "connections": [], "sides": { "ramp": "left" } } },
+		{ "id": "m", "x": 0, "y": 0, "junction": { "sides": { "ramp": "left" } } },
 		{ "id": "s", "x": 0, "y": 200 },
 		{ "id": "r", "x": -60, "y": -150 }
 	],

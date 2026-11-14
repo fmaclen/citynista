@@ -1,56 +1,27 @@
 import { expect, test, type Page } from '@playwright/test';
-import { openScene } from './scenes';
+import { editorLook, openScene, roadModel, screenAt, type Pt, PX_PER_M } from './app';
 
 // Setback handles on a selected node: an arrow on each road where it stops
 // short of the node, which sets that road's setback alone (Shift: every
 // road's), and dashed guides marking where. At 4× zoom.
 const ZOOM = 4;
-const PX = (720 / 500) * ZOOM;
-const toScreen = (x: number, y: number) => ({ x: 640 + x * PX, y: 360 + y * PX });
-
-type Pt = { x: number; y: number };
+const PX = PX_PER_M * ZOOM;
+const toScreen = screenAt(ZOOM);
 
 // Each road's first and last point in the road model the drawing runs on.
-const roadEnds = (page: Page) =>
-	page.evaluate(() => {
-		const model = (
-			window as Window & { __roadModel?: () => { roads: { id: string; points: Pt[] }[] } }
-		).__roadModel?.();
-		return Object.fromEntries(
-			(model?.roads ?? []).map((r) => [r.id, { first: r.points[0], last: r.points.at(-1)! }])
-		);
-	});
+const roadEnds = async (page: Page) =>
+	Object.fromEntries(
+		((await roadModel(page))?.roads ?? []).map((r) => [
+			r.id,
+			{ first: r.points[0], last: r.points.at(-1)! }
+		])
+	);
 
 async function drag(page: Page, from: Pt, to: Pt) {
 	await page.mouse.move(from.x, from.y);
 	await page.mouse.down();
 	await page.mouse.move(to.x, to.y, { steps: 8 });
 	await page.mouse.up();
-}
-
-// How many screen pixels inside a box are near white: dashes of a guide, and
-// little else on asphalt or ground.
-async function whiteIn(page: Page, from: Pt, to: Pt) {
-	const x = Math.min(from.x, to.x) - 1.5;
-	const y = Math.min(from.y, to.y) - 1.5;
-	const png = await page.screenshot({
-		clip: { x, y, width: Math.abs(to.x - from.x) + 3, height: Math.abs(to.y - from.y) + 3 }
-	});
-	return page.evaluate(async (data) => {
-		const img = new Image();
-		img.src = `data:image/png;base64,${data}`;
-		await img.decode();
-		const canvas = document.createElement('canvas');
-		canvas.width = img.width;
-		canvas.height = img.height;
-		const ctx = canvas.getContext('2d')!;
-		ctx.drawImage(img, 0, 0);
-		const px = ctx.getImageData(0, 0, img.width, img.height).data;
-		let white = 0;
-		for (let i = 0; i < px.length; i += 4)
-			if (px[i] > 225 && px[i + 1] > 225 && px[i + 2] > 225) white++;
-		return white;
-	}, png.toString('base64'));
 }
 
 // Node t of the handles scene: a narrow street (p–t) widening into an avenue
@@ -61,7 +32,6 @@ test.describe('a node of two roads', () => {
 
 	test.beforeEach(async ({ page }) => {
 		await openScene(page, 'handles', `topdown&model&cam=0,0,${ZOOM}`);
-		await expect(page.locator('nav')).toBeVisible();
 		await page.mouse.click(node.x, node.y);
 		await expect.poll(async () => (await roadEnds(page)).wide?.first.x).toBeCloseTo(35, 0);
 	});
@@ -114,7 +84,6 @@ test.describe('a junction of three roads', () => {
 
 	test.beforeEach(async ({ page }) => {
 		await openScene(page, 'setbacks', `topdown&model&cam=0,0,${ZOOM}`);
-		await expect(page.locator('nav')).toBeVisible();
 		await expect.poll(async () => (await roadEnds(page)).ke?.first.x).toBeCloseTo(0, 0);
 	});
 
@@ -131,22 +100,27 @@ test.describe('a junction of three roads', () => {
 	});
 
 	test('dashed guides show while the node is selected', async ({ page }, testInfo) => {
-		// Across the west road where it stops; from the ring to the south road.
-		const across = [toScreen(-22.5, -5), toScreen(-22.5, 5)] as const;
-		const toRoad = [toScreen(-13.5, 0), toScreen(-9, 0)] as const;
-		const before = [await whiteIn(page, ...across), await whiteIn(page, ...toRoad)];
+		const guides = async () =>
+			(await editorLook(page)).guides.map(([a, b]) =>
+				[a, b].map((p) => ({ x: Math.round(p.x * 10) / 10, y: Math.round(p.y * 10) / 10 }))
+			);
+		expect(await guides()).toEqual([]);
 
 		await page.mouse.click(node.x, node.y);
 		await page.mouse.move(node.x, node.y + 200);
-		await expect.poll(() => whiteIn(page, ...across)).toBeGreaterThan(before[0] + 40);
-		expect(await whiteIn(page, ...toRoad)).toBeGreaterThan(before[1] + 20);
+		// Across the west road's 11 m where it stops; from the ring out to the
+		// south road, which leaves the node off its line.
+		await expect.poll(guides).toContainEqual([
+			{ x: -22.5, y: -5.5 },
+			{ x: -22.5, y: 5.5 }
+		]);
+		expect((await guides()).filter(([a]) => a.x === -4.7 && a.y === 0)).toHaveLength(1);
 		await page.screenshot({
 			path: testInfo.outputPath('junction.png'),
 			clip: { x: 640 - 40 * PX, y: 360 - 20 * PX, width: 70 * PX, height: 45 * PX }
 		});
 
 		await page.keyboard.press('Escape');
-		await expect.poll(() => whiteIn(page, ...across)).toBeLessThanOrEqual(before[0] + 5);
-		expect(await whiteIn(page, ...toRoad)).toBeLessThanOrEqual(before[1] + 5);
+		await expect.poll(guides).toEqual([]);
 	});
 });

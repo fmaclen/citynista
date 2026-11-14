@@ -6,15 +6,15 @@ import { segmentHitAt } from './picking';
 import { splitSegment } from '../core/crossings';
 import { closestOnRoad, roadAt } from '../core/road-line';
 import { NODE_Y_OFFSET, nodeRingGeometry } from '../rendering/node-renderer';
+import { SELECT_COLOR } from '../rendering/editor-palette';
 
-const MARKER_COLOR = 0xfacc15;
 // Sit the marker at the node ring's exact height so it doesn't drift on screen
 // against the node that replaces it once a tilted camera projects them.
 const MARKER_Y = NODE_Y_OFFSET;
 
 export function setupSplitMode(editor: Editor): ModeHandlers {
 	const markerMaterial = new THREE.MeshBasicMaterial({
-		color: MARKER_COLOR,
+		color: SELECT_COLOR,
 		transparent: true,
 		opacity: 0.9
 	});
@@ -74,7 +74,6 @@ export function setupSplitMode(editor: Editor): ModeHandlers {
 		if (!target) return;
 
 		const node = editor.graph.createNode(target.x, target.y);
-		editor.nodeRenderer.createNode(node);
 		splitSegment(editor.graph, target.segment, target.t, node.id);
 		marker.visible = false;
 		target = null;

@@ -4,12 +4,13 @@ import type { Segment } from '../core/segment.svelte';
 import type { Node } from '../core/node.svelte';
 import type { Graph } from '../core/graph.svelte';
 import type { GraphData, Lane } from '../core/types';
-import { cloneLanes, reverseLanes } from '../core/lane-template';
+import { cloneLanes, oneWay, reverseLanes } from '../core/lane-template';
 import { splitSegment } from '../core/crossings';
-import { getQuadraticBezierTangent } from '../geometry/bezier';
+import { outOf } from '../core/segment-curve';
 import { closestOnRoad, nodePoint, roadAt } from '../core/road-line';
 import { attachShift, roadwayOf, sideToward } from '../core/attach';
 import { attachDots, ghostCursor, roadGhost } from './ghost';
+import { nodeHitAt } from './picking';
 
 const MIN_PREVIEW_LENGTH = 1;
 // Snap radii are sized in screen pixels and converted to world units at the
@@ -97,14 +98,6 @@ const wayAt = (edge: Edge, out: Pt): Way | null => {
 	return k >= 0 ? 'leave' : 'arrive';
 };
 
-// The one way a cross-section's vehicle lanes all run, if they all run one.
-const oneWay = (lanes: Lane[]) => {
-	const vehicles = lanes.filter((lane) => lane.role === 'vehicle');
-	const dir = vehicles[0]?.direction;
-	if (dir === 'bidirectional' || !vehicles.every((lane) => lane.direction === dir)) return null;
-	return dir ?? null;
-};
-
 // Intersection of ray (a + j·u) and ray (b + k·v), j,k > 0; null if parallel,
 // behind a ray, or unreasonably far (a near-straight join curves gently instead).
 const tangentIntersection = (
@@ -160,7 +153,7 @@ export function setupDrawMode(editor: Editor): ModeHandlers {
 	const findSegmentSnap = (worldX: number, worldZ: number) => {
 		let best: SegmentSnap | null = null;
 		let end: Node | null = null;
-		// The road's whole width snaps, pixel-floored: a driveway can start
+		// The road's whole width snaps, pixel-floored: a side road can start
 		// anywhere on the road it joins.
 		let bestScore = 1;
 		const floor = SEGMENT_SNAP_PX * worldPerPixel();
@@ -218,32 +211,12 @@ export function setupDrawMode(editor: Editor): ModeHandlers {
 		let bestDot = Infinity;
 		for (const segmentId of node.connectedSegments) {
 			const adjacent = editor.graph.segments.get(segmentId);
-			if (!adjacent) continue;
-			const adjacentStart = editor.graph.nodes.get(adjacent.startNodeId);
-			const adjacentEnd = editor.graph.nodes.get(adjacent.endNodeId);
-			if (!adjacentStart || !adjacentEnd) continue;
-
-			const atStart = adjacent.startNodeId === nodeId;
-			const cx = adjacent.controlX ?? (adjacentStart.x + adjacentEnd.x) / 2;
-			const cy = adjacent.controlY ?? (adjacentStart.y + adjacentEnd.y) / 2;
-			const tangent = getQuadraticBezierTangent(
-				adjacentStart.x,
-				adjacentStart.y,
-				cx,
-				cy,
-				adjacentEnd.x,
-				adjacentEnd.y,
-				atStart ? 0 : 1
-			);
-			const length = Math.hypot(tangent.x, tangent.y);
-			if (length < 0.0001) continue;
-
-			const outX = (atStart ? tangent.x : -tangent.x) / length;
-			const outY = (atStart ? tangent.y : -tangent.y) / length;
-			const dot = outX * chordX + outY * chordY;
+			const out = adjacent && outOf(editor.graph, adjacent, nodeId);
+			if (!out) continue;
+			const dot = out.x * chordX + out.y * chordY;
 			if (dot < bestDot) {
 				bestDot = dot;
-				best = { x: -outX, y: -outY };
+				best = { x: -out.x, y: -out.y };
 			}
 		}
 		return best;
@@ -413,27 +386,12 @@ export function setupDrawMode(editor: Editor): ModeHandlers {
 		return attachAt(segment, t, nodePoint(editor.graph, node), x, y, inward);
 	};
 
-	// A node snaps inside its ring, the same fixed circle on screen that
-	// select mode clicks; outside it the road body under the cursor snaps.
-	const findNodeSnap = (worldX: number, worldZ: number) => {
-		const radius = editor.nodeRingRadius();
-		let best: Node | null = null;
-		let bestScore = 1;
-		for (const node of editor.graph.nodes.values()) {
-			const p = nodePoint(editor.graph, node);
-			const score = Math.hypot(p.x - worldX, p.y - worldZ) / radius;
-			if (score < bestScore) {
-				bestScore = score;
-				best = node;
-			}
-		}
-		return best;
-	};
-
 	const resolveSnap = (worldX: number, worldZ: number): SnapResult => {
 		if (freeHeld) return { kind: 'free', x: worldX, y: worldZ };
 
-		const node = findNodeSnap(worldX, worldZ);
+		// A node snaps inside its ring, the same fixed circle on screen that
+		// select mode clicks; outside it the road body under the cursor snaps.
+		const { node } = nodeHitAt(editor, worldX, worldZ);
 		if (node) {
 			const attach = nodeAttach(node, worldX, worldZ);
 			return { kind: 'node', nodeId: node.id, x: node.x, y: node.y, edge: edgeOf(attach), attach };
@@ -451,12 +409,7 @@ export function setupDrawMode(editor: Editor): ModeHandlers {
 
 		// Grid snap is the lowest-priority positional snap: nodes and segments win,
 		// but on open ground the cursor lands on the nearest grid intersection.
-		if (editor.gridEnabled) {
-			const g = editor.gridSize;
-			return { kind: 'free', x: Math.round(worldX / g) * g, y: Math.round(worldZ / g) * g };
-		}
-
-		return { kind: 'free', x: worldX, y: worldZ };
+		return { kind: 'free', ...editor.gridPoint(worldX, worldZ) };
 	};
 
 	// Where the next click would land: positional snaps (nodes, segments)
@@ -499,7 +452,7 @@ export function setupDrawMode(editor: Editor): ModeHandlers {
 		const side = sideToward(graph, segment, nodeId, edge.across);
 		if (!side) return;
 		const sides = { ...(node.junction?.sides ?? {}), [segment.id]: side } as const;
-		node.junction = { ...(node.junction ?? { connections: [] }), sides };
+		node.junction = { ...node.junction, sides };
 	};
 
 	// Whether a node can take a one-way road's traffic arriving at it (or

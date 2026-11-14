@@ -1,18 +1,12 @@
 import { expect, test, type Page } from '@playwright/test';
 import { readFileSync } from 'node:fs';
-import { EXAMPLES, SCHEMA_VERSION } from '../src/lib/core/city-store';
-import { openScene, readScene } from './scenes';
-import { saveCity } from './save';
-
-// A loaded scene lands in the current city of the localStorage city library.
-const CURRENT_KEY = 'citynista:current-city';
+import { SCHEMA_VERSION } from '../src/lib/core/city-store';
+import { liveGraph, openEditor, openScene, toScreen } from './app';
+import { readScene } from '../unit/model';
 
 const EXAMPLE = JSON.parse(readFileSync('static/examples/neighbourhood.json', 'utf8'));
 const EXAMPLE_SEGMENTS: number = EXAMPLE.graph.segments.length;
 
-// World -> screen at the default top-down camera.
-const SCALE = 720 / 500;
-const toScreen = (x: number, y: number) => ({ x: 640 + x * SCALE, y: 360 + y * SCALE });
 // A stub of the neighbourhood's top street, west of its first junction.
 const TOP_STREET_STUB = toScreen(-240, -180);
 
@@ -39,26 +33,10 @@ const storedIndex = (page: Page) =>
 test.describe('Cities', () => {
 	test('booting into a stored city loads its graph', async ({ page }) => {
 		await openScene(page, 'median-corner');
-		await expect(page.locator('canvas')).toBeVisible();
-
-		await page.waitForFunction(
-			(key) => {
-				const id = localStorage.getItem(key);
-				if (!id) return false;
-				const raw = localStorage.getItem('citynista:city:' + id);
-				if (!raw) return false;
-				const graph = JSON.parse(raw).graph;
-				return graph?.nodes?.length === 3 && graph?.segments?.length === 2;
-			},
-			CURRENT_KEY,
-			{ timeout: 5000 }
-		);
-
-		const graph = await page.evaluate((key) => {
-			const id = localStorage.getItem(key)!;
-			return JSON.parse(localStorage.getItem('citynista:city:' + id)!).graph;
-		}, CURRENT_KEY);
-		const corner = graph.nodes.find((node: { id: string }) => node.id === 'node-1');
+		const graph = await liveGraph(page);
+		expect(graph.nodes).toHaveLength(3);
+		expect(graph.segments).toHaveLength(2);
+		const corner = graph.nodes.find((node) => node.id === 'node-1');
 		expect(corner).toEqual({ id: 'node-1', x: 0, y: 0 });
 		expect(graph.segments[0].lanes.length).toBeGreaterThan(0);
 	});
@@ -112,12 +90,11 @@ test.describe('Cities', () => {
 			},
 			{ graph, stale, version: SCHEMA_VERSION }
 		);
-		await page.goto('/?topdown');
-		await expect(cityBar(page).getByText('current', { exact: true })).toBeVisible();
+		await openEditor(page, 'topdown&model', 'current');
 
-		// The current city loads as stored.
-		await saveCity(page);
-		expect((await storedCity(page, 'current')).graph.segments).toHaveLength(graph.segments.length);
+		// The current city loads, and stays stored, as it was.
+		expect((await liveGraph(page)).segments).toHaveLength(graph.segments.length);
+		expect((await storedCity(page, 'current')).graph).toEqual(graph);
 
 		// The others drop out of the library, their keys gone with them.
 		await cityBar(page).getByLabel('City menu').click();
@@ -148,24 +125,19 @@ test.describe('Cities', () => {
 			);
 			localStorage.setItem('citynista:current-city', 'old');
 		}, readScene('median-corner'));
-		await page.goto('/?topdown');
-		await expect(cityBar(page).getByText('untitled', { exact: true })).toBeVisible();
+		await openEditor(page);
 		expect(await storedCity(page, 'old')).toBeNull();
 		expect((await storedCity(page, 'untitled')).graph).toEqual({ nodes: [], segments: [] });
 	});
 
-	test('every example carries the current schema version', () => {
-		for (const { id } of EXAMPLES) {
-			const example = JSON.parse(readFileSync(`static/examples/${id}.json`, 'utf8'));
-			expect(example.version, id).toBe(SCHEMA_VERSION);
-		}
-	});
-
 	test('an example opens untouched; Save makes a city of your own from it', async ({ page }) => {
+		// The example is the largest map there is, and this opens it twice and
+		// edits and saves it twice: each step rebuilds or redraws all of it.
+		// About 10 s on a quiet machine, three times that on a busy one.
+		test.setTimeout(90_000);
 		const cities = page.getByRole('toolbar', { name: 'Cities' });
 		const saveAs = page.getByRole('dialog');
-		await page.goto('/?example=neighbourhood&topdown');
-		await expect(cities.getByText('Neighbourhood', { exact: true })).toBeVisible();
+		await openEditor(page, 'example=neighbourhood&topdown', 'Neighbourhood');
 
 		// Its name is read-only: the menu's Rename is disabled.
 		await cities.getByText('Neighbourhood', { exact: true }).click();
@@ -187,7 +159,7 @@ test.describe('Cities', () => {
 		expect((await storedCity(page, 'neighbourhood')).graph.segments.length).toBe(
 			EXAMPLE_SEGMENTS - 1
 		);
-		expect(await page.evaluate((key) => localStorage.getItem(key), CURRENT_KEY)).toBe(
+		expect(await page.evaluate(() => localStorage.getItem('citynista:current-city'))).toBe(
 			'neighbourhood'
 		);
 		await expect(cities.getByText('neighbourhood', { exact: true })).toBeVisible();
@@ -276,7 +248,7 @@ test.describe('Cities', () => {
 		await dialog.getByRole('textbox').fill('copy');
 		await dialog.getByRole('button', { name: 'Save' }).click();
 		await expect(cities.getByTestId('city-name')).toHaveText('copy');
-		await saveCity(page);
+		await expect(cities.getByLabel('Unsaved changes')).toHaveCount(0);
 
 		expect(await storedIndex(page)).toEqual([
 			{ id: 'median-corner', name: 'median-corner', version: SCHEMA_VERSION },

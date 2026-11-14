@@ -12,6 +12,7 @@
 
 import type { Graph } from './graph.svelte';
 import { segmentEnds, type SegmentLike } from './attach';
+import { getQuadraticBezierPoint, getQuadraticBezierTangent } from '../geometry/bezier';
 
 export interface Pt {
 	x: number;
@@ -19,7 +20,7 @@ export interface Pt {
 }
 
 // What the shown line needs of a segment besides its ends.
-export interface Shifted {
+interface Shifted {
 	controlX?: number;
 	controlY?: number;
 	offsetStart: number;
@@ -54,20 +55,11 @@ function quadratic(segment: Shifted, a: Pt, b: Pt): Quad {
 	return { a, c, b };
 }
 
-function pointOf(q: Quad, t: number) {
-	const u = 1 - t;
-	return {
-		x: u * u * q.a.x + 2 * u * t * q.c.x + t * t * q.b.x,
-		y: u * u * q.a.y + 2 * u * t * q.c.y + t * t * q.b.y
-	};
-}
+const pointOf = (q: Quad, t: number) =>
+	getQuadraticBezierPoint(q.a.x, q.a.y, q.c.x, q.c.y, q.b.x, q.b.y, t);
 
 function normalOf(q: Quad, t: number) {
-	const u = 1 - t;
-	const d = {
-		x: 2 * u * (q.c.x - q.a.x) + 2 * t * (q.b.x - q.c.x),
-		y: 2 * u * (q.c.y - q.a.y) + 2 * t * (q.b.y - q.c.y)
-	};
+	const d = getQuadraticBezierTangent(q.a.x, q.a.y, q.c.x, q.c.y, q.b.x, q.b.y, t);
 	const l = Math.hypot(d.x, d.y) || 1;
 	const tangent = { x: d.x / l, y: d.y / l };
 	return { tangent, normal: { x: -tangent.y, y: tangent.x } };
