@@ -20,4 +20,7 @@ export interface LaneConnection {
 	// Travel tangent entering the node (at `from`) and leaving it (at `to`).
 	fromDir: Point;
 	toDir: Point;
+	// The line it is drawn along, where it follows one (a walker's line
+	// between footpaths); otherwise an arc between its two ends.
+	line?: Point[];
 }

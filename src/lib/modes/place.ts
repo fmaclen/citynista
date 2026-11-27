@@ -1,69 +1,24 @@
 import * as THREE from 'three';
 import type { Editor } from '../editor.svelte';
-import type { SegmentClipboard } from '../clipboard';
+import {
+	carRoads,
+	layPaste,
+	type Placement,
+	roadsAt,
+	roadsOf,
+	type SegmentClipboard,
+	showsWith,
+	shownOffsets,
+	type Translation
+} from '../clipboard';
 import type { Graph } from '../core/graph.svelte';
-import type { NodeData } from '../core/types';
-import { cloneLanes } from '../core/lane-template';
 import { findCrossingsBetweenSegments } from '../core/crossings';
-import { mapJunction } from '../core/junction-data';
 import { NODE_Y_OFFSET, nodeRingGeometry } from '../rendering/node-renderer';
 import { SELECT_COLOR } from '../rendering/editor-palette';
 import { roadGhost } from './ghost';
 
 const MARKER_COLOR = SELECT_COLOR;
 const MARKER_Y = NODE_Y_OFFSET;
-
-interface Translation {
-	dx: number;
-	dy: number;
-}
-
-interface PlacementSnap {
-	clipboardNodeId: string;
-	existingNodeId: string;
-}
-
-interface Placement {
-	translation: Translation;
-	snap: PlacementSnap | null;
-}
-
-const translatedNode = (node: NodeData, translation: Translation) => ({
-	x: node.x + translation.dx,
-	y: node.y + translation.dy
-});
-
-// Lays the copied roads into `graph` where the placement puts them, a copied
-// node it snaps onto taking the existing node's place. Returns the new id of
-// each copied node and road.
-function layPaste(graph: Graph, clipboard: SegmentClipboard, placement: Placement) {
-	const nodeIds = new Map<string, string>();
-	const segmentIds = new Map<string, string>();
-	for (const snapshot of clipboard.nodes) {
-		if (placement.snap?.clipboardNodeId === snapshot.id) {
-			nodeIds.set(snapshot.id, placement.snap.existingNodeId);
-			continue;
-		}
-		const at = translatedNode(snapshot, placement.translation);
-		nodeIds.set(snapshot.id, graph.createNode(at.x, at.y).id);
-	}
-	for (const snapshot of clipboard.segments) {
-		const startNodeId = nodeIds.get(snapshot.startNodeId);
-		const endNodeId = nodeIds.get(snapshot.endNodeId);
-		if (!startNodeId || !endNodeId || startNodeId === endNodeId) continue;
-		const segment = graph.createSegment(startNodeId, endNodeId, cloneLanes(snapshot.lanes));
-		segmentIds.set(snapshot.id, segment.id);
-		segment.offsetStart = snapshot.offsetStart ?? 0;
-		segment.offsetEnd = snapshot.offsetEnd ?? 0;
-		if (snapshot.controlX !== undefined && snapshot.controlY !== undefined) {
-			segment.setControlPoint(
-				snapshot.controlX + placement.translation.dx,
-				snapshot.controlY + placement.translation.dy
-			);
-		}
-	}
-	return { nodeIds, segmentIds };
-}
 
 export function setupPlaceMode(editor: Editor) {
 	const clipboard = editor.pendingPlacement;
@@ -81,17 +36,35 @@ export function setupPlaceMode(editor: Editor) {
 	const crossingMarkers: THREE.Mesh[] = [];
 	let lastPlacement: Placement | null = null;
 
+	// Whether each copied node holds car roads.
+	const copiedCars = new Map(
+		clipboard.nodes.map((n) => [n.id, carRoads(roadsOf(clipboard, n.id))])
+	);
+
+	const offsets = shownOffsets(clipboard);
+
 	const findNodeSnap = (translation: Translation) => {
-		// A pasted node snaps inside an existing node's ring.
+		// A pasted node snaps inside the ring of an existing node holding the
+		// same kind of road; one of footpaths only onto a node it would show
+		// at the spot of, as it lands (layPaste).
 		const radius = editor.nodeRingRadius();
-		let best: (PlacementSnap & { distance: number; correction: Translation }) | null = null;
+		let best:
+			| (NonNullable<Placement['snap']> & { distance: number; correction: Translation })
+			| null = null;
 
 		for (const clipboardNode of clipboard.nodes) {
-			const translated = translatedNode(clipboardNode, translation);
+			const translated = {
+				x: clipboardNode.x + translation.dx,
+				y: clipboardNode.y + translation.dy
+			};
 			for (const existingNode of editor.graph.nodes.values()) {
 				const distance = Math.hypot(existingNode.x - translated.x, existingNode.y - translated.y);
 				if (distance >= radius) continue;
 				if (best && distance >= best.distance) continue;
+				const roads = roadsAt(editor.graph, existingNode.id);
+				if (roads.length && carRoads(roads) !== copiedCars.get(clipboardNode.id)) continue;
+				const off = offsets.get(clipboardNode.id);
+				if (off && !showsWith(editor.graph, existingNode, off)) continue;
 
 				best = {
 					clipboardNodeId: clipboardNode.id,
@@ -164,17 +137,7 @@ export function setupPlaceMode(editor: Editor) {
 	};
 
 	const commitPlacement = (placement: Placement) => {
-		const { nodeIds, segmentIds } = layPaste(editor.graph, clipboard, placement);
-		// Each new node keeps its junction edits on the copied roads.
-		for (const snapshot of clipboard.nodes) {
-			const node = editor.graph.nodes.get(nodeIds.get(snapshot.id) ?? '');
-			if (!node || !snapshot.junction || placement.snap?.clipboardNodeId === snapshot.id) continue;
-			node.junction = mapJunction(snapshot.junction, (road, end) => {
-				const id = segmentIds.get(road);
-				return id ? { road: id, end } : null;
-			});
-		}
-
+		const { segmentIds } = layPaste(editor.graph, clipboard, placement, true);
 		editor.resolveSegmentCrossings(segmentIds.values());
 		editor.rebuildRoads();
 		editor.graph.save();

@@ -24,7 +24,7 @@ import type { Pt } from './model';
 
 export type Move = 'through' | 'left' | 'right' | 'u';
 
-const ARROW_LENGTH = 4;
+export const ARROW_LENGTH = 4;
 
 // A point, or a cubic Bézier from the previous point: two controls, then
 // the end point.

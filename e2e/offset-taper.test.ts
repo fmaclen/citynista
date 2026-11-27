@@ -1,8 +1,7 @@
 import { expect, test } from '@playwright/test';
 import { check } from '../src/lib/road-model/checks';
-import { Drawing } from '../src/lib/road-model/drawing';
 import type { Lane } from '../src/lib/core/types';
-import { dragOffset, liveGraph, openGraph, roadModel, screenAt, PX_PER_M } from './app';
+import { dragOffset, drawingOf, liveGraph, openGraph, roadModel, screenAt, PX_PER_M } from './app';
 import { drawnCentre, nodeOf, segmentOf } from '../unit/model';
 
 // A two-way road (lane, buffer, lane) from w (-60,0) east to n (0,0),
@@ -88,6 +87,6 @@ test('an extension cut to one lane slides onto a lane of the two-way road', asyn
 	const place = (await roadModel(page))!;
 	const road = place.roads.find((r) => r.id === 'ext')!;
 	for (const f of [0, 0.5, 1]) expect(drawnCentre(road, f).y).toBeCloseTo(2.25, 1);
-	expect(check(new Drawing(place))).toEqual([]);
+	expect(check(await drawingOf(page))).toEqual([]);
 	await shot('taper-after.png');
 });

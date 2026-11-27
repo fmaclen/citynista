@@ -5,7 +5,7 @@ import type { GraphData, Lane } from '../src/lib/core/types';
 import { inside, offset, toPath, union } from '../src/lib/road-model/clip';
 import { check } from '../src/lib/road-model/checks';
 import type { Description, Marking, Role } from '../src/lib/road-model/description';
-import type { Drawing } from '../src/lib/road-model/drawing';
+import type { Scene as Drawing } from '../src/lib/core/networks';
 import type { Pt } from '../src/lib/road-model/model';
 import { attachedEnd, buildModel, liveShape } from './model';
 

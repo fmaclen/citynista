@@ -46,7 +46,6 @@ export function facingOf(a: EndInfo, ends: EndInfo[], connections: Connection[])
 	const facing = ends.filter(
 		(e) =>
 			e !== a &&
-			e.lanes.some((l) => isRoadway(l.lane)) &&
 			dot(e.frame.out, a.frame.out) < -0.7 &&
 			connections.some(
 				(c) =>
@@ -207,7 +206,7 @@ export function carry(
 		-0.3
 	);
 	for (const e of ends) {
-		if (e === a || far.includes(e) || !e.lanes.some((l) => isRoadway(l.lane))) continue;
+		if (e === a || far.includes(e)) continue;
 		const roadway = e.lanes.filter((l) => isRoadway(l.lane));
 		const lo = offsetPoint(e.frame.p, e.frame.n, Math.min(...roadway.map((l) => l.left)));
 		const hi = offsetPoint(e.frame.p, e.frame.n, Math.max(...roadway.map((l) => l.right)));

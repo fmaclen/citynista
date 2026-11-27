@@ -69,8 +69,11 @@ export interface EndRef {
 }
 
 // A lane end at a junction, and a connection between two: the saved types.
+// Of nodes merged into one (merge.ts), a connection chained through roads
+// merged away between them lists the lane it takes on each (`via`), from
+// the end it enters by: its path follows them.
 export type LaneRef = JunctionLaneRef;
-export type Connection = JunctionConnection;
+export type Connection = JunctionConnection & { via?: LaneRef[] };
 
 // A walking connection between two walk-lane ends of different roads: the
 // sidewalk round a corner. Where it crosses a road's mouth it carries on as
@@ -84,6 +87,13 @@ export interface Walkway {
 }
 
 export type Control = 'none' | 'stop' | 'yield' | 'signal';
+
+// Of some controls, the one traffic is held at hardest: a signal, then a
+// stop, then a give-way.
+const RANK: Control[] = ['none', 'yield', 'stop', 'signal'];
+export function strongest(held: Control[]): Control {
+	return held.reduce((a, b) => (RANK.indexOf(b) > RANK.indexOf(a) ? b : a), 'none');
+}
 
 export interface Junction {
 	id: string;
@@ -107,6 +117,22 @@ export interface Junction {
 	// it from the roads as they leave the node, before any trim; the
 	// connections and the drawing both read it here.
 	link?: [string[], string[]];
+	// Of nodes too close together merged into one (merge.ts): each node's own
+	// road ends, the roads merged away between them included. The curb
+	// outline is theirs, joined along those roads (joinedOutline in
+	// outline.ts).
+	parts?: EndRef[][];
+	// Of nodes merged into one: where an approach's signs stand when that is
+	// not its own end. An approach that goes on into a road merged away is
+	// controlled where that road meets the next node, and gives way there:
+	// by end key, the far end of each road merged away it goes on through, in
+	// order (road ends in `parts`), the last where its signs stand.
+	signsAt?: Record<string, string[]>;
+	// Of nodes merged into one: each road that carries on through them by
+	// way of roads merged away between them (by end key, the two ends it
+	// leaves by; `via`, each road merged away from the end it comes in at),
+	// and whether it has priority all along. Its lines follow those roads.
+	runs?: { ends: [string, string]; via: EndRef[]; priority: boolean }[];
 }
 
 // A junction as drawn: one node's, or those of nodes too close together
@@ -118,11 +144,21 @@ export interface DrawnJunction extends Junction {
 }
 
 // What gets drawn: every road but those merged away inside a junction, and
-// the junctions as drawn.
+// the junctions as drawn. The roads merged away (`hidden`) are kept for the
+// curb outlines that follow them.
 export interface Place {
 	roads: Road[];
+	hidden: Road[];
 	junctions: DrawnJunction[];
 }
 
 export const endKey = (ref: EndRef) => `${ref.road}:${ref.end}`;
+// A corner sidewalk's id, by the road ends it runs round from and to: its
+// crossing over a road's mouth on the way takes the same id (cornersOf).
+export const walkwayId = (a: EndRef, b: EndRef) => `${endKey(a)}~${endKey(b)}`;
+// The other end of a road end's road.
+export const farEnd = (ref: EndRef): EndRef => ({
+	road: ref.road,
+	end: ref.end === 'start' ? 'end' : 'start'
+});
 export const laneKey = (ref: LaneRef) => `${ref.road}:${ref.end}/${ref.lane}`;

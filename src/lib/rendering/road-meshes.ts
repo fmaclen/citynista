@@ -97,20 +97,24 @@ export function signShapes(sign: Sign): Pt[][] {
 	}
 	if (sign.kind !== 'yield')
 		return [quad(sign.a, sign.b, (sign.kind === 'stop' ? STOP_LINE : LINE) / 2)];
-	// A row of teeth across a to b, centred, each pointing `toward`.
+	// A row of teeth across a to b, centred, each pointing `toward`: as many
+	// as fit, and on a row too short for one, one as wide as the row, so a
+	// line is always paint.
 	const { a, b, toward } = sign;
-	const length = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+	const length = Math.hypot(b.x - a.x, b.y - a.y);
+	if (length < 1e-6) return [];
 	const u = { x: (b.x - a.x) / length, y: (b.y - a.y) / length };
 	// The length is read back off two points: a row that fits exactly can
 	// come back a hair short of it.
-	const n = Math.floor((length + YIELD_GAP) / (YIELD_BASE + YIELD_GAP) + 1e-6);
-	const first = (length - n * (YIELD_BASE + YIELD_GAP) + YIELD_GAP) / 2;
+	const n = Math.max(1, Math.floor((length + YIELD_GAP) / (YIELD_BASE + YIELD_GAP) + 1e-6));
+	const base = Math.min(YIELD_BASE, length);
+	const first = Math.max(0, (length - n * (base + YIELD_GAP) + YIELD_GAP) / 2);
 	return Array.from({ length: n }, (_, i) => {
-		const x = first + i * (YIELD_BASE + YIELD_GAP);
-		const apex = offsetPoint(a, u, x + YIELD_BASE / 2);
+		const x = first + i * (base + YIELD_GAP);
+		const apex = offsetPoint(a, u, x + base / 2);
 		return [
 			offsetPoint(a, u, x),
-			offsetPoint(a, u, x + YIELD_BASE),
+			offsetPoint(a, u, x + base),
 			offsetPoint(apex, toward, YIELD_HEIGHT)
 		];
 	});

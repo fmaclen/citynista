@@ -1,9 +1,9 @@
 // Road geometry: the drawn line, and the cross-section at any distance along
 // it.
 
-import { toPath, toRings, union, type Paths } from './clip';
+import { fromPath, intersect, toPath, toRings, union, type Path, type Paths } from './clip';
 import type { Ribbon, Ring } from './description';
-import type { End, Lane, Pt, Road } from './model';
+import { type End, isRoadway, type Lane, type Pt, type Road } from './model';
 
 export interface PathSample {
 	pts: Pt[];
@@ -51,10 +51,22 @@ export interface Frame {
 	n: Pt;
 }
 
+// The first of a path's distances from the second on that is at or past
+// `d`, or the last: the end of the piece of the path `d` lies on. Halved
+// down to, so a long path costs no more to read than a short one.
+export function pieceAt(s: number[], d: number) {
+	let [lo, hi] = [1, s.length - 1];
+	while (lo < hi) {
+		const m = (lo + hi) >> 1;
+		if (s[m] < d) lo = m + 1;
+		else hi = m;
+	}
+	return lo;
+}
+
 export function frameAt(path: PathSample, distance: number): Frame {
 	const d = Math.max(0, Math.min(path.length, distance));
-	let i = 1;
-	while (i < path.s.length - 1 && path.s[i] < d) i++;
+	const i = pieceAt(path.s, d);
 	const a = path.pts[i - 1];
 	const b = path.pts[i];
 	const span = path.s[i] - path.s[i - 1];
@@ -64,10 +76,47 @@ export function frameAt(path: PathSample, distance: number): Frame {
 	return { p: { x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f }, t, n: { x: -t.y, y: t.x } };
 }
 
-// Nearest distance along the path to a point.
+// Nearest distance along the path to a point (`s`), and how far it lies
+// from the path there (`d`): of the path's pieces nearest the point, the
+// first. A long path is read through a tree of boxes round runs of its
+// pieces (`boxTree`), each run looked into only where its box comes as near
+// the point as the nearest piece found so far, so finding it reads only the
+// pieces near the point, whatever the path's length.
 export function project(path: PathSample, p: Pt) {
-	let best = { s: 0, d: Infinity };
-	for (let i = 1; i < path.pts.length; i++) {
+	const best = { s: 0, d: Infinity, i: 0 };
+	const n = path.pts.length;
+	if (n <= 2 * LEAF + 1) {
+		pieceNear(path, p, 0, n - 1, best);
+		return { s: best.s, d: best.d };
+	}
+	const tree = pathTree(path);
+	const visit = (k: number) => {
+		const node = tree[k];
+		if (boxDistance(node, p) > best.d + 1e-9) return;
+		if (node.to - node.from <= LEAF) {
+			pieceNear(path, p, node.from, node.to, best);
+			return;
+		}
+		const [a, b] = [2 * k + 1, 2 * k + 2];
+		const [first, then] = boxDistance(tree[b], p) < boxDistance(tree[a], p) ? [b, a] : [a, b];
+		visit(first);
+		visit(then);
+	};
+	visit(0);
+	return { s: best.s, d: best.d };
+}
+
+// Pieces `from` to `to - 1` of a path (piece j from point j to point j + 1)
+// read as a scan along the whole path reads them: the nearest kept, and of
+// two as near the first.
+function pieceNear(
+	path: PathSample,
+	p: Pt,
+	from: number,
+	to: number,
+	best: { s: number; d: number; i: number }
+) {
+	for (let i = from + 1; i <= to; i++) {
 		const a = path.pts[i - 1];
 		const b = path.pts[i];
 		const dx = b.x - a.x;
@@ -75,9 +124,206 @@ export function project(path: PathSample, p: Pt) {
 		const l2 = dx * dx + dy * dy || 1;
 		const f = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / l2));
 		const d = Math.hypot(a.x + dx * f - p.x, a.y + dy * f - p.y);
-		if (d < best.d) best = { s: path.s[i - 1] + (path.s[i] - path.s[i - 1]) * f, d };
+		if (d < best.d || (d === best.d && i < best.i)) {
+			best.s = path.s[i - 1] + (path.s[i] - path.s[i - 1]) * f;
+			best.d = d;
+			best.i = i;
+		}
 	}
-	return best;
+}
+
+// Things in a row (the pieces of a path, say) in a tree of the boxes round
+// runs of them: node k holds things `from` to `to - 1`, halved between nodes
+// 2k + 1 and 2k + 2 down to LEAF of them. So what lies near a point or a box
+// is found reading only the runs near it.
+const LEAF = 8;
+export type BoxNode = { from: number; to: number; x0: number; y0: number; x1: number; y1: number };
+export function boxTree(count: number, boxAt: (i: number) => [number, number, number, number]) {
+	const nodes: BoxNode[] = [];
+	const build = (k: number, from: number, to: number): BoxNode => {
+		let [x0, y0, x1, y1] = [Infinity, Infinity, -Infinity, -Infinity];
+		if (to - from <= LEAF)
+			for (let i = from; i < to; i++) {
+				const b = boxAt(i);
+				[x0, y0, x1, y1] = [
+					Math.min(x0, b[0]),
+					Math.min(y0, b[1]),
+					Math.max(x1, b[2]),
+					Math.max(y1, b[3])
+				];
+			}
+		else {
+			const mid = (from + to) >> 1;
+			const [a, b] = [build(2 * k + 1, from, mid), build(2 * k + 2, mid, to)];
+			[x0, y0, x1, y1] = [
+				Math.min(a.x0, b.x0),
+				Math.min(a.y0, b.y0),
+				Math.max(a.x1, b.x1),
+				Math.max(a.y1, b.y1)
+			];
+		}
+		return (nodes[k] = { from, to, x0, y0, x1, y1 });
+	};
+	if (count > 0) build(0, 0, count);
+	return nodes;
+}
+
+// The first and last of the things in a box tree whose boxes (`boxAt`) meet
+// a box, or null.
+function runNear(
+	tree: BoxNode[],
+	boxAt: (i: number) => [number, number, number, number],
+	box: [number, number, number, number]
+): [number, number] | null {
+	let [lo, hi] = [Infinity, -Infinity];
+	const meets = (b: { x0: number; y0: number; x1: number; y1: number }) =>
+		b.x0 <= box[2] && box[0] <= b.x1 && b.y0 <= box[3] && box[1] <= b.y1;
+	const visit = (k: number) => {
+		const node = tree[k];
+		if (!node || !meets(node) || (node.from >= lo && node.to - 1 <= hi)) return;
+		if (node.to - node.from <= LEAF) {
+			for (let i = node.from; i < node.to; i++) {
+				const [x0, y0, x1, y1] = boxAt(i);
+				if (meets({ x0, y0, x1, y1 })) [lo, hi] = [Math.min(lo, i), Math.max(hi, i)];
+			}
+			return;
+		}
+		visit(2 * k + 1);
+		visit(2 * k + 2);
+	};
+	visit(0);
+	return lo <= hi ? [lo, hi] : null;
+}
+
+// A strip along a road between two of its edges (a lane's ground, or its
+// roadway's), kept with the road's sampled path, which PlaceBuilder keeps
+// (with the road it was sampled from) while the road's shape, lanes and
+// shifts stay the same, from build to build: each edge's points at the
+// strip's rows (`edges`, made once per path and `key`), the boxes round its
+// pieces (piece i between rows i and i + 1) in a tree, and the runs of it
+// read so far.
+type Box4 = [number, number, number, number];
+export type Strip = {
+	left: Pt[];
+	right: Pt[];
+	box: (i: number) => Box4;
+	tree: BoxNode[];
+	runs: Map<string, Path>;
+};
+const strips = new WeakMap<PathSample, Map<string, Strip>>();
+export function stripOf(path: PathSample, key: string, edges: () => readonly [Pt[], Pt[]]) {
+	let known = strips.get(path);
+	if (!known) strips.set(path, (known = new Map()));
+	let strip = known.get(key);
+	if (!strip) {
+		const [left, right] = edges();
+		const box = (i: number): Box4 => {
+			const pts = [left[i], left[i + 1], right[i], right[i + 1]];
+			return [
+				Math.min(...pts.map((p) => p.x)),
+				Math.min(...pts.map((p) => p.y)),
+				Math.max(...pts.map((p) => p.x)),
+				Math.max(...pts.map((p) => p.y))
+			];
+		};
+		strip = { left, right, box, tree: boxTree(left.length - 1, box), runs: new Map() };
+		known.set(key, strip);
+	}
+	return strip;
+}
+
+// How far round some rings a strip is read (stripNear), m.
+const NEAR = 1;
+
+// A strip's ground near some rings: the run of its pieces from the first to
+// the last whose boxes come within NEAR of theirs. Its two ends cut across
+// the strip where a piece lying further off begins, so the run is the whole
+// strip's ground wherever it comes near them, point for point, and what
+// reads it there reads it alone, however long the road. Empty where none
+// comes near. It is the whole strip to rounding: what is drawn from it has
+// the same pieces, rings and vertex counts as from the whole strip, every
+// coordinate within 5 mm. Clipper is not local (it sweeps all of an
+// operation's vertices at once), so against the rings it may place a point
+// where they cross a millimetre or two off where it would against the whole
+// strip, now and then; reading the strip whole would give back most of what
+// this saves (road-model doc).
+export function stripNear(strip: Strip, rings: Paths): Path {
+	if (!rings.length) return [];
+	const pts = rings.flatMap(fromPath);
+	const xs = pts.map((p) => p.x);
+	const ys = pts.map((p) => p.y);
+	const run = runNear(strip.tree, strip.box, [
+		Math.min(...xs) - NEAR,
+		Math.min(...ys) - NEAR,
+		Math.max(...xs) + NEAR,
+		Math.max(...ys) + NEAR
+	]);
+	if (!run) return [];
+	const key = `${run[0]}:${run[1]}`;
+	let path = strip.runs.get(key);
+	if (!path) {
+		const [i, j] = [run[0], run[1] + 2];
+		path = toPath([...strip.left.slice(i, j), ...strip.right.slice(i, j).reverse()]);
+		strip.runs.set(key, path);
+	}
+	return path;
+}
+
+// The box round piece i of a path.
+const pieceBox =
+	(path: PathSample) =>
+	(i: number): [number, number, number, number] => {
+		const [a, b] = [path.pts[i], path.pts[i + 1]];
+		return [Math.min(a.x, b.x), Math.min(a.y, b.y), Math.max(a.x, b.x), Math.max(a.y, b.y)];
+	};
+const trees = new WeakMap<PathSample, BoxNode[]>();
+// A path's pieces in a box tree, built once for each path.
+function pathTree(path: PathSample) {
+	let tree = trees.get(path);
+	if (!tree) trees.set(path, (tree = boxTree(path.pts.length - 1, pieceBox(path))));
+	return tree;
+}
+
+// How near a point a box comes.
+const boxDistance = (b: BoxNode, p: Pt) =>
+	Math.hypot(Math.max(b.x0 - p.x, 0, p.x - b.x1), Math.max(b.y0 - p.y, 0, p.y - b.y1));
+
+// How far along a path a point lies, read on past either end along the
+// path's way there.
+export function alongPath(path: PathSample, p: Pt) {
+	const { s } = project(path, p);
+	if (s > 1e-9 && s < path.length - 1e-9) return s;
+	const end = s <= 1e-9 ? 0 : path.length;
+	const f = frameAt(path, end);
+	return end + (p.x - f.p.x) * f.t.x + (p.y - f.p.y) * f.t.y;
+}
+
+// The stretch of a road's roadway (its outermost roadway lanes, edge to
+// edge; or of the lanes `keep` keeps) that a ring lies over: from and to how
+// far along it, or null where it lies over none. It reads the roadway near
+// the ring alone (stripNear).
+export function stretchOver(
+	road: Road,
+	path: PathSample,
+	ring: Path,
+	keep: (lane: Lane) => boolean = isRoadway
+) {
+	const first = road.lanes.findIndex(keep);
+	const last = road.lanes.findLastIndex(keep);
+	if (first < 0) return null;
+	const edge = (side: 'left' | 'right') =>
+		path.s.map((d) => {
+			const f = frameAt(path, d);
+			const spans = crossSection(road, d);
+			return offsetPoint(f.p, f.n, side === 'left' ? spans[first].left : spans[last].right);
+		});
+	const strip = stripOf(path, `roadway ${first} ${last}`, () => [edge('left'), edge('right')]);
+	const ground = stripNear(strip, [ring]);
+	if (!ground.length) return null;
+	const along = intersect([ring], [ground])
+		.flatMap(fromPath)
+		.map((p) => project(path, p).s);
+	return along.length ? { from: Math.min(...along), to: Math.max(...along) } : null;
 }
 
 // ---- Cross-sections.
@@ -154,8 +400,8 @@ export const TAPER = {
 	SHORTEST: 8,
 	// Metres along per metre of shift: a taper set by hand is never steeper.
 	LEAST_ALONG_PER_SHIFT: 4,
-	// The same two for a footpath easing sideways off a sidewalk (or onto
-	// one), which does so more steeply, and may be set as steep as 1:1.
+	// The same two for sidewalks easing sideways where no car lane carries
+	// on, which do so more steeply, and may be set as steep as 1:1.
 	WALK_ALONG_PER_SHIFT: 3,
 	LEAST_WALK_ALONG_PER_SHIFT: 1,
 	// Metres: a shift smaller than this needs no taper at all.
@@ -402,6 +648,36 @@ export const dist = (a: Pt, b: Pt) => Math.hypot(a.x - b.x, a.y - b.y);
 
 // Whether two segments cross, a touch not counting.
 export const crosses = (a: Pt, b: Pt, c: Pt, d: Pt) => segmentsCross(a, b, c, d, 0);
+
+// The smallest convex polygon holding every point, wound to a positive area
+// (Andrew's monotone chain).
+export function hullOf(pts: Pt[]): Pt[] {
+	const sorted = [...pts].sort((p, q) => p.x - q.x || p.y - q.y);
+	const turn = (o: Pt, a: Pt, b: Pt) => (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
+	const chain = (list: Pt[]) => {
+		const out: Pt[] = [];
+		for (const p of list) {
+			while (out.length >= 2 && turn(out[out.length - 2], out[out.length - 1], p) <= 0) out.pop();
+			out.push(p);
+		}
+		return out.slice(0, -1);
+	};
+	return [...chain(sorted), ...chain([...sorted].reverse())];
+}
+
+// A polyline's points, `step` apart at the most: its own, and as few more
+// as each stretch needs, spaced evenly along it.
+export function sampled(line: Pt[], step: number) {
+	return line.flatMap((q, k) => {
+		if (!k) return [q];
+		const a = line[k - 1];
+		const n = Math.max(1, Math.ceil(Math.hypot(q.x - a.x, q.y - a.y) / step));
+		return Array.from({ length: n }, (_, i) => ({
+			x: a.x + ((q.x - a.x) * (i + 1)) / n,
+			y: a.y + ((q.y - a.y) * (i + 1)) / n
+		}));
+	});
+}
 
 // A polyline less any point within a centimetre of the one before.
 export const dedupe = (pts: Pt[]) => pts.filter((q, i) => i === 0 || dist(q, pts[i - 1]) > 0.01);

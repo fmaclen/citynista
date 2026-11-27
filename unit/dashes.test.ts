@@ -1,4 +1,5 @@
 import { expect, test } from 'bun:test';
+import { STOP_ROOM } from '../src/lib/road-model/approach';
 import type { GraphData, JunctionCrossing, Lane } from '../src/lib/core/types';
 import {
 	area,
@@ -57,7 +58,8 @@ function moved(a: Paths, b: Paths, clear: number) {
 test('a dashed line cut by a walkway across a node keeps its dashes either side', () => {
 	// A four-lane street through m, both sides stopped 20 m back by hand, a
 	// footpath across it there: its lines run 40 m across the node and the
-	// walkway cuts them. How wide the footpath is changes only where.
+	// walkway cuts them. How wide the footpath is changes only where, and
+	// where the give-way lines behind it stand.
 	const across = (width: number): GraphData => ({
 		nodes: [
 			{ id: 'w', x: -100, y: 0 },
@@ -79,9 +81,14 @@ test('a dashed line cut by a walkway across a node keeps its dashes either side'
 	});
 	const [wide, narrow] = [3, 1].map((w) => buildModel(across(w)).scene);
 	const [a, b] = [wide, narrow].map((s) => dashes(s.node('m')!));
-	// Two dashed lines of four 3 m dashes each.
-	expect(areaOf(a)).toBeGreaterThan(2 * 4 * 3 * 0.15 - 0.01);
-	expect(moved(a, b, 3)).toBeLessThan(0.01);
+	// Two dashed lines of four 3 m dashes each, which the walkway and the
+	// give-way lines behind it cut only near it.
+	const none = across(3);
+	none.segments = none.segments.filter((s) => s.id === 'west' || s.id === 'east');
+	const bare = dashes(buildModel(none).scene.node('m')!);
+	expect(areaOf(bare)).toBeGreaterThan(2 * 4 * 3 * 0.15 - 0.01);
+	expect(moved(a, bare, 1.5 + STOP_ROOM + 0.5)).toBeLessThan(0.01);
+	expect(moved(a, b, 1.5 + STOP_ROOM + 0.5)).toBeLessThan(0.01);
 	expect(check(wide)).toEqual([]);
 	expect(check(narrow)).toEqual([]);
 });

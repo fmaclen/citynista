@@ -4,13 +4,10 @@
 import { getQuadraticBezierPoint } from '../geometry/bezier';
 import type { Band } from './carry';
 import {
-	close,
 	fromPath,
 	inside,
 	intersect,
 	offset,
-	offsetLine,
-	open,
 	type Paths,
 	subtract,
 	toPath,
@@ -19,8 +16,16 @@ import {
 } from './clip';
 import type { Crossing } from './description';
 import { type EndInfo, type LaneEnd, laneEndOf, lateral } from './ends';
-import { bars, curveBetween, dedupe, dist, dot, neg, offsetPoint } from './geometry';
-import { type Junction, type Lane, type Pt, isRaised, isRoadway, isWalk } from './model';
+import { bars, curveBetween, dedupe, dist, dot, neg, offsetPoint, sampled } from './geometry';
+import {
+	type Junction,
+	type Lane,
+	type LaneRef,
+	type Pt,
+	isRaised,
+	isRoadway,
+	isWalk
+} from './model';
 import { chainBetween, type Outline } from './outline';
 import { laneStrips, roadRows } from './road';
 
@@ -65,18 +70,9 @@ function nearEndLanes(end: EndInfo, depth: number, keep: (lane: Lane) => boolean
 export const nearEnd = (end: EndInfo, depth: number, keep: (lane: Lane) => boolean) =>
 	union([...nearEndLanes(end, depth, keep).values()].flat());
 
-// Points along a polyline at most `step` apart.
-export function densify(pts: Pt[], step: number) {
-	const out: Pt[] = [pts[0]];
-	for (let i = 1; i < pts.length; i++) {
-		const a = pts[i - 1];
-		const b = pts[i];
-		const n = Math.max(1, Math.ceil(dist(a, b) / step));
-		for (let k = 1; k <= n; k++)
-			out.push({ x: a.x + ((b.x - a.x) * k) / n, y: a.y + ((b.y - a.y) * k) / n });
-	}
-	return dedupe(out);
-}
+// Points along a polyline at most `step` apart, none within a centimetre of
+// the one before.
+export const densify = (pts: Pt[], step: number) => dedupe(sampled(pts, step));
 
 // Which side of a curb line is outside the asphalt: +1 for the left normal.
 function outwardSide(pts: Pt[], asphalt: Paths) {
@@ -187,32 +183,29 @@ function ribbon(pts: Pt[], i0: number, i1: number, o0: number, o1: number, side:
 	return union(pieces);
 }
 
-// Where car lanes cross a walkway, the walkway carries on as a crossing:
-// zebra stripes over the lanes it lies across (`over`), never sidewalk
-// paving, and the sidewalk itself stops at their edge. This is the one place
-// a walkway's crossing is made: for a junction's corner sidewalk laid across
-// the mouth of a road with no sidewalk of its own, for a footpath across a
-// street, and for a sidewalk carried across a node of two sides where a lane
-// cuts through it (cornersOf here, lanesAcross in node.ts). `stripes` are the
-// bars to paint; `refuge` is where the walkway rests on a median carried
-// across, and `paved` sidewalk paving that belongs to the crossing but lies
-// on no car lane (a footpath's run over the sidewalk and verge of the street
-// it crosses).
+// Where car lanes cross a walkway at a node, the walkway carries on as a
+// crossing: zebra stripes over the lanes it lies across (`over`), never
+// sidewalk paving, and the sidewalk itself stops at their edge. This is the
+// one place a node's own walkway crossing is made: a junction's corner
+// sidewalk laid across the mouth of a road with no sidewalk of its own, and a
+// sidewalk carried across a node of two sides where a lane cuts through it
+// (cornersOf here, lanesAcross in node.ts). A footpath's crossing is laid
+// over the car roads by overlay.ts. `stripes` are the bars to paint; `refuge`
+// is where the walkway rests on a median carried across.
 export function crossingOver(
 	id: string,
 	line: Pt[],
 	over: Paths,
 	stripes: Paths,
 	faults: Pt[],
-	refuge: Paths = [],
-	paved: Paths = []
+	refuge: Paths = []
 ): Crossing {
 	return {
 		id,
 		line,
 		runs: (
 			[
-				{ kind: 'paved', rings: toRings([...refuge, ...paved], faults, LAP) },
+				{ kind: 'paved', rings: toRings(refuge, faults, LAP) },
 				// No stripes over a refuge: it is paved.
 				{
 					kind: 'zebra',
@@ -285,6 +278,8 @@ export function cornersOf(
 	// What corner sidewalk never covers, besides the roads.
 	const blockers = union([...raisedNear, ...lapped]);
 	const pavement: Paths = [];
+	// Each corner sidewalk's lanes and middle line (NodeDescription.walkways).
+	const walkways: { a: LaneRef; b: LaneRef; line: Pt[] }[] = [];
 	const crossings: Crossing[] = [];
 	// Everything a crossing lays across the junction.
 	const across: Paths = [];
@@ -321,192 +316,147 @@ export function cornersOf(
 		const ea = laneEndOf(ends, w.a);
 		const eb = laneEndOf(ends, w.b);
 		if (!ea || !eb) continue;
-		let centre: Pt[] = [];
-		let width = 0;
-		let body: Paths = [];
-		// Where a sidewalk carried straight on lies: only what it crosses there
-		// is its crossing.
-		let line: Paths | null = null;
-		let stripes: Paths | null = null;
-		let walkOnly = false;
 		const ca = outline.curbs.get(ea.end.key);
 		const cb = outline.curbs.get(eb.end.key);
-		if (ca && cb) {
-			// Along the curb outline, outside it, as wide as the gap from curb
-			// to the sidewalk's outer edge.
-			const chain = chainBetween(outline, ea.end.key, eb.end.key);
-			if (!chain) continue;
-			// The band sits where the roads' sidewalks sit: from the curb out past
-			// any verge, so the verge stays grass round the corner.
-			const reach = (end: EndInfo, l: LaneEnd, at: Pt) => {
-				const a = Math.abs(l.left - lateral(end, at));
-				const b = Math.abs(l.right - lateral(end, at));
-				return [Math.min(a, b), Math.max(a, b)];
-			};
-			const [ia, oa] = reach(ea.end, ea.lane, ca.leave);
-			const [ib, ob] = reach(eb.end, eb.lane, cb.arrive);
-			width = (oa + ob) / 2;
-			// The sidewalk's distance from the curb runs smoothly from one
-			// road's to the other's, and the verge between them stays grass.
-			const own = union([...roadways.get(ea.end)!, ...roadways.get(eb.end)!]);
-			// Run the band a little way back into both roads, so it overlaps
-			// their own sidewalks and no crack opens at the seam when an end
-			// sits at a slight angle to the curb.
-			const backInto = (run: Pt[]) =>
-				densify(
-					[
-						offsetPoint(ca.leave, ea.end.frame.run, SEAM),
-						...run,
-						offsetPoint(cb.arrive, eb.end.frame.run, SEAM)
-					],
-					0.5
-				);
-			const outward = outwardSide(backInto(chain.pts), asphalt);
-			// Between two ends of one road carrying straight on, past roads that
-			// stop on its curb line (roads without sidewalks that only join it:
-			// core/setbacks.ts), the sidewalk carries on along that road's own
-			// curb, from one curb point to the other as the curb of a road
-			// carrying on runs, and crosses whatever asphalt lies in its way
-			// there: the crossing is where the sidewalk would be, however the
-			// road it crosses is slanted. Round a road with curb corners of its
-			// own it follows the corners and crosses at the mouth.
-			const span = dist(ca.leave, cb.arrive) || 1;
-			const on = { x: (cb.arrive.x - ca.leave.x) / span, y: (cb.arrive.y - ca.leave.y) / span };
-			const off = (p: Pt) => Math.abs((p.x - ca.leave.x) * on.y - (p.y - ca.leave.y) * on.x);
-			const straight =
-				chain.crossed.length > 0 &&
-				dot(ea.end.frame.out, on) < -IN_LINE &&
-				dot(eb.end.frame.out, on) > IN_LINE &&
-				chain.crossed.every((key) => outline.curbs.get(key)!.mouth.some((p) => off(p) < 0.5));
-			const run = straight
-				? curveBetween(
-						ca.leave,
-						neg(ea.end.frame.run),
-						cb.arrive,
-						eb.end.frame.run,
-						Math.max(2, Math.ceil(span / 0.5))
-					)
-				: chain.pts;
-			const pts = backInto(run);
-			// Along the curb outline nothing of it lies over the junction's
-			// paving. Carried straight on, what does is its crossing, and its
-			// ground reaches a metre inside its line, so it meets the paving's
-			// edge wherever that lies a little short of the line.
-			const cutAway = straight ? own : union([...asphalt, ...own]);
-			const inside = straight ? ribbon(pts, 0, 0, 1, 1, -outward) : [];
-			if (straight) line = ribbon(pts, ia, ib, oa, ob, outward);
-			// Its inner edge follows the curb (past any verge), at the roads'
-			// own widths all the way round. Where the two roads' sidewalk edges
-			// meet ahead of both ends, the outer edge also rounds that corner in
-			// one curve inside it, filling any dent where the curb turns
-			// tightly; the curve never leaves the corner, so it can't bulge or
-			// end in a point. Where an end runs past the other's edge, or the
-			// band crosses another road's mouth on the way, the band alone is
-			// the corner.
-			const band = union([
-				...ribbon(pts, ia, ib, oa, ob, outward),
-				...(ia > 0.3 || ib > 0.3 ? [] : inside)
-			]);
-			const outer = chain.crossed.length
-				? null
-				: fillet(
-						outerEdge(ea.end, ea.lane, ca.leave),
-						neg(ea.end.frame.run),
-						outerEdge(eb.end, eb.lane, cb.arrive),
-						neg(eb.end.frame.run)
-					);
-			body = subtract(
-				outer
-					? union([...band, toPath([...edgeAlong(pts, ia, ib, outward), ...[...outer].reverse()])])
-					: band,
-				cutAway
+		if (!ca || !cb) continue;
+		// Along the curb outline, outside it, as wide as the gap from curb
+		// to the sidewalk's outer edge.
+		const chain = chainBetween(outline, ea.end.key, eb.end.key);
+		if (!chain) continue;
+		// The band sits where the roads' sidewalks sit: from the curb out past
+		// any verge, so the verge stays grass round the corner.
+		const reach = (end: EndInfo, l: LaneEnd, at: Pt) => {
+			const a = Math.abs(l.left - lateral(end, at));
+			const b = Math.abs(l.right - lateral(end, at));
+			return [Math.min(a, b), Math.max(a, b)];
+		};
+		const [ia, oa] = reach(ea.end, ea.lane, ca.leave);
+		const [ib, ob] = reach(eb.end, eb.lane, cb.arrive);
+		const width = (oa + ob) / 2;
+		// The sidewalk's distance from the curb runs smoothly from one
+		// road's to the other's, and the verge between them stays grass.
+		const own = union([...roadways.get(ea.end)!, ...roadways.get(eb.end)!]);
+		// Run the band a little way back into both roads, square to the
+		// road's end as the road's own sidewalk ends (along its drawn line,
+		// not the slant of its lanes on a road shifted differently at its two
+		// ends), so it overlaps that sidewalk across its whole width and no
+		// slit opens at the seam, however the road leans.
+		const backInto = (run: Pt[]) =>
+			densify(
+				[
+					offsetPoint(ca.leave, ea.end.frame.out, SEAM),
+					...run,
+					offsetPoint(cb.arrive, eb.end.frame.out, SEAM)
+				],
+				0.5
 			);
-			// Where it runs back over a road it takes on that road's own
-			// sidewalk there exactly, and is smoothed together with it below,
-			// so the two meet without a sliver or a tooth.
-			const roadsHere = union([...seams.get(ea.end)!, ...seams.get(eb.end)!]);
-			const sides = union([
-				...(seamLanes.get(ea.end)!.get(ea.lane.lane.id) ?? []),
-				...(seamLanes.get(eb.end)!.get(eb.lane.lane.id) ?? [])
+		const outward = outwardSide(backInto(chain.pts), asphalt);
+		// Between two ends of one road carrying straight on, past roads that
+		// stop on its curb line (roads without sidewalks that only join it:
+		// core/setbacks.ts), the sidewalk carries on along that road's own
+		// curb, from one curb point to the other as the curb of a road
+		// carrying on runs, and crosses whatever asphalt lies in its way
+		// there: the crossing is where the sidewalk would be, however the
+		// road it crosses is slanted. Round a road with curb corners of its
+		// own it follows the corners and crosses at the mouth.
+		const span = dist(ca.leave, cb.arrive) || 1;
+		const on = { x: (cb.arrive.x - ca.leave.x) / span, y: (cb.arrive.y - ca.leave.y) / span };
+		const off = (p: Pt) => Math.abs((p.x - ca.leave.x) * on.y - (p.y - ca.leave.y) * on.x);
+		const straight =
+			chain.crossed.length > 0 &&
+			dot(ea.end.frame.out, on) < -IN_LINE &&
+			dot(eb.end.frame.out, on) > IN_LINE &&
+			chain.crossed.every((key) => outline.curbs.get(key)!.mouth.some((p) => off(p) < 0.5));
+		const run = straight
+			? curveBetween(
+					ca.leave,
+					neg(ea.end.frame.run),
+					cb.arrive,
+					eb.end.frame.run,
+					Math.max(2, Math.ceil(span / 0.5))
+				)
+			: chain.pts;
+		const pts = backInto(run);
+		// Along the curb outline nothing of it lies over the junction's
+		// paving. Carried straight on, what does is its crossing, and its
+		// ground reaches a metre inside its line, so it meets the paving's
+		// edge wherever that lies a little short of the line.
+		const cutAway = straight ? own : union([...asphalt, ...own]);
+		const inside = straight ? ribbon(pts, 0, 0, 1, 1, -outward) : [];
+		// Where a sidewalk carried straight on lies: only what it crosses there
+		// is its crossing.
+		const line = straight ? ribbon(pts, ia, ib, oa, ob, outward) : null;
+		// Its inner edge follows the curb (past any verge), at the roads'
+		// own widths all the way round. Where the two roads' sidewalk edges
+		// meet ahead of both ends, the outer edge also rounds that corner in
+		// one curve inside it, filling any dent where the curb turns
+		// tightly; the curve never leaves the corner, so it can't bulge or
+		// end in a point. Where an end runs past the other's edge, or the
+		// band crosses another road's mouth on the way, the band alone is
+		// the corner.
+		const band = union([
+			...ribbon(pts, ia, ib, oa, ob, outward),
+			...(ia > 0.3 || ib > 0.3 ? [] : inside)
+		]);
+		// The verge between the curb and the sidewalk's inner edge.
+		const verge = ia > 0.3 || ib > 0.3 ? ribbon(pts, 0, 0, ia, ib, outward) : [];
+		const outer = chain.crossed.length
+			? null
+			: fillet(
+					outerEdge(ea.end, ea.lane, ca.leave),
+					neg(ea.end.frame.run),
+					outerEdge(eb.end, eb.lane, cb.arrive),
+					neg(eb.end.frame.run)
+				);
+		// The fill is the ground the band's inner edge and that curve enclose,
+		// less the verge. Where the two cross, every loop between them counts
+		// alike, whichever way round it runs: the curb may swing out past
+		// where the sidewalks' edges meet, or turn back through a pinched
+		// junction, so no one side of it is the sidewalk's all along. What
+		// lies on the paving or a road is cut away with the band's below.
+		const fill = outer
+			? subtract(
+					union([toPath([...edgeAlong(pts, ia, ib, outward), ...[...outer].reverse()])]),
+					verge
+				)
+			: [];
+		let body = subtract(union([...band, ...fill]), cutAway);
+		// Where it runs back over a road it takes on that road's own
+		// sidewalk there exactly, so the two meet without a sliver or a
+		// tooth.
+		const roadsHere = union([...seams.get(ea.end)!, ...seams.get(eb.end)!]);
+		const sides = union([
+			...(seamLanes.get(ea.end)!.get(ea.lane.lane.id) ?? []),
+			...(seamLanes.get(eb.end)!.get(eb.lane.lane.id) ?? [])
+		]);
+		body = union([...subtract(body, roadsHere), ...sides]);
+		// Past the mouth of a road it follows the corners of and crosses
+		// (one without sidewalks of its own), the band is the crossing over
+		// that road's roadway and a square landing either side of it, as
+		// deep as the crossing and as wide as the sidewalk, instead of
+		// whatever its rounding round the curb point would leave there.
+		for (const key of straight ? [] : chain.crossed) {
+			const e = ends.find((x) => x.key === key);
+			if (!e) continue;
+			const roadway = e.lanes.filter((l) => isRoadway(l.lane));
+			if (!roadway.length) continue;
+			const lo = Math.min(...roadway.map((l) => l.left));
+			const hi = Math.max(...roadway.map((l) => l.right));
+			const at = (along: number, across: number) =>
+				offsetPoint(offsetPoint(e.frame.p, e.frame.out, along), e.frame.n, across);
+			const box = (d: number, from: number, to: number) =>
+				toPath([at(0, from), at(d, from), at(d, to), at(0, to)]);
+			const far = width + 8;
+			body = union([
+				...subtract(body, subtract([box(far, lo - far, hi + far)], roadways.get(e)!)),
+				box(width, lo - width, lo),
+				box(width, hi, hi + width)
 			]);
-			body = union([...subtract(body, roadsHere), ...sides]);
-			// Closed and opened by 10 cm: no dent where the band's pieces meet,
-			// no zero-width sliver left along a curb.
-			body = open(close(body, 0.1), 0.1);
-			// Past the mouth of a road it follows the corners of and crosses
-			// (one without sidewalks of its own), the band is the crossing over
-			// that road's roadway and a square landing either side of it, as
-			// deep as the crossing and as wide as the sidewalk, instead of
-			// whatever its rounding round the curb point would leave there.
-			for (const key of straight ? [] : chain.crossed) {
-				const e = ends.find((x) => x.key === key);
-				if (!e) continue;
-				const roadway = e.lanes.filter((l) => isRoadway(l.lane));
-				if (!roadway.length) continue;
-				const lo = Math.min(...roadway.map((l) => l.left));
-				const hi = Math.max(...roadway.map((l) => l.right));
-				const at = (along: number, across: number) =>
-					offsetPoint(offsetPoint(e.frame.p, e.frame.out, along), e.frame.n, across);
-				const box = (d: number, from: number, to: number) =>
-					toPath([at(0, from), at(d, from), at(d, to), at(0, to)]);
-				const far = width + 8;
-				body = union([
-					...subtract(body, subtract([box(far, lo - far, hi + far)], roadways.get(e)!)),
-					box(width, lo - width, lo),
-					box(width, hi, hi + width)
-				]);
-			}
-			// The verge stops at every road mouth it passes (the road's asphalt
-			// runs through it; only the sidewalk carries on across, as a
-			// crossing).
-			if (ia > 0.3 || ib > 0.3)
-				verges.push(
-					...subtract(union([...ribbon(pts, 0, 0, ia, ib, outward), ...inside]), pavedAll)
-				);
-			centre = run;
-		} else {
-			walkOnly = true;
-			// A walk-only road at either end: on between them, leaving each
-			// square to its end, so a path drawn on a curve through the node
-			// carries on along it (straight where the two ends line up).
-			const a = ea.lane.point;
-			const b = eb.lane.point;
-			centre = curveBetween(
-				a,
-				neg(ea.end.frame.run),
-				b,
-				eb.end.frame.run,
-				Math.max(2, Math.ceil(dist(a, b) / 1.5))
-			);
-			width = Math.max(ea.lane.right - ea.lane.left, eb.lane.right - eb.lane.left);
-			body = offsetLine(centre, width / 2);
-			// Its zebra stripes run along the road it crosses (that road's
-			// ends' headings, averaged), one on the middle of the crossing,
-			// each long enough for any angle: clipped to the path over the
-			// roadway, the zebra is as wide as the path and spans just the
-			// roadway, however the path meets the road or curves.
-			const along = ends
-				.filter((e) => e !== ea.end && e !== eb.end && e.lanes.some((l) => isRoadway(l.lane)))
-				.reduce(
-					(d, e) => {
-						const s = dot(d, e.frame.out) < 0 ? -1 : 1;
-						return { x: d.x + s * e.frame.out.x, y: d.y + s * e.frame.out.y };
-					},
-					{ x: 0, y: 0 }
-				);
-			const l = Math.hypot(along.x, along.y);
-			if (l > 1e-6) {
-				const across = { x: -along.y / l, y: along.x / l };
-				const m = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
-				const reach = Math.ceil(dist(a, b) / 2 + width) + 0.5;
-				stripes = union(
-					bars(
-						[offsetPoint(m, across, -reach), offsetPoint(m, across, reach)],
-						2 * (dist(a, b) + width)
-					)
-				);
-			}
 		}
+		// The verge stops at every road mouth it passes (the road's asphalt
+		// runs through it; only the sidewalk carries on across, as a
+		// crossing).
+		if (ia > 0.3 || ib > 0.3) verges.push(...subtract(union([...verge, ...inside]), pavedAll));
 		// What it crosses: the junction's paving, and the roadway of any end but
 		// the two it runs between.
 		const solid = union([
@@ -516,14 +466,10 @@ export function cornersOf(
 		const over = intersect(line ? intersect(body, line) : body, solid);
 		// Along a curb chain the stripes are laid along each road they cross
 		// (square to its mouth), so they never fan or cross where the chain
-		// turns a corner.
-		if (
-			!stripes &&
-			ea.end !== eb.end &&
-			outline.curbs.has(ea.end.key) &&
-			outline.curbs.has(eb.end.key)
-		) {
-			const pieces: Paths = [];
+		// turns a corner. Between two lanes of one road end they are laid
+		// across the walkway's own line.
+		const pieces: Paths = [];
+		if (ea.end !== eb.end)
 			for (const e of ends) {
 				if (e === ea.end || e === eb.end) continue;
 				// What lies over that road; of a sidewalk carried straight on,
@@ -537,18 +483,25 @@ export function cornersOf(
 				if (piece.length === 0) continue;
 				pieces.push(...stripesOver(piece, e.frame.p, e.frame.out, e.frame.n));
 			}
-			stripes = union(pieces);
-		}
+		const stripes = ea.end !== eb.end ? union(pieces) : union(bars(run, width));
 		// A crossing rests on a carried median where it meets one; a road's own
 		// median stops short of its crossings.
 		const refuge = intersect(body, refuges);
 		// Sidewalk paving never covers a road; roads draw their own lanes.
 		const plain = subtract(subtract(body, solid), blockers);
 		if (ea.end !== eb.end) pavement.push(...plain);
+		// Its middle, halfway between its inner and outer edges all along.
+		if (ea.end !== eb.end && plain.length)
+			walkways.push({
+				a: w.a,
+				b: w.b,
+				line: edgeAlong(pts, (ia + oa) / 2, (ib + ob) / 2, outward)
+			});
 		if (over.length === 0 && refuge.length === 0) continue;
-		// A walk-only road crossing a road runs on over that road's sidewalk
-		// and verge right up to its zebra, in sidewalk paving.
-		const approach = walkOnly ? subtract(body, union([...solid, ...refuge])) : [];
+		// A crossing is only what is painted or paved of it: none where it
+		// only grazes the curb, leaving nothing of either.
+		const crossing = crossingOver(w.id, run, over, stripes, faults, refuge);
+		if (crossing.runs.length === 0) continue;
 		// A walkway laid across another road's mouth pushes that road's stop
 		// line back behind it.
 		if (ea.end !== eb.end) {
@@ -561,18 +514,8 @@ export function cornersOf(
 				}
 			}
 		}
-		crossings.push(
-			crossingOver(
-				w.id,
-				centre,
-				over,
-				stripes ?? union(bars(centre, width)),
-				faults,
-				refuge,
-				approach
-			)
-		);
-		across.push(...approach, ...over, ...refuge);
+		crossings.push(crossing);
+		across.push(...over, ...refuge);
 	}
-	return { roadways, raised, verges, pavement, crossings, across, crossDepth };
+	return { roadways, raised, verges, pavement, walkways, crossings, across, crossDepth };
 }

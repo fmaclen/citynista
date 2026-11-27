@@ -13,7 +13,7 @@ import {
 	linkSides,
 	type RoadGeo
 } from './ends';
-import { crosses, dist, dot, offsetPoint } from './geometry';
+import { crosses, dot, offsetPoint } from './geometry';
 import {
 	type Connection,
 	type Control,
@@ -22,35 +22,9 @@ import {
 	type Walkway,
 	isRoadway,
 	isTravel,
-	isWalk
+	isWalk,
+	walkwayId
 } from './model';
-
-// Road ends running straight on into each other, and whether another such
-// pair crosses them.
-function straightPairs(ends: EndInfo[]) {
-	const pairs: [EndInfo, EndInfo][] = [];
-	for (let i = 0; i < ends.length; i++) {
-		for (let j = i + 1; j < ends.length; j++) {
-			if (dot(ends[i].frame.out, ends[j].frame.out) < Math.cos((155 * Math.PI) / 180)) {
-				pairs.push([ends[i], ends[j]]);
-			}
-		}
-	}
-	const crossed = (pair: [EndInfo, EndInfo]) =>
-		pairs.some(
-			(other) =>
-				other !== pair &&
-				!other.includes(pair[0]) &&
-				!other.includes(pair[1]) &&
-				crosses(
-					offsetPoint(pair[0].frame.p, pair[0].frame.out, 30),
-					offsetPoint(pair[1].frame.p, pair[1].frame.out, 30),
-					offsetPoint(other[0].frame.p, other[0].frame.out, 30),
-					offsetPoint(other[1].frame.p, other[1].frame.out, 30)
-				)
-		);
-	return pairs.map((pair) => ({ pair, crossed: crossed(pair) }));
-}
 
 // Whether one road end carries on into the other with the same lanes: the
 // other's lanes mirrored, with in and out swapped.
@@ -134,11 +108,9 @@ export function continuingPairs(ends: EndInfo[], connections: Connection[]) {
 }
 
 // Which side of a road end's roadway a walk lane lies beyond (1 along the
-// normal, -1 against it, 0 where there's no roadway); null when it isn't
-// outside the roadway.
+// normal, -1 against it); null when it isn't outside the roadway.
 function curbSide(end: EndInfo, walk: LaneEnd) {
 	const roadway = end.lanes.filter((l) => isRoadway(l.lane));
-	if (roadway.length === 0) return 0;
 	if (walk.left >= Math.max(...roadway.map((l) => l.right)) - 0.01) return 1;
 	if (walk.right <= Math.min(...roadway.map((l) => l.left)) + 0.01) return -1;
 	return null;
@@ -161,28 +133,19 @@ function walkOnSide(end: EndInfo, centre: Pt, ascending: boolean) {
 	const wantRight = rightIsAscending === ascending;
 	const walks = lanes.filter((l) => isWalk(l.lane));
 	if (!walks.length) return null;
-	if (lanes.every((l) => isWalk(l.lane))) return walks[Math.floor(walks.length / 2)];
 	const walk = wantRight ? walks[walks.length - 1] : walks[0];
 	const side = curbSide(end, walk);
-	return side === 0 || side === (wantRight ? 1 : -1) ? walk : null;
+	return side === (wantRight ? 1 : -1) ? walk : null;
 }
-
-// Two walk-only road ends face each other when each heads into the node
-// within 25° of the line to the other.
-const FACING = Math.cos((25 * Math.PI) / 180);
 
 // The sidewalks round a junction. Where one runs across the mouth of a road
 // with no sidewalk of its own it carries on as a crosswalk, whatever the road.
 export function defaultWalkways(ends: EndInfo[]): Walkway[] {
 	const walkways: Walkway[] = [];
-	const centre = centreOf(ends.filter((e) => e.lanes.some((l) => isRoadway(l.lane))));
-	const pairs = straightPairs(ends);
+	const centre = centreOf(ends);
 	// Along the edge: between neighbouring ends that both have walk lanes,
 	// skipping ends that have none (their mouth is crossed on the way).
-	// Only ends with a roadway have a curb on the outline; a walk-only road
-	// (a footpath) meets the junction where it ends.
-	const kerbed = ends.filter((e) => e.lanes.some((l) => isRoadway(l.lane)));
-	const walking = kerbed
+	const walking = ends
 		.filter((e) => e.lanes.some((l) => isWalk(l.lane)))
 		.sort((a, b) => angleOf(a, centre) - angleOf(b, centre));
 	if (walking.length >= 2) {
@@ -193,28 +156,9 @@ export function defaultWalkways(ends: EndInfo[]): Walkway[] {
 			const wa = walkOnSide(a, centre, true);
 			const wb = walkOnSide(b, centre, false);
 			if (!wa || !wb) continue;
-			walkways.push({ id: `${a.key}~${b.key}`, a: wa.ref, b: wb.ref });
+			walkways.push({ id: walkwayId(a.ref, b.ref), a: wa.ref, b: wb.ref });
 		}
 	}
-	// Walk-only roads that run on into each other cross between: two that
-	// face each other across the node, as a path drawn on a curve through it
-	// does, or that run straight on.
-	const only = (e: EndInfo) => e.lanes.length > 0 && e.lanes.every((l) => isWalk(l.lane));
-	const walks = ends.filter(only);
-	const facing = (a: EndInfo, b: EndInfo) => {
-		const l = dist(a.frame.p, b.frame.p) || 1;
-		const t = { x: (b.frame.p.x - a.frame.p.x) / l, y: (b.frame.p.y - a.frame.p.y) / l };
-		return -dot(a.frame.out, t) > FACING && dot(b.frame.out, t) > FACING;
-	};
-	const inLine = (a: EndInfo, b: EndInfo) =>
-		pairs.some(({ pair }) => pair.includes(a) && pair.includes(b));
-	for (const [i, a] of walks.entries())
-		for (const b of walks.slice(i + 1)) {
-			if (!inLine(a, b) && !facing(a, b)) continue;
-			const la = a.lanes[Math.floor(a.lanes.length / 2)];
-			const lb = b.lanes[Math.floor(b.lanes.length / 2)];
-			walkways.push({ id: `${a.key}=${b.key}`, a: la.ref, b: lb.ref });
-		}
 	return walkways;
 }
 

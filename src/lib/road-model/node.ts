@@ -1,6 +1,6 @@
 // Nodes: road ends with their connections, walkways and approach controls,
 // which core/place.ts works out on every build (`defaults` in defaults.ts,
-// with the user's edits at the node on top); `describeJunction` describes
+// with the user's edits at the node on top); `drawJunction` describes
 // whatever the junction holds. Corner sidewalks and walkways are built in
 // corners.ts, each approach's signs in approach.ts. The paving is what lies
 // inside the curb outline. Where the lanes find their way across from one
@@ -12,7 +12,7 @@
 // lanes cross carries on over them as a crossing (crossingOver in
 // corners.ts), never as sidewalk.
 
-import { approachesOf, endCut } from './approach';
+import { approachesOf, endCut, type EndAsk } from './approach';
 import { type Band, carry, facingOf, type Owned } from './carry';
 import {
 	area as areaOf,
@@ -39,7 +39,9 @@ import type {
 	Surface as Ground
 } from './description';
 import {
+	alongVia,
 	band,
+	chainCurve,
 	connectionCurve,
 	crossesAny,
 	type Curve,
@@ -50,6 +52,7 @@ import {
 	linkSides
 } from './ends';
 import {
+	crosses,
 	crossSection,
 	curveBetween,
 	cutLine,
@@ -63,9 +66,17 @@ import {
 	ribbonOf,
 	TAPER
 } from './geometry';
+import {
+	type ApproachPlan,
+	approachPlans,
+	type MeetingView,
+	type Share,
+	type SidesView
+} from './holds';
 import { INSET, laneLines, linesBeside, pathLines } from './lines';
 import {
 	type Connection,
+	endKey,
 	type Junction,
 	type Pt,
 	type Surface,
@@ -74,8 +85,16 @@ import {
 	isTravel,
 	laneKey
 } from './model';
-import { type Curb, laneEdges, type Outline, outlineOf, outlinesAcross } from './outline';
+import {
+	type Curb,
+	joinedOutline,
+	laneEdges,
+	type Outline,
+	outlineOf,
+	outlinesAcross
+} from './outline';
 import { LINE, MIN_PIECE } from './paint';
+import { clearOf, type Crossed, crossingsOver, shapeOf } from './overlay';
 import { alongOf, barColour, hatchBar, materialOf, roleOf } from './road';
 
 // How far past an edge line a path counts as lying beside it: just past
@@ -124,6 +143,31 @@ function insetLine(line: Pt[], toward: Pt, by: number) {
 	};
 }
 
+// The point of `lines` nearest the middle of `pts`, with the way the line
+// runs there; null where there are no lines.
+function nearestAlong(lines: Pt[][], pts: Pt[]) {
+	const middle = {
+		x: pts.reduce((s, p) => s + p.x, 0) / pts.length,
+		y: pts.reduce((s, p) => s + p.y, 0) / pts.length
+	};
+	let near: { at: Pt; along: Pt; d: number } | null = null;
+	for (const line of lines)
+		line.forEach((q, k) => {
+			const d = dist(q, middle);
+			if (near && near.d <= d) return;
+			const [a, b] = [line[Math.max(0, k - 1)], line[k + 1] ?? q];
+			const l = dist(a, b) || 1;
+			near = { at: q, along: { x: (b.x - a.x) / l, y: (b.y - a.y) / l }, d };
+		});
+	return near as { at: Pt; along: Pt } | null;
+}
+
+// Whether a polyline crosses itself.
+const folds = (pts: Pt[]) =>
+	pts.some(
+		(p, i) => i > 0 && pts.some((q, k) => k > i + 1 && crosses(pts[i - 1], p, pts[k - 1], q))
+	);
+
 const groundOf = (b: Band, faults: Pt[], stripe = STRIPE): Ground => {
 	const ground: Ground = {
 		role: b.role,
@@ -159,21 +203,49 @@ interface Across {
 	signs: Sign[];
 	crossings: Crossing[];
 	approaches: NodeDescription['approaches'];
+	// Its corner sidewalks' lanes and middles, where roads meet.
+	walkways?: NodeDescription['walkways'];
 	// What the node asks of a road ending at it (endCut).
-	cut: (end: EndInfo) => { carried: boolean; linesOn: boolean; setback: number };
+	cut: (end: EndInfo) => EndAsk;
+	// Its signs, approaches and cuts again with what held traffic meeting
+	// crossings laid over it and its roads does there (`holds`, holds.ts):
+	// the lines that fall on it and the ground its paint stops at for them
+	// (`share`), and of a junction, what each approach does with those
+	// crossings (`plans`).
+	approach: (holds: Holds) => Pick<Across, 'signs' | 'approaches' | 'cut'>;
+	// What the decisions in holds.ts read of it.
+	view: SidesView | MeetingView;
 }
+
+// What a node is handed of the decisions where held traffic meets the
+// crossings laid over it and its roads (holds.ts).
+export interface Holds {
+	share: Share;
+	plans?: Map<string, ApproachPlan>;
+}
+
+// How far short of a walkway laid across a road's mouth the road's paint
+// stops: the gap a setback keeps behind one (approachPlans in holds.ts).
+const MOUTH_GAP = 0.3;
 
 // What is left of a node's paving along the edges of its bands, thinner than
 // this on clipper's grid, is nothing.
 const SLIVER = 0.002;
 
-// A node as a description: `paving` is the material inside its curb outline
-// (pavingOf in drawing.ts).
-export function describeJunction(
+// A node's description (`description`), and the same painted with what a
+// network laid over it crosses on it and on its roads near it (`paint`,
+// overlay.ts) and its share of where the traffic meeting those crossings is
+// held (`holds`, holds.ts), which reads again only what that changes: its
+// crossings, lines and hatching, and its approaches' paint. With what the
+// decisions in holds.ts read of it (`view`). `paving` is the material
+// inside its curb outline (pavingOf in drawing.ts); `parts`, of nodes merged
+// into one, each node's road ends (Junction.parts).
+export function drawJunction(
 	junction: Junction,
 	ends: EndInfo[],
-	paving: Surface
-): NodeDescription {
+	paving: Surface,
+	parts?: EndInfo[][]
+) {
 	const faults: Pt[] = [];
 	const sides = linkSides(junction, ends);
 	const routes: Route[] = [];
@@ -182,10 +254,14 @@ export function describeJunction(
 		const b = laneEndOf(ends, c.to);
 		if (!a || !b) continue;
 		// Across a node of two sides every path is sampled as its bands' edges
-		// and its lines are, so the three follow one curve.
+		// and its lines are, so the three follow one curve (laneEdges, guessed
+		// between the two ends, through nodes merged into one too). Where roads
+		// meet, a path through nodes merged into one follows the roads merged
+		// away between them.
 		const curve = sides
 			? connectionCurve(a.lane, a.end, b.lane, b.end, TAPER.STEPS)
-			: connectionCurve(a.lane, a.end, b.lane, b.end);
+			: ((c.via && parts && chainCurve(a.lane, a.end, c.via, parts.flat(), b.lane, b.end)) ??
+				connectionCurve(a.lane, a.end, b.lane, b.end));
 		routes.push({ c, curve, fromEnd: a.end, toEnd: b.end, travel: isTravel(a.lane.lane) });
 	}
 	// Across a node of two sides the curbs are the outermost edges of the
@@ -199,14 +275,14 @@ export function describeJunction(
 	let outline: { corners: Outline['corners']; curbs: Iterable<Curb> };
 	let asphalt: Paths;
 	if (sides) {
-		const lanes = lanesAcross(ends, sides, routes, faults);
+		const lanes = lanesAcross(junction, ends, sides, routes, faults);
 		const outlines = outlinesAcross(lanes.between);
 		asphalt = union([...outlines.polygons, ...lanes.seams].map(toPath));
 		[across, outline] = [lanes, outlines];
 	} else {
-		const whole = outlineOf(ends);
-		asphalt = whole.polygon.length >= 3 ? union([toPath(whole.polygon)]) : [];
-		across = roadsMeeting(junction, ends, whole, asphalt, routes, faults);
+		const whole = parts ? joinedOutline(parts, ends) : outlineOf(ends);
+		asphalt = union(whole.rings.filter((r) => r.length >= 3).map(toPath));
+		across = roadsMeeting(junction, ends, whole, asphalt, routes, faults, parts?.flat());
 		outline = { corners: whole.corners, curbs: whole.curbs.values() };
 	}
 
@@ -222,11 +298,19 @@ export function describeJunction(
 	const bare = across.banded.length
 		? toRings(open(subtract(asphalt, across.banded), SLIVER), faults, 0, mouths)
 		: rings;
-	const surfaces: Ground[] = [
+	const own: Ground[] = [
 		{ role: 'paving', material: materialOf(paving), shape: bare },
 		...across.surfaces
 	];
-	return {
+	const described = (
+		surfaces: Ground[],
+		markings: Marking[],
+		crossings: Crossing[],
+		paint: Pick<Across, 'signs' | 'approaches' | 'cut'>,
+		faults: Pt[],
+		cuts = new Map(ends.map((e) => [e.key, endCut(junction, e.geo, e.ref.end, paint.cut(e))])),
+		cleared: Pt[][] = []
+	): NodeDescription => ({
 		ends,
 		outline: {
 			rings,
@@ -241,15 +325,80 @@ export function describeJunction(
 			widths: curve.widths
 		})),
 		surfaces: surfaces.filter((s) => 'left' in s.shape || s.shape.length > 0),
-		markings: across.markings,
-		signs: across.signs,
-		crossings: across.crossings,
-		approaches: across.approaches,
-		cuts: new Map<string, EndCut>(
-			ends.map((e) => [e.key, endCut(junction, e.geo, e.ref.end, across.cut(e))])
-		),
+		markings,
+		signs: paint.signs,
+		crossings,
+		cleared,
+		approaches: paint.approaches,
+		...(across.walkways && { walkways: across.walkways }),
+		cuts,
 		faults
+	});
+	const description = described(own, across.markings, across.crossings, across, faults);
+	// Crossings a network laid over the node makes on it (crossingsOver in
+	// overlay.ts), their stripes along the car path nearest each: its lines
+	// and hatching stop at them and at the ground its share clears, and its
+	// approaches' paint stands where their plans put it. A junction where
+	// roads meet lays no crossing of traffic, only a footpath's paving over
+	// its verges: a crossing is painted on road ground alone, one whose band
+	// tips over a road's mouth stopping at the junction's edge, so the
+	// junction is drawn as with no footpath but for what its approaches put
+	// down for crossings over their roads (onJunction in core/networks.ts).
+	const paint = (over: Crossed[], holds: Holds) => {
+		const more = [...faults];
+		const shapes = (keep: (s: Ground) => boolean) => union(own.filter(keep).flatMap(shapeOf));
+		const laid = crossingsOver(
+			junction.id,
+			sides ? over : over.filter((c) => !c.traffic),
+			{
+				hard: shapes((s) => s.role === 'lane' || s.role === 'paving'),
+				lanes: own.filter((s) => s.role === 'lane').map((lane) => shapes((s) => s === lane)),
+				median: shapes((s) => s.role === 'median'),
+				verge: shapes((s) => s.role === 'verge')
+			},
+			across.crossings,
+			more
+		);
+		const bodies = laid.flatMap((c) => c.body);
+		const zones = holds.share.cleared.length ? union(holds.share.cleared) : [];
+		const underBodies = union([...bodies.map(toPath), ...zones]);
+		const surfaces = underBodies.length
+			? own.map((s) =>
+					s.bars
+						? {
+								...s,
+								bars: {
+									colour: s.bars.colour,
+									rings: toRings(subtract(s.bars.rings.map(toPath), underBodies), more)
+								}
+							}
+						: s
+				)
+			: own;
+		const approach = across.approach(holds);
+		// Each road's paint stands back from the crossings, but where its
+		// median ends is ground: as the node is drawn before anything is laid
+		// over it.
+		const cuts = new Map<string, EndCut>(
+			ends.map((e) => [
+				e.key,
+				{
+					...endCut(junction, e.geo, e.ref.end, approach.cut(e)),
+					nose: description.cuts.get(e.key)?.nose ?? null
+				}
+			])
+		);
+		return described(
+			surfaces,
+			clearOf(across.markings, [...bodies, ...zones.map(fromPath)]),
+			[...across.crossings, ...laid],
+			approach,
+			more,
+			cuts,
+			toRings(zones, more)
+		);
 	};
+	return { description, paint, view: across.view };
 }
 
 // Bands sharing more ground than this (m²) lie over each other.
@@ -383,6 +532,7 @@ function barsAlong(
 // `between` is each two road ends that lanes run between, with those lanes:
 // the node's curbs follow them (outlinesAcross in outline.ts).
 function lanesAcross(
+	junction: Junction,
 	ends: EndInfo[],
 	sides: [EndInfo[], EndInfo[]],
 	routes: Route[],
@@ -442,9 +592,9 @@ function lanesAcross(
 		ends.length > 2
 			? linesBeside(driven, walked)
 			: { lines: pathLines(driven, sides[0], sides[1], walked), seams: [] };
-	const shapeOf = (b: Band) => toPath([...b.left, ...[...b.right].reverse()]);
+	const bandShape = (b: Band) => toPath([...b.left, ...[...b.right].reverse()]);
 	const sum = (paths: Paths) => paths.reduce((total, q) => total + areaOf(q), 0);
-	const cars = union([...bands.filter((b) => b.car).map(shapeOf), ...seams.map(toPath)]);
+	const cars = union([...bands.filter((b) => b.car).map(bandShape), ...seams.map(toPath)]);
 	// Where car lanes cut through a sidewalk carried across, it carries on
 	// over them as a crossing (crossingOver in corners.ts), its stripes laid
 	// along the path nearest each piece of it; every line stops at it.
@@ -459,20 +609,10 @@ function lanesAcross(
 		if (sum(over) <= SHARED) continue;
 		const stripes = over.flatMap((piece) => {
 			const pts = fromPath(piece);
-			const middle = {
-				x: pts.reduce((s, p) => s + p.x, 0) / pts.length,
-				y: pts.reduce((s, p) => s + p.y, 0) / pts.length
-			};
-			let near: { at: Pt; along: Pt; d: number } | null = null;
-			for (const { curve } of driving)
-				curve.points.forEach((q, k) => {
-					const d = dist(q, middle);
-					if (near && near.d <= d) return;
-					const [a, b] = [curve.points[Math.max(0, k - 1)], curve.points[k + 1] ?? q];
-					const l = dist(a, b) || 1;
-					near = { at: q, along: { x: (b.x - a.x) / l, y: (b.y - a.y) / l }, d };
-				});
-			const lane = near as { at: Pt; along: Pt } | null;
+			const lane = nearestAlong(
+				driving.map((r) => r.curve.points),
+				pts
+			);
 			return lane
 				? stripesOver(pts, lane.at, lane.along, { x: -lane.along.y, y: lane.along.x })
 				: [];
@@ -488,24 +628,6 @@ function lanesAcross(
 		);
 	}
 	const bodies = crossings.flatMap((c) => c.body);
-	const clear = (m: (typeof lines)[number]): Marking[] => {
-		const whole = { colour: m.colour, dashed: m.dashed, line: m.pts, along: alongOf(m.pts) };
-		if (!bodies.length) return [whole];
-		const xs = [...m.pts, ...bodies.flat()].map((p) => p.x);
-		const ys = [...m.pts, ...bodies.flat()].map((p) => p.y);
-		const box = [
-			{ x: Math.min(...xs) - 1, y: Math.min(...ys) - 1 },
-			{ x: Math.max(...xs) + 1, y: Math.min(...ys) - 1 },
-			{ x: Math.max(...xs) + 1, y: Math.max(...ys) + 1 },
-			{ x: Math.min(...xs) - 1, y: Math.max(...ys) + 1 }
-		];
-		const keep = subtract([toPath(box)], offset(bodies.map(toPath), LINE / 2)).map(fromPath);
-		// Cut pieces keep the whole line's dashes.
-		const rhythm: [number, number] = [0, whole.along[whole.along.length - 1]];
-		return cutLine(m.pts, keep)
-			.map(({ line, along }) => ({ colour: m.colour, dashed: m.dashed, line, along, rhythm }))
-			.filter((piece) => piece.along[piece.along.length - 1] - piece.along[0] >= MIN_PIECE - LINE);
-	};
 	// Hatching stops where a car path crosses it, as the lane's own surface
 	// does under a raised band.
 	for (const b of bands)
@@ -520,7 +642,7 @@ function lanesAcross(
 	}
 	for (const group of groups.values()) {
 		const { role, material } = group[0];
-		const shapes = group.map(shapeOf);
+		const shapes = group.map(bandShape);
 		const one = group.length > 1 ? union(shapes) : shapes;
 		const lapped = sum(shapes) - sum(one) > SHARED;
 		const crossed = role !== 'lane' && sum(intersect(shapes, cars)) > SHARED;
@@ -562,36 +684,92 @@ function lanesAcross(
 		// A seam is road: no other band is the node's surface there.
 		banded: seams.length
 			? [
-					...bands.filter((b) => b.car).map(shapeOf),
-					...subtract(bands.filter((b) => !b.car).map(shapeOf), seams.map(toPath))
+					...bands.filter((b) => b.car).map(bandShape),
+					...subtract(bands.filter((b) => !b.car).map(bandShape), seams.map(toPath))
 				]
-			: bands.map(shapeOf),
-		markings: lines.flatMap(clear),
+			: bands.map(bandShape),
+		markings: clearOf(
+			lines.map((m) => ({
+				colour: m.colour,
+				dashed: m.dashed,
+				line: m.pts,
+				along: alongOf(m.pts)
+			})),
+			bodies
+		),
 		signs,
 		crossings,
 		approaches: [],
 		cut: () => ({ carried: true, linesOn: false, setback: 0 }),
+		// The lines held traffic meets crossings at that fall on it.
+		approach: ({ share }) => ({
+			signs: [...signs, ...share.signs],
+			approaches: [],
+			cut: () => ({ carried: true, linesOn: false, setback: 0 })
+		}),
+		view: {
+			kind: 'sides',
+			id: junction.id,
+			ways: driven.map((r) => ({ curve: r.curve, fromEnd: r.fromEnd, toEnd: r.toEnd })),
+			roadway: routes
+				.filter((r) => r.fromEnd !== r.toEnd && isRoadway(r.curve.from.lane))
+				.map((r) => ({ curve: r.curve, fromEnd: r.fromEnd, toEnd: r.toEnd }))
+		},
 		between: [...between.values()],
 		seams
 	};
 }
 
+// A lane line of a road carrying on through nodes merged into one by way of
+// roads merged away between them (Junction.runs): from offset `o` at end
+// `a`, along each of those roads (`via`) on the same lane boundary, counted
+// from the right of the way traffic runs, and across each node between on
+// an even curve, to offset `ob` at end `b`.
+function runLine(o: number, a: EndInfo, via: EndInfo[], ob: number, b: EndInfo) {
+	const bounds = (spans: { left: number; right: number }[]) => [
+		spans[0].left,
+		...spans.map((x) => x.right)
+	];
+	// Which boundary, counted from the right of the way in, and how far the
+	// line lies to the right of it (an edge line sits inside the edge).
+	const fromA = bounds(a.frame.spans);
+	const nearest = fromA.reduce((k, x, i) => (Math.abs(x - o) < Math.abs(fromA[k] - o) ? i : k), 0);
+	const ahead = a.ref.end === 'end';
+	const index = ahead ? nearest : fromA.length - 1 - nearest;
+	const inside = (o - fromA[nearest]) * (ahead ? 1 : -1);
+	return alongVia(
+		offsetPoint(a.frame.p, a.frame.n, o),
+		0,
+		neg(a.frame.run),
+		via,
+		(spans, forward) => {
+			const x = bounds(spans);
+			return { o: forward ? x[index] + inside : x[x.length - 1 - index] - inside, w: 0 };
+		},
+		offsetPoint(b.frame.p, b.frame.n, ob),
+		0,
+		b.frame.run,
+		(chord) => Math.max(12, Math.ceil(chord / 0.5))
+	).points;
+}
+
 // Where roads meet at a junction: what is carried across its paving, its
 // corner sidewalks and crossings, its lines, and each approach's signs.
+// `parts`, of nodes merged into one, is every road end of theirs.
 function roadsMeeting(
 	junction: Junction,
 	ends: EndInfo[],
 	outline: Outline,
 	asphalt: Paths,
 	resolved: Route[],
-	faults: Pt[]
+	faults: Pt[],
+	parts?: EndInfo[]
 ): Across {
 	// Carry roads straight across where nothing but side roads that only join
 	// them (joinsOnly) meets them and nobody has to stop.
 	const out = { bands: [] as Band[], marks: [] as Owned[] };
 	const carriedEnds = new Set<string>();
 	for (const a of ends) {
-		if (!a.lanes.some((l) => isRoadway(l.lane))) continue;
 		if ((junction.control[a.key] ?? 'none') !== 'none') continue;
 		const facing = facingOf(a, ends, junction.connections);
 		if (facing.some((e) => (junction.control[e.key] ?? 'none') !== 'none')) continue;
@@ -622,7 +800,23 @@ function roadsMeeting(
 	// the road's lines; a path from another approach nobody controls does.
 	const free = (e: EndInfo) => (junction.control[e.key] ?? 'none') === 'none';
 	const linesOn = new Set<string>();
-	for (const { pair, priority } of continuingPairs(ends, junction.connections)) {
+	// Through nodes merged into one, a road carries on by way of the roads
+	// merged away between them (Junction.runs), however far it turns.
+	const endOf = (key: string) => [...ends, ...(parts ?? [])].find((e) => e.key === key);
+	const runs = (junction.runs ?? []).flatMap((r) => {
+		const [a, b] = r.ends.map(endOf);
+		const via = r.via.map((ref) => endOf(endKey(ref)));
+		if (!a || !b || via.some((v) => !v)) return [];
+		return [{ pair: [a, b] as [EndInfo, EndInfo], priority: r.priority, via: via as EndInfo[] }];
+	});
+	const inRun = (e: EndInfo) => runs.some((r) => r.pair.includes(e));
+	const pairs = [
+		...continuingPairs(ends, junction.connections)
+			.filter((p) => !p.pair.some(inRun))
+			.map((p) => ({ ...p, via: [] as EndInfo[] })),
+		...runs
+	];
+	for (const { pair, priority, via } of pairs) {
 		const [a, b] = pair;
 		if (!priority || carriedEnds.has(a.key) || !free(a) || !free(b)) continue;
 		const through = (r: (typeof resolved)[number]) =>
@@ -659,11 +853,18 @@ function roadsMeeting(
 						e.lanes.slice(0, i).some((x) => isRoadway(x.lane)) &&
 						e.lanes.slice(i + 1).some((x) => isRoadway(x.lane))
 				);
+			// In order across the road as it leaves `a`; a run may turn so far
+			// that `b` lies behind `a`, so its lines are taken in order from
+			// the right of the way traffic runs at each end.
+			const rightward = (e: EndInfo, o: number) =>
+				o * ((e === a) === (e.ref.end === 'end') ? 1 : -1);
 			const edges = (e: EndInfo) =>
 				laneLines(e.lanes)
 					.filter((m) => !m.dashed && !nosed(e, m.o))
 					.map((m) => ({ colour: m.colour, o: m.o, p: offsetPoint(e.frame.p, e.frame.n, m.o) }))
-					.sort((p, q) => lateral(a, p.p) - lateral(a, q.p));
+					.sort((p, q) =>
+						via.length ? rightward(e, p.o) - rightward(e, q.o) : lateral(a, p.p) - lateral(a, q.p)
+					);
 			const ea = edges(a);
 			const eb = edges(b);
 			const mouths = union(
@@ -694,7 +895,14 @@ function roadsMeeting(
 					const near = (curb: Pt, mark: Pt) => Math.abs(dist(curb, mark) - INSET) < 0.05;
 					if (!near(pts[0], p) || !near(pts[pts.length - 1], q)) continue;
 					const line = insetLine(pts, p, INSET);
-					if (line) return line;
+					// A curb that doubles back on itself for a few centimetres
+					// (where nodes merged into one meet a road's curb just inside
+					// its end) folds the line moved in from it: the guess serves.
+					if (!line || folds(line.pts)) continue;
+					// It starts and ends where the roads' own lines do.
+					line.pts[0] = p;
+					line.pts[line.pts.length - 1] = q;
+					return line;
 				}
 				return null;
 			};
@@ -704,21 +912,28 @@ function roadsMeeting(
 					const curb = alongCurb(m.p, eb[i].p);
 					const pts =
 						curb?.pts ??
-						curveBetween(
-							m.p,
-							neg(a.frame.run),
-							eb[i].p,
-							b.frame.run,
-							Math.max(12, Math.ceil(dist(m.p, eb[i].p) / 0.5))
-						);
-					// Looking past the line, away from the road.
+						(via.length
+							? runLine(m.o, a, via, eb[i].o, b)
+							: curveBetween(
+									m.p,
+									neg(a.frame.run),
+									eb[i].p,
+									b.frame.run,
+									Math.max(12, Math.ceil(dist(m.p, eb[i].p) / 0.5))
+								));
+					// Looking past the line, away from the road: on the same side of
+					// it all along, however far it turns, as it is where it starts.
 					const away = Math.sign(m.o - mid);
-					const bare = pts.map((q, k) => {
+					const normal = (k: number) => {
 						const p0 = pts[Math.max(0, k - 1)];
 						const p1 = pts[Math.min(pts.length - 1, k + 1)];
 						const l = dist(p0, p1) || 1;
-						let n = curb?.out[k] ?? { x: -(p1.y - p0.y) / l, y: (p1.x - p0.x) / l };
-						if (!curb && dot(n, a.frame.n) * away < 0) n = neg(n);
+						return { x: -(p1.y - p0.y) / l, y: (p1.x - p0.x) / l };
+					};
+					const side = dot(normal(0), a.frame.n) * away < 0 ? -1 : 1;
+					const bare = pts.map((q, k) => {
+						let n = curb?.out[k] ?? normal(k);
+						if (!curb && side < 0) n = neg(n);
 						// Past a curb line lies only the curb: a path that seems to
 						// lie there is a turn guessed wide of the asphalt.
 						const past = curb ? mouths : beside;
@@ -739,7 +954,7 @@ function roadsMeeting(
 		}
 	}
 
-	const { roadways, raised, verges, pavement, crossings, across, crossDepth } = cornersOf(
+	const { roadways, raised, verges, pavement, walkways, crossings, across, crossDepth } = cornersOf(
 		junction,
 		ends,
 		outline,
@@ -752,9 +967,9 @@ function roadsMeeting(
 	// runs between, less any crossing, verge or raised band, and every other
 	// road's roadway (a road pushed into the junction); held half a stroke in,
 	// so all of the stroke stays inside, give or take GRAZE. A line that runs
-	// into another road's roadway at all is dropped. (A corner's sidewalk can
-	// leave hairlines of crossing along the curb, where its rounding dips over
-	// it: they block nothing.)
+	// into another road's roadway at all is dropped. (A corner's sidewalk,
+	// cut against the curb on clipper's millimetre grid, can leave hairlines
+	// of crossing along it: they block nothing.)
 	const blocked = union([...open(union(across), 0.005), ...verges, ...raised]);
 	const regions = new Map<string, { keep: Pt[][]; others: Pt[][] }>();
 	const regionOf = (own: EndInfo[]) => {
@@ -784,7 +999,41 @@ function roadsMeeting(
 			.filter((piece) => piece.along[piece.along.length - 1] - piece.along[0] >= MIN_PIECE - LINE);
 	});
 
-	const { signs, approaches, setbackOf } = approachesOf(junction, ends, resolved, crossDepth);
+	const view: MeetingView = {
+		kind: 'meeting',
+		junction,
+		ends,
+		crossDepth,
+		parts: parts ?? []
+	};
+	// The ground of the walkways laid across a road's mouth over that road,
+	// grown by the gap the road's paint keeps from them.
+	const mouths = new Map(
+		ends.flatMap((e) => {
+			if (!(crossDepth.get(e.key) ?? 0)) return [];
+			const on = intersect(union(crossings.flatMap((c) => c.body.map(toPath))), roadways.get(e)!);
+			return on.length ? [[e.key, toRings(offset(on, MOUTH_GAP), faults)] as const] : [];
+		})
+	);
+	// With nothing laid over it, each approach is its own control's alone.
+	const alone = approachPlans(view).plans;
+	const approach = ({ plans = alone }: Holds) => {
+		const { signs, approaches } = approachesOf(junction, ends, resolved, plans);
+		return {
+			signs,
+			approaches,
+			cut: (e: EndInfo) => {
+				const plan = plans.get(e.key)!;
+				return {
+					carried: carriedEnds.has(e.key),
+					linesOn: linesOn.has(e.key),
+					setback: plan.back,
+					crossed: mouths.get(e.key),
+					...(plan.held && { held: { bare: plan.held.bare } })
+				};
+			}
+		};
+	};
 
 	return {
 		surfaces: [
@@ -798,13 +1047,10 @@ function roadsMeeting(
 			.filter((b) => b.material === 'asphalt')
 			.map((b) => toPath([...b.left, ...[...b.right].reverse()])),
 		markings,
-		signs,
 		crossings,
-		approaches,
-		cut: (e) => ({
-			carried: carriedEnds.has(e.key),
-			linesOn: linesOn.has(e.key),
-			setback: setbackOf(e)
-		})
+		walkways,
+		...approach({ share: { signs: [], cleared: [] } }),
+		approach,
+		view
 	};
 }

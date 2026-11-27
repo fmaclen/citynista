@@ -4,7 +4,7 @@ import { fromPath, inside, toPath, union } from '../src/lib/road-model/clip';
 import { check } from '../src/lib/road-model/checks';
 import type { Description, Ring } from '../src/lib/road-model/description';
 import type { Pt } from '../src/lib/road-model/model';
-import type { Drawing } from '../src/lib/road-model/drawing';
+import type { Scene as Drawing } from '../src/lib/core/networks';
 import { dist, project } from '../src/lib/road-model/geometry';
 import { buildModel } from './model';
 
@@ -32,10 +32,20 @@ const hatched = () => [
 ];
 
 // Road a from (-100, 0) to node m at the origin, and road z on from m 100 m
-// away, turned `angle` degrees from straight on.
-function bend(angle: number, lanes: () => Lane[], junction?: JunctionData): GraphData {
+// away, turned `angle` degrees from straight on. Road z's lanes are named
+// as road a's (`l0`, `l1`, ...) unless `apart`: carrying straight on, the
+// two are then one road cut at m, drawn whole with no node there
+// (core/place.ts), and named apart (two roads drawn on their own) m stays a
+// node.
+function bend(
+	angle: number,
+	lanes: () => Lane[],
+	junction?: JunctionData,
+	apart = false
+): GraphData {
 	const t = (angle * Math.PI) / 180;
-	const ids = (l: Lane[]) => l.map((x, i) => ({ ...x, id: `l${i}` }));
+	const ids = (l: Lane[], z = false) =>
+		l.map((x, i) => ({ ...x, id: `${z && apart ? 'z' : 'l'}${i}` }));
 	return {
 		nodes: [
 			{ id: 'a', x: -100, y: 0 },
@@ -44,7 +54,7 @@ function bend(angle: number, lanes: () => Lane[], junction?: JunctionData): Grap
 		],
 		segments: [
 			{ id: 'a', startNodeId: 'a', endNodeId: 'm', lanes: ids(lanes()) },
-			{ id: 'z', startNodeId: 'm', endNodeId: 'z', lanes: ids(lanes()) }
+			{ id: 'z', startNodeId: 'm', endNodeId: 'z', lanes: ids(lanes(), true) }
 		]
 	};
 }
@@ -95,7 +105,7 @@ function evenly(bars: Pt[]) {
 }
 
 test('a hatched median keeps its bars every 4 m straight through a node', () => {
-	const { scene } = buildModel(bend(0, hatched));
+	const { scene } = buildModel(bend(0, hatched, undefined, true));
 	evenly(
 		allBars(scene)
 			.filter((p) => Math.abs(p.x) < 40)
@@ -130,7 +140,7 @@ test('a hatched median keeps an even rhythm from one road through a bend into th
 	// carrying straight on.
 	const median = () => [drive('backward'), lane('buffer', 'asphalt', 3), drive('forward')];
 	for (let angle = 0; angle <= 120; angle += 5) {
-		const { scene } = buildModel(bend(angle, median));
+		const { scene } = buildModel(bend(angle, median, undefined, true));
 		const node = scene.node('m')!;
 		// The median's line from road a's start, across the node, to road z's end.
 		const pts = [

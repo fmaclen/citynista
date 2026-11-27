@@ -2,14 +2,23 @@ import * as THREE from 'three';
 import { getContext, setContext, untrack } from 'svelte';
 import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 import { fromPage } from './utils';
-import { Graph } from './core/graph.svelte';
+import { type Carried, Graph } from './core/graph.svelte';
 import { CityStore, loadExample } from './core/city-store';
-import type { Brush, CameraState, CityRecord, CitySummary, GraphData, Lane } from './core/types';
+import type {
+	Brush,
+	CameraState,
+	CityRecord,
+	CitySummary,
+	CrossingControl,
+	GraphData,
+	Lane
+} from './core/types';
 import { cloneLanes, defaultHotbar, HOTBAR_SIZE, reverseLanes } from './core/lane-template';
 import { resolveCrossings } from './core/crossings';
 import { join, joinPlan } from './core/join';
-import { nodePoint } from './core/road-line';
+import { nodePoint, type Pt } from './core/road-line';
 import { segmentEnds } from './core/attach';
+import type { CrossingIs } from './core/networks';
 import type { Control } from './road-model/model';
 import { SceneManager, GRID_SUB } from './rendering/scene.svelte';
 import { NodeRenderer, type NodeTone } from './rendering/node-renderer';
@@ -21,7 +30,13 @@ import { GuideRenderer } from './rendering/guide-renderer';
 import { ConnectionRenderer } from './rendering/connection-renderer';
 import { OFFSET_HANDLE, hitsHandle } from './rendering/handle-shapes';
 import { NODE_RING_PX, type HandleState } from './rendering/editor-palette';
-import { DRAW_STYLES, type DrawStyle, type ModeHandlers, type Mode } from './modes/types';
+import {
+	CLICK_SLOP_PX,
+	DRAW_STYLES,
+	type DrawStyle,
+	type ModeHandlers,
+	type Mode
+} from './modes/types';
 import { offsetHandle, type OffsetHandle } from './modes/offset';
 import { setbackHandles, type SetbackHandle } from './modes/setback';
 import { setupDrawMode } from './modes/draw';
@@ -29,8 +44,10 @@ import { setupCircleMode } from './modes/circle';
 import { setupSelectMode } from './modes/select';
 import { setupBulldozeMode } from './modes/bulldoze';
 import { setupSplitMode } from './modes/split';
-import { setupConnectorMode, type ConnectorEndpoint } from './modes/connector';
+import { nextControl, setupConnectorMode, type ConnectorEndpoint } from './modes/connector';
 import { setupPlaceMode } from './modes/place';
+import { followWalkway, type Moving, NOTHING_MOVING } from './modes/picking';
+import { carries } from './core/lane-types';
 import {
 	copySegments,
 	copySelection,
@@ -118,9 +135,47 @@ export class Editor {
 	// the lane dots it shows there.
 	connectorNodeId: string | null = null;
 	connectorEndpoints: ConnectorEndpoint[] = [];
+	// At a footpath's end on a street's sidewalk, the sidewalk lane the
+	// connector shows it joined to.
+	connectorJoined: string[] = [];
+	// Each footpath node selected, or at an end of a footpath selected, that
+	// is joined to a street's walkway (joinedTo in modes/picking.ts): the
+	// walkway it is joined to (`segment:lane index`), shown with its
+	// footpaths' lines onto it (`refreshJoins`).
+	joins: { node: string; lane: string }[] = [];
+	joinRenderer!: ConnectionRenderer;
+	private joinLines: Pt[][] = [];
+	// What the open connector shows (connector.ts `shown`), for tests.
+	connectorShown: {
+		node: string;
+		links: [string, string][];
+		lines: { x: number; y: number }[][];
+	} | null = null;
+	// Where the snap marker of a dead end held over a drop stands (select.ts).
+	dropShown: { x: number; y: number } | null = null;
+	// The roads a move in hand would lay across roads of their own kind,
+	// shown as refused (modes/select.ts); the move is undone on release.
+	refused: string[] = [];
 	// In the connector, each approach's control (stop, yield, signal or
 	// none) where it is shown, to click through.
 	controlBadges = $state<{ key: string; control: Control; x: number; y: number }[]>([]);
+	// The control badges shown on crossings footpaths make over car roads:
+	// the one opened by double-clicking its zebra in select mode (`opened`)
+	// alone, else one on each crossing a selected segment is part of or lies
+	// across (Networks.crossingsOn). Each the crossing's id as drawn
+	// (Networks.crossingOf), its control, and where its badge sits.
+	crossingBadges = $state<{ id: string; control: Control; x: number; y: number }[]>([]);
+	opened = $state<string | null>(null);
+	// What the opened badge's crossing is, to find it again on each build
+	// (Networks.sameCrossing): a footpath's crossings are numbered in order
+	// along it, so its id may pass to another (`refreshCrossingBadges`).
+	private openedIs: CrossingIs | null = null;
+	// The opened badge's carriageway as an entry the graph carries through
+	// every replacement of its car road as it carries the footpaths' controls
+	// (Graph.carrying, carryControls), so a lane edit, lanes pasted, a cut or
+	// a join leaves the badge on the carriageway its control stays on, and
+	// one taking that carriageway off takes the badge's too.
+	private openedAcross: Carried | null = null;
 
 	mode = $state<Mode>('select');
 	hotbar = $state<(Brush | null)[]>(storedHotbar() ?? defaultHotbar());
@@ -143,7 +198,15 @@ export class Editor {
 		blocked: boolean;
 	} | null = null;
 	fps = $state(0);
-	canUndo = $state(false);
+	// Whether Undo takes anything back, the one thing the toolbar reads: an
+	// edit the mode holds that is no step of the history yet, which the mode
+	// reports holding through `holdsUndo` (a draw's start on a street's
+	// side, which its `undo` takes back alone; a move or a crossing's slide
+	// in hand, which Undo settles into a step and takes back), or a step of
+	// the history.
+	private historyUndo = $state(false);
+	private modeUndo = $state(false);
+	canUndo = $derived(this.modeUndo || this.historyUndo);
 	canRedo = $state(false);
 	selectedNodes = new SvelteSet<string>();
 	selectedSegments = new SvelteSet<string>();
@@ -187,7 +250,19 @@ export class Editor {
 	private drawing = $derived(this.mode === 'draw' && (this.activeBrush?.lanes.length ?? 0) > 0);
 
 	private modeHandlers: ModeHandlers | null = null;
+	// The left button pressed on the canvas in a mode that takes its release
+	// (`onMouseUp`), until that release: where it went down, whether it has
+	// since wandered past CLICK_SLOP_PX (`moved`), the last pointer event
+	// while held, and the selection the press found. Modes without a release
+	// act on the press alone and hold nothing.
+	private press: {
+		down: { x: number; y: number };
+		moved: boolean;
+		last: MouseEvent;
+		selection: { nodes: string[]; segments: string[] };
+	} | null = null;
 	private boundKeyDown: ((e: KeyboardEvent) => void) | null = null;
+	private boundKeyUp: ((e: KeyboardEvent) => void) | null = null;
 	private boundHistoryKeyDown: ((e: KeyboardEvent) => void) | null = null;
 	private boundMouseUp: ((e: MouseEvent) => void) | null = null;
 	private boundClipboardKeyDown: ((e: KeyboardEvent) => void) | null = null;
@@ -201,6 +276,11 @@ export class Editor {
 	// per-command bookkeeping. Nothing reaches storage until the user saves.
 	private undoStack: string[] = [];
 	private redoStack: string[] = [];
+	// The redo steps the last edit cleared, and the oldest undo step it
+	// pushed out of a full history, which taking that edit back with no
+	// trace (`discardLastEdit`) gives back.
+	private clearedRedo: string[] = [];
+	private clearedOldest: string | null = null;
 	private presentState = '';
 	private restoringHistory = false;
 
@@ -211,6 +291,12 @@ export class Editor {
 			const mode = this.mode;
 			void this.drawing;
 			untrack(() => this.setupMode(mode));
+		});
+		// The crossing badges follow the selection and the mode
+		// (refreshCrossingBadges).
+		$effect(() => {
+			void [...this.selectedSegments, this.mode];
+			untrack(() => this.refreshCrossingBadges());
 		});
 	}
 
@@ -235,10 +321,22 @@ export class Editor {
 		this.offsetRenderer = new HandleRenderer(scene, screenSized, 'offset');
 		this.crossingRenderer = new HandleRenderer(scene, screenSized, 'crossing');
 		this.connectionRenderer = new ConnectionRenderer(scene, screenSized);
+		this.joinRenderer = new ConnectionRenderer(scene, screenSized);
 
 		if (loadCurrent) this.loadSavedData();
 		this.presentState = this.savedState = JSON.stringify(this.graph.toJSON());
-		this.graph.onSaved = (serialized) => this.recordHistory(serialized);
+		this.graph.onSaved = (serialized) => {
+			// The follower's moves are the edit's, in its step (or there are
+			// none to keep: the graph is the newest step).
+			this.followed.clear();
+			this.followedCurves.clear();
+			// Only an edit is recorded, and only an edit writes the crossing
+			// controls again: a save changing nothing (a click) writes nothing.
+			if (this.restoringHistory || serialized === this.presentState) return;
+			this.recordHistory(
+				this.keepCrossingControls() ? JSON.stringify(this.graph.toJSON()) : serialized
+			);
+		};
 		this.sceneManager.onCameraPersist = () => this.saveCameraToCache();
 		this.gridEnabled = localStorage.getItem('citynista:grid') === '1';
 		this.sceneManager.setGridVisible(this.gridEnabled);
@@ -253,12 +351,114 @@ export class Editor {
 	private recordHistory(serialized: string) {
 		if (this.restoringHistory || serialized === this.presentState) return;
 		this.undoStack.push(this.presentState);
-		if (this.undoStack.length > 100) this.undoStack.shift();
-		this.redoStack.length = 0;
+		this.clearedOldest = this.undoStack.length > 100 ? (this.undoStack.shift() ?? null) : null;
+		this.clearedRedo = this.redoStack;
+		this.redoStack = [];
 		this.presentState = serialized;
-		this.canUndo = true;
+		this.historyUndo = true;
 		this.canRedo = false;
 		this.dirty = this.presentState !== this.savedState;
+	}
+
+	// Writes each footpath's crossing controls as its crossings are drawn
+	// after an edit (Networks.settle, core/crossing-controls.ts), so every
+	// undo step holds them so: one per carriageway its crossings lie on, and
+	// one no crossing of it lies on dropped. Writing them changes no
+	// crossing's control, so nothing is drawn again. Whether it wrote any.
+	private keepCrossingControls() {
+		if (!this.roadRenderer) return false;
+		this.roadRenderer.update(this.graph);
+		const unsettled = this.roadRenderer.settle();
+		this.storeControls(unsettled);
+		return unsettled.length > 0;
+	}
+
+	// Writes crossing controls onto their footpath segments, by segment id.
+	private storeControls(
+		controls: Iterable<readonly [string, readonly CrossingControl[] | undefined]>
+	) {
+		for (const [id, kept] of controls) {
+			const segment = this.graph.segments.get(id);
+			if (segment) segment.controls = kept;
+		}
+	}
+
+	// Opens the control badge of a crossing a footpath makes over a car road,
+	// by its id as drawn (Networks.crossingOf).
+	openCrossing(id: string) {
+		this.opened = id;
+		this.openAs(this.roadRenderer.crossingOf(id)?.is ?? null);
+		this.refreshCrossingBadges();
+	}
+
+	// Holds what the opened badge's crossing is (`openedIs`), its
+	// carriageway carried by the graph (`openedAcross`).
+	private openAs(is: CrossingIs | null) {
+		const carrying = this.graph.carrying;
+		const k = this.openedAcross ? carrying.indexOf(this.openedAcross) : -1;
+		if (k >= 0) carrying.splice(k, 1);
+		this.openedIs = is;
+		this.openedAcross = is && {
+			controls: [{ roads: [...is.across.roads], lanes: [...is.across.lanes], control: 'none' }]
+		};
+		if (this.openedAcross) carrying.push(this.openedAcross);
+	}
+
+	closeCrossing() {
+		if (!this.opened) return;
+		this.opened = null;
+		this.refreshCrossingBadges();
+	}
+
+	// The crossing badges as the last build drew their crossings: the opened
+	// one on its crossing as drawn now, whatever its id, its carriageway as
+	// the graph carried it through the edit, and closed once that crossing is
+	// gone (Networks.sameCrossing), the selection's (in select mode) read
+	// again.
+	private refreshCrossingBadges() {
+		if (!this.roadRenderer) return;
+		const carried = this.openedAcross?.controls ?? [];
+		const opened = this.opened &&
+			this.openedIs &&
+			carried.length > 0 && {
+				...this.openedIs,
+				across: {
+					roads: carried.flatMap((e) => e.roads),
+					lanes: carried.flatMap((e) => e.lanes ?? [])
+				}
+			};
+		const kept = opened && this.roadRenderer.sameCrossing(opened);
+		this.opened = kept || null;
+		this.openAs((kept && this.roadRenderer.crossingOf(kept)?.is) || null);
+		const ids = this.opened
+			? [this.opened]
+			: this.mode === 'select'
+				? this.roadRenderer.crossingsOn(this.selectedSegments)
+				: [];
+		const now = ids.flatMap((id) => {
+			const crossing = this.roadRenderer.crossingOf(id);
+			return crossing ? [{ id, control: crossing.control, ...crossing.mid }] : [];
+		});
+		const was = this.crossingBadges;
+		const same =
+			now.length === was.length &&
+			now.every(
+				(b, k) =>
+					b.id === was[k].id && b.control === was[k].control && b.x === was[k].x && b.y === was[k].y
+			);
+		if (!same) this.crossingBadges = now;
+	}
+
+	// Steps a shown crossing's control on, as a junction approach's badge
+	// does: none, stop, yield (where nothing is set), signal, and round. One
+	// undo step, stored on its footpath segments for its carriageway, so
+	// every crossing they make of that carriageway takes it.
+	cycleCrossing(id: string) {
+		const crossing = this.roadRenderer.crossingOf(id);
+		if (!crossing) return;
+		this.storeControls(crossing.storing(nextControl(crossing.control)));
+		this.rebuildRoads();
+		this.graph.save();
 	}
 
 	private warnUnsaved = (event: BeforeUnloadEvent) => {
@@ -273,24 +473,99 @@ export class Editor {
 		return !this.dirty || window.confirm('Discard unsaved changes?');
 	}
 
+	// Every command that acts on the graph or reads it to keep (Save, Undo,
+	// Redo, Delete, Cut, Copy, Paste, a tool switched) first settles the
+	// press in hand, in whatever mode, so none ever meets a gesture half
+	// done. A press that has moved is given its release where the pointer
+	// last was, which ends the gesture as letting go there would, one undo
+	// step or none (a select drag refused and put back, a drop joined, a
+	// crossing slid). One that has not is taken back as Escape takes it
+	// (`cancelPress`): letting go there would be a click (a crossing
+	// switched, the connector left), and a command is no click.
+	settlePress() {
+		if (this.press?.moved) this.release();
+		else this.cancelPress();
+	}
+
+	// The mode's release for the press in hand, where the pointer last was.
+	// A press or a move with the button up arriving while one is held is
+	// that release, which never came (let go outside the window): the button
+	// did come up there, moved or not.
+	private release() {
+		const press = this.press;
+		if (!press) return;
+		this.press = null;
+		this.modeHandlers?.onMouseUp?.(press.last);
+	}
+
+	// Escape with a press in hand takes it back, in whatever mode: the graph
+	// as the last undo step left it, the mode set up again holding nothing,
+	// and the selection the press found. Nothing is saved.
+	private cancelPress() {
+		const press = this.press;
+		if (!press) return;
+		this.press = null;
+		this.takeBack(press.selection);
+	}
+
+	// Takes back all a press did that is no undo step yet, in whatever mode:
+	// the graph as the newest undo step left it, the mode set up again
+	// holding nothing, and `selection` (the one the press found) given back.
+	// Nothing is saved. Escape does it (`cancelPress`), and so does a drop
+	// whose join lays a road across one of its kind (modes/select.ts).
+	takeBack(selection: { nodes: string[]; segments: string[] }) {
+		this.restoreState(this.presentState);
+		for (const id of selection.nodes) if (this.graph.nodes.has(id)) this.selectNode(id);
+		for (const id of selection.segments) if (this.graph.segments.has(id)) this.selectSegment(id);
+	}
+
+	// Whether the mode in place holds an edit Undo takes back that is no
+	// step of the history yet, as that edit comes and goes. A mode set up
+	// anew holds none.
+	holdsUndo(on: boolean) {
+		this.modeUndo = on;
+	}
+
+	// With a press in hand, Undo settles it first and then steps back: a move
+	// kept is taken back (Redo brings it again), and a move refused, put
+	// back with no step of its own, leaves Undo to take back the step before.
+	// Redo settles it too, and after a move kept finds nothing to redo: the
+	// move is the newest step, as any edit is.
 	undo() {
+		this.settlePress();
+		if (this.modeHandlers?.undo?.()) return;
 		const previous = this.undoStack.pop();
 		if (previous === undefined) return;
 		this.redoStack.push(this.presentState);
+		this.clearedRedo = [];
+		this.clearedOldest = null;
 		this.restoreState(previous);
 	}
 
-	// Takes back the last edit with no trace in redo (a draw cancelled after
-	// its first click cut a road).
+	// Takes back the last edit with no trace (a draw cancelled after its
+	// first click cut a road): the graph and both histories as they were
+	// before it, the redo steps it cleared and the oldest step it pushed out
+	// given back. Not while the history
+	// is being restored: the mode set up again then forgets what it held and
+	// takes nothing back (`restoreState`).
 	discardLastEdit() {
+		if (this.restoringHistory) return;
 		const previous = this.undoStack.pop();
-		if (previous !== undefined) this.restoreState(previous);
+		if (previous === undefined) return;
+		if (this.clearedOldest !== null) this.undoStack.unshift(this.clearedOldest);
+		this.redoStack = this.clearedRedo;
+		this.clearedRedo = [];
+		this.clearedOldest = null;
+		this.restoreState(previous);
 	}
 
 	redo() {
+		this.settlePress();
 		const next = this.redoStack.pop();
 		if (next === undefined) return;
 		this.undoStack.push(this.presentState);
+		this.clearedRedo = [];
+		this.clearedOldest = null;
 		this.restoreState(next);
 	}
 
@@ -299,6 +574,8 @@ export class Editor {
 		this.roadRenderer.setShowConnections(this.showConnections);
 	}
 
+	// The grid changes where the next click lays an end on open ground: the
+	// preview is drawn again (`enter`).
 	toggleGrid() {
 		this.gridEnabled = !this.gridEnabled;
 		this.sceneManager.setGridVisible(this.gridEnabled);
@@ -307,6 +584,7 @@ export class Editor {
 		} catch {
 			// best-effort
 		}
+		this.modeHandlers?.refresh?.();
 	}
 
 	// Arms a slot, empty or not; the lane panel opens on it.
@@ -319,17 +597,26 @@ export class Editor {
 	// Enters the mode of the chosen draw style for the armed slot; an empty
 	// slot goes to draw mode, where the lane panel fills it.
 	private armStyle() {
-		this.mode = this.drawStyle === 'circle' && this.hotbar[this.activeSlot] ? 'circle' : 'draw';
+		this.enter(this.drawStyle === 'circle' && this.hotbar[this.activeSlot] ? 'circle' : 'draw');
+	}
+
+	// Whatever changes what the next click lays (the brush armed, cycled to
+	// or its lanes edited, the draw style; the grid toggled and the
+	// modifier keys pressed or let go redraw it too, `toggleGrid` and the
+	// modes' key handlers) enters the mode that lays it, or,
+	// already in it, has its preview drawn again from where the pointer last
+	// was: the mode reads the brush and style on each move, so the pending
+	// road keeps its start, and a click there without moving lays what is
+	// shown.
+	private enter(mode: Mode) {
+		if (this.mode === mode) this.modeHandlers?.refresh?.();
+		else this.mode = mode;
 	}
 
 	setDrawStyle(style: DrawStyle) {
 		if (!this.activeBrush || style === this.drawStyle) return;
 		this.drawStyle = style;
-		const mode = style === 'circle' ? 'circle' : 'draw';
-		// Straight and curve share draw mode, which reads the style on each
-		// move: the pending road keeps its start and only its preview redraws.
-		if (this.mode === mode) this.modeHandlers?.refresh?.();
-		else this.mode = mode;
+		this.enter(style === 'circle' ? 'circle' : 'draw');
 	}
 
 	cycleDrawStyle() {
@@ -396,29 +683,48 @@ export class Editor {
 	}
 
 	// Applies one change to each target's own lane list: every selected road
-	// (when they share a cross-section) or the armed slot. Lanes the change
-	// adds get fresh ids on each road; lanes it keeps keep theirs, since
-	// junction connections name them. live skips saving, for mid-drag edits.
+	// (when they share a cross-section) or the armed slot. Each is given a new
+	// list, never the old one changed in place: what is read off a
+	// cross-section is kept by it (`carries` in core/lane-types.ts sorts a
+	// road, or the brush laying one, into its network that way). Lanes the
+	// change adds get fresh ids on each road; lanes it keeps keep theirs,
+	// since junction connections name them. live skips saving, for mid-drag
+	// edits.
 	editLanes(change: (lanes: Lane[]) => void, live = false) {
 		const source = this.laneSource;
 		if (!source || source === 'mixed') return;
 		if (this.selectedSegments.size > 0) {
-			for (const id of this.selectedSegments) {
+			// All set as one edit, so roads made the other kind together stay
+			// joined (Graph.setLanes).
+			const edits = [...this.selectedSegments].flatMap((id) => {
 				const segment = this.graph.segments.get(id);
-				if (!segment) continue;
-				const before = [...segment.lanes];
-				change(segment.lanes);
-				for (const lane of segment.lanes) if (!before.includes(lane)) delete lane.id;
-				segment.ensureLaneIds();
-			}
+				if (!segment) return [];
+				const lanes = segment.cloneLanes();
+				const before = [...lanes];
+				change(lanes);
+				for (const lane of lanes) if (!before.includes(lane)) delete lane.id;
+				return [[segment, lanes] as const];
+			});
+			// The footpath ends joined to a walkway of a street edited stay on
+			// it as it now lies (followWalkways).
+			this.graph.setLanes(edits);
 			this.rebuildRoads();
 			this.refreshSelectionVisuals();
 			if (!live) this.graph.save();
 		} else {
-			const brush = this.hotbar[this.activeSlot] ?? { name: 'Custom road', lanes: [] };
-			change(brush.lanes);
-			this.hotbar[this.activeSlot] = brush.lanes.length > 0 ? brush : null;
+			// The brush's lanes stay the same objects in the new list, so the
+			// panel's rows for them keep their focus (LaneEditor's rowKey).
+			const brush = this.hotbar[this.activeSlot];
+			const lanes = [...(brush?.lanes ?? [])];
+			const before = [...lanes];
+			change(lanes);
+			// A lane added carries no id of the one it copied.
+			for (const lane of lanes) if (!before.includes(lane)) delete lane.id;
+			this.hotbar[this.activeSlot] =
+				lanes.length > 0 ? { ...(brush ?? { name: 'Custom road' }), lanes } : null;
 			if (!live) this.saveHotbar();
+			// What the next click lays changed: its preview is drawn again.
+			this.modeHandlers?.refresh?.();
 		}
 	}
 
@@ -454,14 +760,16 @@ export class Editor {
 		this.restoringHistory = true;
 		this.presentState = serialized;
 		// Mode-local state (a pending segment, a drag) may reference graph
-		// objects that no longer exist; reinstalling the mode resets it.
+		// objects that no longer exist; reinstalling the mode resets it. What
+		// its cleanup saves or takes back is not history: the graph it held
+		// is replaced next.
 		this.setupMode(this.mode);
 		this.replaceGraph(JSON.parse(serialized), true);
 		// setupMode drew the mode's overlay (the connector's) against the
 		// pre-undo graph; redraw it now that the restored graph is in place.
 		this.modeHandlers?.refresh?.();
 		this.restoringHistory = false;
-		this.canUndo = this.undoStack.length > 0;
+		this.historyUndo = this.undoStack.length > 0;
 		this.canRedo = this.redoStack.length > 0;
 		this.dirty = this.presentState !== this.savedState;
 	}
@@ -497,6 +805,7 @@ export class Editor {
 			const key = e.key.toLowerCase();
 			if ((key !== 'c' && key !== 'v' && key !== 'x') || !fromPage(e)) return;
 			e.preventDefault();
+			this.settlePress();
 			if (key === 'c') {
 				this.clipboard = copySelection(this) ?? this.clipboard;
 			} else if (key === 'x') {
@@ -530,7 +839,7 @@ export class Editor {
 		this.cityCamera = this.readCameraCache(city.id) ?? city.camera;
 		this.cities = this.cityStore.list();
 		this.graph.fromJSON(city.graph);
-		this.rebuildRoads();
+		this.rebuildRoads(false);
 	}
 
 	// Apply the saved camera for the current city. The page calls this only on the
@@ -541,8 +850,13 @@ export class Editor {
 	}
 
 	// Save the current graph: over your own city, or, for an example, into a
-	// new city named in the save-as dialog.
+	// new city named in the save-as dialog. What is written is the graph as
+	// the newest undo step left it (`committed`), the press in hand settled
+	// first: what a mode holds that is no step yet (a draw's start on open
+	// ground or a sidewalk, no road laid from it) is no part of the city, so
+	// storage, the unsaved marker and Undo agree whatever comes of it.
 	save() {
+		this.settlePress();
 		if (this.currentExampleId) {
 			this.saveAsOpen = true;
 			return;
@@ -551,7 +865,7 @@ export class Editor {
 		const saved = this.cityStore.save({
 			id: this.currentCityId,
 			name: this.currentCityName,
-			graph: this.graph.toJSON(),
+			graph: this.committed(),
 			camera: this.cameraForSave()
 		});
 		if (!this.wrote(saved)) return;
@@ -563,9 +877,14 @@ export class Editor {
 		this.markSaved();
 	}
 
+	// The graph as the newest undo step left it.
+	private committed() {
+		return JSON.parse(this.presentState) as GraphData;
+	}
+
 	// True once the new city is stored and open.
 	saveAs(name: string) {
-		const city = this.cityStore.create(name, this.graph.toJSON(), this.cameraForSave());
+		const city = this.cityStore.create(name, this.committed(), this.cameraForSave());
 		if (!this.wrote(city)) return false;
 		this.saveAsOpen = false;
 		this.cityStore.setCurrentId(city.id);
@@ -623,9 +942,11 @@ export class Editor {
 
 	private clearHistory() {
 		this.undoStack.length = 0;
-		this.redoStack.length = 0;
+		this.redoStack = [];
+		this.clearedRedo = [];
+		this.clearedOldest = null;
 		this.presentState = this.savedState = JSON.stringify(this.graph.toJSON());
-		this.canUndo = false;
+		this.historyUndo = false;
 		this.canRedo = false;
 		this.dirty = false;
 	}
@@ -702,14 +1023,19 @@ export class Editor {
 	// nothing changed.
 	private perfStep = 0.5;
 	perfMove(what: string) {
-		const busiest = [...this.graph.nodes.values()].reduce((a, b) =>
-			b.connectedSegments.length > a.connectedSegments.length ? b : a
-		);
+		const busiest = this.busiestNode();
 		if (what !== 'unchanged') {
 			busiest.x += this.perfStep;
 			this.perfStep = -this.perfStep;
 		}
 		this.rebuildRoads();
+	}
+
+	// The node with the most roads, which the perf runs nudge.
+	private busiestNode() {
+		return [...this.graph.nodes.values()].reduce((a, b) =>
+			b.connectedSegments.length > a.connectedSegments.length ? b : a
+		);
 	}
 
 	// Render costs for perf runs (?stats): scene size, draw calls, CPU time per
@@ -734,9 +1060,7 @@ export class Editor {
 		this.rebuildRoads();
 		const unchangedUpdateMs = performance.now() - t;
 		// One junction nudged half a metre: what a drag frame costs.
-		const busiest = [...this.graph.nodes.values()].reduce((a, b) =>
-			b.connectedSegments.length > a.connectedSegments.length ? b : a
-		);
+		const busiest = this.busiestNode();
 		busiest.x += 0.5;
 		t = performance.now();
 		this.rebuildRoads();
@@ -764,15 +1088,132 @@ export class Editor {
 
 	// Draws the map as the graph now stands: roads, junctions, the handles
 	// on the selection, and every node's ring where its roads meet (rings
-	// come and go with their nodes).
-	rebuildRoads() {
+	// come and go with their nodes). With `follow`, the footpath ends joined
+	// to a walkway it draws anew are kept on it first (followWalkways).
+	rebuildRoads(follow = true) {
 		this.roadRenderer.update(this.graph);
+		this.noteWalkwayChanges();
+		if (follow && !this.replacing && !this.restoringHistory && this.followWalkways()) {
+			// Drawn again with the footpaths moved; the roads the first build
+			// drew anew are the edit's too (a move reads them: modes/select.ts).
+			const relined = [...this.roadRenderer.relined()];
+			this.roadRenderer.update(this.graph);
+			this.noteWalkwayChanges();
+			for (const id of relined) this.roadRenderer.relined().add(id);
+		}
+		this.refreshCrossingBadges();
 		this.refreshTaperHandles();
 		this.refreshOffsetHandle();
-		this.nodeRenderer.keepOnly(this.graph.nodes);
-		for (const node of this.graph.nodes.values()) {
-			this.nodeRenderer.setPosition(node, nodePoint(this.graph, node));
+		this.refreshJoins();
+		this.placeRings();
+	}
+
+	// Where the graph's log stood when the rings were last placed.
+	private ringStamp = -1;
+
+	// Each node's ring where its roads meet (rings come and go with their
+	// nodes). A ring shows where its node's roads end as drawn (nodePoint),
+	// so only the rings of nodes written since they were last placed, or at
+	// either end of a segment written or drawn on another line since
+	// (RoadRenderer.takeRelined), are placed again; all of them where what
+	// was written is no longer known (Graph.changesSince).
+	private placeRings() {
+		const changes = this.graph.changesSince(this.ringStamp);
+		const relined = this.roadRenderer.takeRelined();
+		this.ringStamp = this.graph.stamp;
+		if (!changes) {
+			this.nodeRenderer.keepOnly(this.graph.nodes);
+			for (const node of this.graph.nodes.values())
+				this.nodeRenderer.setPosition(node, nodePoint(this.graph, node));
+			return;
 		}
+		const ends = [...changes.segments, ...relined].flatMap((id) => {
+			const s = this.graph.segments.get(id);
+			return s ? [s.startNodeId, s.endNodeId] : [];
+		});
+		for (const id of new SvelteSet([...changes.nodes, ...ends])) {
+			const node = this.graph.nodes.get(id);
+			if (node) this.nodeRenderer.setPosition(node, nodePoint(this.graph, node));
+			else this.nodeRenderer.removeNode(id);
+		}
+	}
+
+	// Files, for the press in hand, whether each footpath node the last build
+	// found on a walkway otherwise lay joined to one as the press began: the
+	// first build to report a node lists what lay there before, which is how
+	// it lay as the press began, since every such change is reported
+	// (Networks.rewalked). Read after every build, both of a frame included,
+	// since the next build replaces the report.
+	private noteWalkwayChanges() {
+		const began = this.moving.joined;
+		if (!began) return;
+		for (const [id, was] of this.roadRenderer.rewalked()) {
+			if (!began.has(id)) began.set(id, !!was?.length);
+		}
+	}
+
+	// Keeps each footpath end joined to a walkway on it, whatever drew the
+	// walkway anew under it (a road moved, a lane edit, a setback, a road
+	// added to or removed from the junction, a road cut beside it): every
+	// footpath node the last build found on a walkway otherwise than the
+	// build before, not moved itself, is put back on that walkway, or the one
+	// drawn in its place, at its place along it (followWalkway in
+	// modes/picking.ts), or left where it is where none is; then the curves a
+	// press leaves to it are placed. Every such write belongs to the edit
+	// whose build drew the walkway anew: each node moved is filed with where
+	// it stood before (`followed`) and each curve with its handle before
+	// (`followedCurves`) until that edit is saved as one undo step, which
+	// holds them, or taken back with it (`putBackFollowed`, or the history
+	// restored). Never while a graph is put in place (`replacing`: a history
+	// step or a city opened) or history restored, which puts every node where
+	// it was saved. In a press, only a node joined to a walkway as the press
+	// began follows one, so a road passing over a footpath end never picks it
+	// up (`Moving.joined`, noteWalkwayChanges). Whether anything moved.
+	private followWalkways() {
+		const began = this.moving.joined;
+		const ends = [...this.roadRenderer.rewalked()].flatMap(([id, was]) => {
+			const on = began?.get(id) === false ? undefined : was?.[0];
+			const end = on && this.roadRenderer.freeEnd(on.path, id);
+			return on && end ? [[id, on, end] as [string, typeof on, typeof end]] : [];
+		});
+		const { moved, curves } = followWalkway(this, ends, this.moving);
+		for (const [id, stood] of moved) if (!this.followed.has(id)) this.followed.set(id, stood);
+		for (const [id, was] of curves)
+			if (!this.followedCurves.has(id)) this.followedCurves.set(id, was);
+		return moved.size + curves.size > 0;
+	}
+
+	// All the press in hand may move (mayMove in core/drag.ts), what it
+	// places itself, and how the footpaths there lay as it began (movingFrom
+	// in modes/picking.ts), set by the mode holding it: the follower reads it
+	// to tell whether a node moved itself and whether a footpath's other end
+	// may move, and to place a node and a curve the same however many builds
+	// the press took (followWalkway).
+	moving: Moving = NOTHING_MOVING;
+
+	// The footpath nodes the follower moved since the newest undo step, each
+	// where it stood before (followWalkways).
+	private followed = new SvelteMap<string, { x: number; y: number }>();
+	// The footpaths whose curve it placed, each with its handle before.
+	private followedCurves = new SvelteMap<string, { x: number; y: number } | null>();
+
+	// Puts back every footpath node the follower moved since the newest undo
+	// step, and every curve it placed, for an edit taken back without one (a
+	// move refused). The caller draws again without following, so nothing
+	// moves them anew.
+	putBackFollowed() {
+		for (const [id, at] of this.followed) {
+			const node = this.graph.nodes.get(id);
+			if (node && (node.x !== at.x || node.y !== at.y)) [node.x, node.y] = [at.x, at.y];
+		}
+		for (const [id, at] of this.followedCurves) {
+			const segment = this.graph.segments.get(id);
+			if (!segment) continue;
+			if (at) segment.setControlPoint(at.x, at.y);
+			else if (segment.hasControlPoint) segment.clearControlPoint();
+		}
+		this.followed.clear();
+		this.followedCurves.clear();
 	}
 
 	// A node ring's radius in world units at the current zoom: a fixed size on
@@ -782,9 +1223,9 @@ export class Editor {
 		return NODE_RING_PX * this.sceneManager.worldPerPixel();
 	}
 
-	// Join the changed roads to what they pass over: a node under the road,
-	// or another road crossed mid-span, so overlapping roads become real
-	// intersections.
+	// Join roads just built (drawn or pasted) to roads of their kind they
+	// pass over: a node under the road, or another road crossed mid-span, so
+	// overlapping roads become real intersections. A move never joins.
 	resolveSegmentCrossings(changed: Iterable<string>) {
 		if (!resolveCrossings(this.graph, changed)) return;
 		this.clearSelection();
@@ -799,19 +1240,41 @@ export class Editor {
 		// A press that starts on the canvas ends wherever the button comes up:
 		// over the toolbar, or over the lane panel that the press itself opened.
 		// Listening on the window keeps the mode from being left mid-drag.
-		let pressedOnCanvas = false;
+		// The modes act on the left button alone: another button pressed or
+		// let go while it is held (the camera's) neither begins nor ends a drag.
+		// A left press or a move with the button up arriving while a press is
+		// held is a release that never came (let go outside the window): the
+		// press is settled where it was last held, and this one is taken as
+		// a new press or a hover.
 		canvas.addEventListener('mousedown', (e) => {
 			if (this.sceneManager.isCameraPanning()) return;
-			pressedOnCanvas = true;
+			if (e.button === 0) {
+				this.release();
+				if (this.modeHandlers?.onMouseUp) {
+					const selection = {
+						nodes: [...this.selectedNodes],
+						segments: [...this.selectedSegments]
+					};
+					const down = { x: e.clientX, y: e.clientY };
+					this.press = { down, moved: false, last: e, selection };
+				}
+			}
 			this.modeHandlers?.onMouseDown?.(e);
 		});
 		canvas.addEventListener('mousemove', (e) => {
 			if (this.sceneManager.isCameraPanning()) return;
+			const press = this.press;
+			if (press && (e.buttons & 1) === 0) this.release();
+			else if (press) {
+				press.last = e;
+				const travel = Math.hypot(e.clientX - press.down.x, e.clientY - press.down.y);
+				if (travel > CLICK_SLOP_PX) press.moved = true;
+			}
 			this.modeHandlers?.onMouseMove?.(e);
 		});
 		this.boundMouseUp = (e: MouseEvent) => {
-			if (!pressedOnCanvas) return;
-			pressedOnCanvas = false;
+			if (!this.press || e.button !== 0) return;
+			this.press = null;
 			this.modeHandlers?.onMouseUp?.(e);
 		};
 		window.addEventListener('mouseup', this.boundMouseUp);
@@ -824,12 +1287,19 @@ export class Editor {
 	private setupMode(mode: Mode) {
 		if (!this.sceneManager) return;
 
+		this.settlePress();
 		if (this.modeHandlers?.cleanup) {
 			this.modeHandlers.cleanup();
 		}
+		this.modeUndo = false;
+		this.closeCrossing();
 		if (this.boundKeyDown) {
 			window.removeEventListener('keydown', this.boundKeyDown);
 			this.boundKeyDown = null;
+		}
+		if (this.boundKeyUp) {
+			window.removeEventListener('keyup', this.boundKeyUp);
+			this.boundKeyUp = null;
 		}
 		// Leaving the connector (Escape, a click on empty ground, another mode
 		// picked) closes it.
@@ -849,6 +1319,7 @@ export class Editor {
 		if (mode === 'draw' && this.drawStyle === 'circle') this.drawStyle = 'curve';
 		if (mode === 'circle') this.drawStyle = 'circle';
 		this.modeHandlers = null;
+		this.modeUndo = false;
 
 		if (mode === 'draw') {
 			this.modeHandlers = this.drawing ? setupDrawMode(this) : null;
@@ -866,15 +1337,26 @@ export class Editor {
 			this.modeHandlers = setupSelectMode(this);
 		}
 
-		if (this.modeHandlers?.onKeyDown) {
-			const handler = this.modeHandlers.onKeyDown;
-			// Mode shortcuts (Delete, Escape...) must not fire while typing in
-			// the lane panel or other UI controls.
-			this.boundKeyDown = (e) => {
-				if (fromPage(e)) handler(e);
-			};
-			window.addEventListener('keydown', this.boundKeyDown);
-		}
+		// Mode shortcuts (Delete, Escape...) must not fire while typing in
+		// the lane panel or other UI controls. Escape with a press in hand
+		// takes the press back before the mode sees it; Delete settles it
+		// first in every mode (`settlePress`), which may set the mode up
+		// again, so the key goes to the handlers in place after it.
+		this.boundKeyDown = (e) => {
+			if (!fromPage(e)) return;
+			if (e.key === 'Escape' && this.press) {
+				e.preventDefault();
+				this.cancelPress();
+				return;
+			}
+			if (e.key === 'Delete' || e.key === 'Backspace') this.settlePress();
+			this.modeHandlers?.onKeyDown?.(e);
+		};
+		window.addEventListener('keydown', this.boundKeyDown);
+		this.boundKeyUp = (e) => {
+			if (fromPage(e)) this.modeHandlers?.onKeyUp?.(e);
+		};
+		window.addEventListener('keyup', this.boundKeyUp);
 	}
 
 	selectNode(nodeId: string) {
@@ -910,6 +1392,8 @@ export class Editor {
 	// let go, so its taper follows its connections again from the next build.
 	private closeConnector() {
 		this.connectorNodeId = null;
+		this.connectorJoined = [];
+		this.connectorShown = null;
 		this.controlBadges = [];
 		this.crossingRenderer.clear();
 		this.roadRenderer.holdTaper(null);
@@ -997,6 +1481,58 @@ export class Editor {
 			}
 		}
 		this.nodeRenderer.setRevealed(revealed);
+		this.refreshJoins();
+	}
+
+	// Shows each footpath node selected, or at an end of a footpath selected,
+	// joined to the street's walkway its footpaths' ends lie on, as the
+	// connector shows it but without opening it: each footpath's line onto
+	// the walkway (Derived.sidewalks), and a dot on each end of it.
+	private refreshJoins() {
+		const derived = this.roadRenderer?.derived;
+		// Each node shown, with the one footpath whose line it shows (null for
+		// every footpath at a node selected).
+		const ends: [string, string | null][] = [...this.selectedNodes].map((id) => [id, null]);
+		for (const id of this.selectedSegments) {
+			const s = this.graph.segments.get(id);
+			if (!s || carries(s.lanes)) continue;
+			for (const n of [s.startNodeId, s.endNodeId])
+				if (!this.selectedNodes.has(n)) ends.push([n, id]);
+		}
+		const joins: typeof this.joins = [];
+		const lines: Pt[][] = [];
+		for (const [node, path] of ends) {
+			for (const on of derived?.sidewalks.get(node) ?? []) {
+				if (path !== null && on.path !== path) continue;
+				const index = this.graph.segments.get(on.road)?.lanes.findIndex((l) => l.id === on.lane);
+				if (index === undefined || index < 0) continue;
+				lines.push(on.line);
+				const lane = `${on.road}:${index}`;
+				if (!joins.some((j) => j.node === node && j.lane === lane)) joins.push({ node, lane });
+			}
+		}
+		// The lines are the drawing's own, the same objects while unchanged.
+		if (lines.length === this.joinLines.length && lines.every((l, k) => l === this.joinLines[k]))
+			return;
+		this.joins = joins;
+		this.joinLines = lines;
+		const dot = (point: Pt, k: number) => ({
+			ref: { segmentId: `join-${k}`, laneIndex: 0 },
+			point,
+			flow: 'both' as const
+		});
+		this.joinRenderer?.show(
+			lines.map((line) => ({
+				from: { segmentId: '', laneIndex: 0 },
+				to: { segmentId: '', laneIndex: 0 },
+				fromPoint: line[0],
+				toPoint: line.at(-1)!,
+				fromDir: { x: 0, y: 0 },
+				toDir: { x: 0, y: 0 },
+				line
+			})),
+			lines.flatMap((line, k) => [dot(line[0], 2 * k), dot(line.at(-1)!, 2 * k + 1)])
+		);
 	}
 
 	refreshOffsetHandle() {
@@ -1022,6 +1558,18 @@ export class Editor {
 		this.taperRenderer?.light(at('taper'), state);
 		this.offsetRenderer?.light(at('offset'), state);
 		this.crossingRenderer?.light(at('crossing'), state);
+	}
+
+	// Shows some roads as refused, and no others.
+	showRefused(segmentIds: string[]) {
+		this.refused = segmentIds;
+		this.selectionRenderer.showRefused(
+			segmentIds.flatMap((id) => {
+				const segment = this.graph.segments.get(id);
+				const ends = segment && segmentEnds(this.graph, segment);
+				return segment && ends ? [{ segment, a: ends.a, b: ends.b }] : [];
+			})
+		);
 	}
 
 	refreshSelectionVisuals() {
@@ -1051,6 +1599,9 @@ export class Editor {
 		this.graph.save();
 	}
 
+	// Deletes the selection as it stands. The commands that delete (Delete,
+	// Cut) settle the press in hand before they read the selection; a mode
+	// deleting within its own press (bulldoze's click) deletes what it chose.
 	deleteSelected() {
 		const nodesToCheck = new SvelteSet<string>();
 		const deletedSegments = new SvelteSet<string>();
@@ -1123,9 +1674,17 @@ export class Editor {
 		this.nodeRenderer.clear();
 		if (!keepDrawing) this.roadRenderer.clear();
 		this.graph.fromJSON(data);
+		this.followed.clear();
+		this.followedCurves.clear();
 		this.dropStaleConnector();
+		this.replacing = true;
 		this.rebuildRoads();
+		this.replacing = false;
 	}
+
+	// Whether a graph is being put in place (replaceGraph), which no footpath
+	// end follows its walkway through.
+	private replacing = false;
 
 	dispose() {
 		if (this.modeHandlers?.cleanup) {
@@ -1134,6 +1693,7 @@ export class Editor {
 		if (this.boundKeyDown) {
 			window.removeEventListener('keydown', this.boundKeyDown);
 		}
+		if (this.boundKeyUp) window.removeEventListener('keyup', this.boundKeyUp);
 		window.removeEventListener('beforeunload', this.warnUnsaved);
 		if (this.boundMouseUp) window.removeEventListener('mouseup', this.boundMouseUp);
 		if (this.boundHistoryKeyDown) {
@@ -1148,6 +1708,7 @@ export class Editor {
 		this.offsetRenderer?.dispose();
 		this.crossingRenderer?.dispose();
 		this.connectionRenderer?.dispose();
+		this.joinRenderer?.dispose();
 		this.roadRenderer?.destroy();
 		this.sceneManager?.dispose();
 	}

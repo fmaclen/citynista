@@ -6,7 +6,8 @@ import type { Segment } from '../core/segment.svelte';
 import type { Lane } from '../core/types';
 import { cloneLanes, getTotalWidth, oneWay, reverseLanes } from '../core/lane-template';
 import { nodePoint } from '../core/road-line';
-import { ENDPOINT_EXCLUSION, splitSegment } from '../core/crossings';
+import { ENDPOINT_EXCLUSION, splitSegment, TOUCH } from '../core/crossings';
+import { carries } from '../core/lane-types';
 import { getQuadraticBezierPoint } from '../geometry/bezier';
 import { DIRECTION_HANDLE, disposeHandleObject, handleObject } from '../rendering/handle-shapes';
 import { nodeHitAt } from './picking';
@@ -103,10 +104,12 @@ export function setupCircleMode(editor: Editor): ModeHandlers {
 	// road's paint crosses a little to one side), and that point is on the
 	// circle. A road whose own end is within ENDPOINT_EXCLUSION of the
 	// crossing is not cut into a sliver: that end node moves onto the circle
-	// there and becomes the ring's node.
-	const crossingsOf = (c: Pt, r: number) => {
+	// there and becomes the ring's node. Only roads of the ring's kind meet it
+	// (core/lane-types.ts); the others it crosses (resolveCrossings).
+	const crossingsOf = (c: Pt, r: number, lanes: readonly Lane[]) => {
 		const found: Crossing[] = [];
 		for (const segment of editor.graph.segments.values()) {
+			if (carries(segment.lanes) !== carries(lanes)) continue;
 			const a = editor.graph.nodes.get(segment.startNodeId);
 			const b = editor.graph.nodes.get(segment.endNodeId);
 			if (!a || !b) continue;
@@ -122,21 +125,17 @@ export function setupCircleMode(editor: Editor): ModeHandlers {
 				continue;
 			}
 			const at = (t: number) => getQuadraticBezierPoint(a.x, a.y, cx, cy, b.x, b.y, t);
-			const outside = (t: number) => {
+			const beyond = (t: number) => {
 				const p = at(t);
-				return Math.hypot(p.x - c.x, p.y - c.y) > r;
+				return Math.hypot(p.x - c.x, p.y - c.y) - r;
 			};
-			for (let i = 0; i < CROSSING_SAMPLES; i++) {
-				let lo = i / CROSSING_SAMPLES;
-				let hi = (i + 1) / CROSSING_SAMPLES;
-				const out = outside(lo);
-				if (out === outside(hi)) continue;
-				for (let k = 0; k < 30; k++) {
-					const mid = (lo + hi) / 2;
-					if (outside(mid) === out) lo = mid;
-					else hi = mid;
-				}
-				const t = (lo + hi) / 2;
+			const outside = (t: number) => beyond(t) > 0;
+			// Which side of the circle a sample lies, 0 within TOUCH of it.
+			const side = (t: number) => {
+				const d = beyond(t);
+				return d > TOUCH ? 1 : d < -TOUCH ? -1 : 0;
+			};
+			const add = (t: number) => {
 				const point = at(t);
 				const near = [a, b]
 					.map((node) => ({ node, d: Math.hypot(node.x - point.x, node.y - point.y) }))
@@ -149,6 +148,31 @@ export function setupCircleMode(editor: Editor): ModeHandlers {
 					t,
 					endNodeId: near?.node.id ?? null
 				});
+			};
+			// A road crosses the circle where it passes through it, as roads
+			// cross each other (resolveCrossings): from more than TOUCH on one
+			// side to more than TOUCH on the other. One coming up to it and
+			// going back only touches it; one ending on it meets it there.
+			let from: { t: number; side: number } | null = null;
+			for (let i = 0; i <= CROSSING_SAMPLES; i++) {
+				const t1 = i / CROSSING_SAMPLES;
+				const now = side(t1);
+				if (now === 0) {
+					if (i === 0 || i === CROSSING_SAMPLES) add(t1);
+					continue;
+				}
+				const was = from;
+				from = { t: t1, side: now };
+				if (!was || was.side === now) continue;
+				let lo = was.t;
+				let hi = t1;
+				const out = outside(lo);
+				for (let k = 0; k < 30; k++) {
+					const mid = (lo + hi) / 2;
+					if (outside(mid) === out) lo = mid;
+					else hi = mid;
+				}
+				add((lo + hi) / 2);
 			}
 		}
 		// Roads meeting at one node on the circle are one crossing.
@@ -255,7 +279,7 @@ export function setupCircleMode(editor: Editor): ModeHandlers {
 		const r = editor.gridEnabled && !freeHeld ? Math.round(reach / g) * g : reach;
 		if (r < Math.max(getTotalWidth(lanes), ENDPOINT_EXCLUSION * 1.5)) return null;
 		const angle = Math.atan2(y - centre.y, x - centre.x);
-		const crossings = crossingsOf(centre, r);
+		const crossings = crossingsOf(centre, r, lanes);
 		const points = ringPoints(crossings, angle);
 		return { c: centre, r, angle, lanes, oneWay, crossings, points };
 	};
@@ -330,12 +354,26 @@ export function setupCircleMode(editor: Editor): ModeHandlers {
 		updatePreview(world.x, world.z);
 	};
 
+	// Whatever changes what the next click lays (the brush or its lanes, the
+	// grid, Cmd/Ctrl pressed or let go) draws the preview again from where
+	// the pointer last was.
+	const refresh = () => {
+		if (lastWorld) updatePreview(lastWorld.x, lastWorld.y);
+	};
+	const modifiers = (event: KeyboardEvent) => {
+		if (event.key !== 'Meta' && event.key !== 'Control') return false;
+		freeHeld = event.metaKey || event.ctrlKey;
+		refresh();
+		return true;
+	};
+
 	// F flips the ring's direction; Escape drops the pending ring, then
 	// leaves the tool.
 	const onKeyDown = (event: KeyboardEvent) => {
+		if (modifiers(event)) return;
 		if (event.key.toLowerCase() === 'f' && !event.metaKey && !event.ctrlKey) {
 			clockwise = !clockwise;
-			if (lastWorld) updatePreview(lastWorld.x, lastWorld.y);
+			refresh();
 			return;
 		}
 		if (event.key !== 'Escape') return;
@@ -353,5 +391,5 @@ export function setupCircleMode(editor: Editor): ModeHandlers {
 		cursor.destroy();
 	};
 
-	return { onMouseDown, onMouseMove, onKeyDown, cleanup };
+	return { onMouseDown, onMouseMove, onKeyDown, onKeyUp: modifiers, refresh, cleanup };
 }

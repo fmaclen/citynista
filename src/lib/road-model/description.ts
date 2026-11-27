@@ -61,6 +61,8 @@ export type Sign =
 
 export interface Crossing {
 	id: string;
+	// The footpath's crossing it is drawn of (Crossed.id), if one.
+	of?: string;
 	// Its middle, sidewalk to sidewalk.
 	line: Line;
 	// A zebra's rings are its stripes.
@@ -82,6 +84,10 @@ export interface LanePath {
 export interface EndCut {
 	paint: number;
 	nose: number | null;
+	// Where the road's lanes carry on across the node and a walkway of the
+	// node's lies across its mouth, that walkway's ground over the road, a
+	// little grown: the road's paint stops short of it, wherever it reaches.
+	clear?: Ring[];
 }
 
 export interface RoadDescription {
@@ -95,7 +101,14 @@ export interface RoadDescription {
 	along: number[];
 	surfaces: Surface[];
 	markings: Marking[];
+	// Stop and yield lines short of a crossing laid over the road
+	// (road-model/overlay.ts).
+	signs: Sign[];
 	crossings: Crossing[];
+	// The ground its paint stops at for the lines held traffic meets
+	// crossings at (holds.ts): from each line up to what it stands for,
+	// across its carriageway. No part of any crossing.
+	cleared?: Ring[];
 	cut: { start: EndCut; end: EndCut };
 	// A point of each ring left covering a hole that could not be sliced away
 	// (toRings in clip.ts); empty when the drawing is sound.
@@ -119,7 +132,17 @@ export interface NodeDescription {
 	markings: Marking[];
 	signs: Sign[];
 	crossings: Crossing[];
-	approaches: { end: string; control: Control; badge: Pt }[];
+	// As a road's.
+	cleared?: Ring[];
+	// Each approach: its control, where its badge sits, and how many of its
+	// lanes take an arrow (where traffic stops or a lane can't go straight
+	// on), which check() holds the drawing to.
+	approaches: { end: string; control: Control; badge: Pt; arrows: number }[];
+	// Each corner sidewalk where roads meet (cornersOf in corners.ts): the
+	// sidewalk lanes it joins round the corner and its middle line from the
+	// first to the second, which a footpath's end on it is joined to and slides
+	// along (core/networks.ts, modes/picking.ts). None elsewhere.
+	walkways?: { a: LaneRef; b: LaneRef; line: Line }[];
 	// By end key: what the node asks of each road ending at it.
 	cuts: Map<string, EndCut>;
 	// As a road's.
