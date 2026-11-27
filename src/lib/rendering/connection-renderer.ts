@@ -44,6 +44,7 @@ function cubic(p0: number, p1: number, p2: number, p3: number, t: number): numbe
 }
 
 function arcGeometry(c: LaneConnection): THREE.BufferGeometry {
+	if (c.line) return editorLineGeometry(c.line, CONNECTION_Y);
 	const reach = Math.hypot(c.toPoint.x - c.fromPoint.x, c.toPoint.y - c.fromPoint.y) * 0.4;
 	const c1x = c.fromPoint.x + c.fromDir.x * reach;
 	const c1y = c.fromPoint.y + c.fromDir.y * reach;

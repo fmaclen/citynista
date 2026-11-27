@@ -149,6 +149,9 @@ export class SelectionRenderer {
 	private screenSized: ScreenSized;
 	private visuals = new Map<string, SegmentVisual>();
 	private hover: Highlight | null = null;
+	// Roads a move would lay across their own kind (modes/select.ts), in the
+	// danger colour.
+	private refused = new Map<string, Highlight>();
 	private guideMaterial = createEditorLineMaterial(HANDLE_FILL);
 	// The curvature handle under the pointer or in hand.
 	private lit: { segmentId: string; state: HandleState } | null = null;
@@ -259,6 +262,26 @@ export class SelectionRenderer {
 		}
 	}
 
+	// Shows these roads as refused, and no others.
+	showRefused(roads: { segment: Segment; a: Pt; b: Pt }[]) {
+		const ids = new Set(roads.map((r) => r.segment.id));
+		for (const [id, highlight] of this.refused)
+			if (!ids.has(id)) {
+				this.scene.remove(highlight.ribbon);
+				disposeHighlight(highlight);
+				this.refused.delete(id);
+			}
+		for (const { segment, a, b } of roads) {
+			let highlight = this.refused.get(segment.id);
+			if (!highlight) {
+				highlight = createHighlight(DANGER_COLOR);
+				this.scene.add(highlight.ribbon);
+				this.refused.set(segment.id, highlight);
+			}
+			updateHighlight(highlight, segment, a, b, HOVER_Y);
+		}
+	}
+
 	hideSegment(segmentId: string) {
 		const visual = this.visuals.get(segmentId);
 		if (!visual) return;
@@ -281,6 +304,7 @@ export class SelectionRenderer {
 
 	dispose() {
 		this.clear();
+		this.showRefused([]);
 		this.guideMaterial.dispose();
 		this.laneMaterial.dispose();
 	}

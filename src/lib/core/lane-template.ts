@@ -76,7 +76,7 @@ function getDefaultTemplate(): LaneTemplate {
 	return LANE_TEMPLATES[0];
 }
 
-export function cloneLanes(lanes: Lane[]): Lane[] {
+export function cloneLanes(lanes: readonly Lane[]): Lane[] {
 	return lanes.map((lane) => ({ ...lane }));
 }
 
@@ -95,20 +95,20 @@ export function defaultHotbar(): (Brush | null)[] {
 	return slots;
 }
 
-export function getTotalWidth(lanes: Lane[]): number {
+export function getTotalWidth(lanes: readonly Lane[]): number {
 	return lanes.reduce((sum, lane) => sum + lane.width, 0);
 }
 
 // The one way a cross-section's vehicle lanes all run, if they all run one
 // way; null for none or for two-way traffic.
-export function oneWay(lanes: Lane[]) {
+export function oneWay(lanes: readonly Lane[]) {
 	const vehicles = lanes.filter((lane) => lane.role === 'vehicle');
 	const dir = vehicles[0]?.direction;
 	if (dir === 'bidirectional' || !vehicles.every((lane) => lane.direction === dir)) return null;
 	return dir ?? null;
 }
 
-export function serializeLanes(lanes: Lane[]): string {
+export function serializeLanes(lanes: readonly Lane[]): string {
 	return lanes
 		.map((lane) => `${lane.role}:${lane.material}:${lane.width}:${lane.direction}`)
 		.join(',');
@@ -117,7 +117,7 @@ export function serializeLanes(lanes: Lane[]): string {
 // The same cross-section read end-to-end the other way: lane order reverses and
 // travel directions flip, so two segments meeting at a node can be compared in a
 // shared flow direction.
-export function reverseLanes(lanes: Lane[]): Lane[] {
+export function reverseLanes(lanes: readonly Lane[]): Lane[] {
 	return lanes
 		.slice()
 		.reverse()

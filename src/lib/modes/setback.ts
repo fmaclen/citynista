@@ -61,8 +61,9 @@ export function setbackHandles(editor: Editor) {
 	const nodeId = editor.selectedNodes.size === 1 ? [...editor.selectedNodes][0] : null;
 	const node = nodeId ? editor.graph.nodes.get(nodeId) : undefined;
 	const limits = node && editor.roadRenderer?.taperLimits(node.id);
-	const spans = editor.roadRenderer?.derived?.spans;
-	if (!node || !limits || !spans) return null;
+	const derived = editor.roadRenderer?.derived;
+	if (!node || !limits || !derived) return null;
+	const { spans, units } = derived;
 	const handles: SetbackHandle[] = [];
 	const guides: [Pt, Pt][] = [];
 	const ring = nodePoint(editor.graph, node);
@@ -71,8 +72,14 @@ export function setbackHandles(editor: Editor) {
 		const span = spans.get(segmentId);
 		if (!segment || !span || !limits.has(segmentId)) continue;
 		const atStart = segment.startNodeId === node.id;
-		// Along the road as it shows (offset and all), from the node out.
-		let centerline: Pt[] = roadLine(editor.graph, segment);
+		// Along the road as it shows (offset and all), from the node out: the
+		// whole road where it is cut through nodes it only carries on through
+		// (Derived.units), so its end can be set past them.
+		let centerline: Pt[] = (units.get(segmentId) ?? [segmentId]).flatMap((id, i) => {
+			const piece = editor.graph.segments.get(id);
+			const line = piece ? roadLine(editor.graph, piece) : [];
+			return i ? line.slice(1) : line;
+		});
 		if (!atStart) centerline = [...centerline].reverse();
 		const trim = atStart ? span.d0 : span.total - span.d0 - span.length;
 		// Where the road stops short, but never on the node itself.

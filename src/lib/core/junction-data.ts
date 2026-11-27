@@ -3,10 +3,11 @@ import type { JunctionData, JunctionLaneRef } from './types';
 type End = 'start' | 'end';
 
 // A node's junction edits (connections added and removed, crossings,
-// approach controls, setbacks) carried over to other roads: copied with the
-// roads they name, pasted onto another node, or kept when two roads are
-// joined into one. `end` maps a road end to its new road end (or drops it);
-// `lane` maps a lane id on an old road to the lane id on the new one.
+// approach controls, setbacks, roads attached at an edge) carried over to
+// other roads: copied with the roads they name, pasted onto another node, or
+// kept when two roads are joined into one or one is cut in two. `end` maps a
+// road end to its new road end (or drops it); `lane` maps a lane id on an old
+// road to the lane id on the new one.
 export function mapJunction(
 	data: JunctionData,
 	end: (road: string, end: End) => { road: string; end: End } | null,
@@ -42,12 +43,18 @@ export function mapJunction(
 	if (removed.length) out.removed = removed;
 	if (crossings.length) out.crossings = crossings;
 	if (Object.keys(control).length) out.control = control;
-	const setbacks: Record<string, number> = {};
-	for (const [road, value] of Object.entries(data.setbacks ?? {})) {
-		// A road meets the node at one end only.
-		const e = end(road, 'start') ?? end(road, 'end');
-		if (e) setbacks[e.road] = value;
-	}
-	if (Object.keys(setbacks).length) out.setbacks = setbacks;
+	// Edits keyed by road alone: a road meets the node at one end only.
+	const byRoad = <T>(record: Record<string, T> | undefined) => {
+		const mapped: Record<string, T> = {};
+		for (const [road, value] of Object.entries(record ?? {})) {
+			const e = end(road, 'start') ?? end(road, 'end');
+			if (e) mapped[e.road] = value;
+		}
+		return Object.keys(mapped).length ? mapped : undefined;
+	};
+	const setbacks = byRoad(data.setbacks);
+	const sides = byRoad(data.sides);
+	if (setbacks) out.setbacks = setbacks;
+	if (sides) out.sides = sides;
 	return Object.keys(out).length ? out : undefined;
 }

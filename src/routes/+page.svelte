@@ -5,6 +5,7 @@
 	import FpsCounter from '$lib/components/FpsCounter.svelte';
 	import LaneEditor from '$lib/components/LaneEditor.svelte';
 	import ControlBadges from '$lib/components/ControlBadges.svelte';
+	import { Networks, type Scene } from '$lib/core/networks';
 	import { untrack } from 'svelte';
 
 	let containerElement: HTMLDivElement;
@@ -50,8 +51,30 @@
 						__ghostModel?: () => unknown;
 						__ghostLook?: () => unknown;
 						__editorLook?: () => unknown;
+						__staleDrawing?: () => string[];
 					};
 					w.__roadModel = () => editor.roadRenderer.derived?.place;
+					// The pieces the editor draws otherwise than a fresh build of
+					// its graph would (core/networks.ts): none, unless something
+					// kept from build to build missed a change.
+					w.__staleDrawing = () => {
+						const live = editor.roadRenderer.scene;
+						if (!live) return ['no drawing'];
+						const fresh = new Networks().build(editor.graph).scene;
+						const pieces = (scene: Scene) => [
+							...scene.place.roads.map((r) => `road:${r.id}`),
+							...scene.place.junctions.map((j) => `node:${j.id}`)
+						];
+						// A piece as drawn, but the keys its caches go by.
+						const drawn = (scene: Scene, piece: string) => {
+							const id = piece.slice(5);
+							const d = piece.startsWith('road') ? scene.road(id) : scene.node(id);
+							return JSON.stringify(d, (k, v) => (k === 'key' ? undefined : v));
+						};
+						return [...new Set([...pieces(live), ...pieces(fresh)])].filter(
+							(piece) => drawn(live, piece) !== drawn(fresh, piece)
+						);
+					};
 					w.__graph = () => editor.graph.toJSON();
 					w.__ghostGraph = () => editor.ghost?.graph.toJSON();
 					w.__ghostModel = () => editor.ghost?.renderer.derived?.place;
@@ -64,7 +87,18 @@
 					w.__editorLook = () => ({
 						lane: editor.highlightedLane,
 						handle: editor.litHandle,
-						guides: editor.guideRenderer.shown
+						guides: editor.guideRenderer.shown,
+						joined: editor.connectorJoined,
+						joins: editor.joins,
+						connector: editor.connectorShown,
+						drop: editor.dropShown,
+						crossing: editor.crossingBadges.find((b) => b.id === editor.opened) ?? null,
+						crossings: editor.crossingBadges,
+						selection: {
+							nodes: [...editor.selectedNodes],
+							segments: [...editor.selectedSegments]
+						},
+						refused: editor.refused
 					});
 				}
 

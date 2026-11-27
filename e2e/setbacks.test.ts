@@ -1,5 +1,16 @@
 import { expect, test, type Page } from '@playwright/test';
-import { editorLook, openScene, roadModel, screenAt, type Pt, PX_PER_M } from './app';
+import { createLanesFrom } from '../src/lib/core/lane-template';
+import { nodeOf } from '../unit/model';
+import {
+	editorLook,
+	liveGraph,
+	openGraph,
+	openScene,
+	roadModel,
+	screenAt,
+	type Pt,
+	PX_PER_M
+} from './app';
 
 // Setback handles on a selected node: an arrow on each road where it stops
 // short of the node, which sets that road's setback alone (Shift: every
@@ -122,5 +133,40 @@ test.describe('a junction of three roads', () => {
 
 		await page.keyboard.press('Escape');
 		await expect.poll(guides).toEqual([]);
+	});
+});
+
+// A street from w east to a T at j (40, 0), cut at c 4 m short of j: two
+// pieces with the same lanes, `a` (w–c) and `b` (c–j), one road through c
+// (core/place.ts), drawn named by its first piece.
+test.describe('a road cut short of a junction', () => {
+	const street = () => createLanesFrom('street').map((l, i) => ({ ...l, id: `l${i}` }));
+	const graph = {
+		nodes: [
+			{ id: 'w', x: -40, y: 0 },
+			{ id: 'c', x: 36, y: 0 },
+			{ id: 'j', x: 40, y: 0 },
+			{ id: 'n', x: 40, y: 40 },
+			{ id: 's', x: 40, y: -40 }
+		],
+		segments: [
+			{ id: 'a', startNodeId: 'w', endNodeId: 'c', lanes: street() },
+			{ id: 'b', startNodeId: 'c', endNodeId: 'j', lanes: street() },
+			{ id: 'up', startNodeId: 'j', endNodeId: 'n', lanes: street() },
+			{ id: 'down', startNodeId: 'j', endNodeId: 's', lanes: street() }
+		]
+	};
+
+	test("its arrow moves the whole road's end, past the cut", async ({ page }) => {
+		await openGraph(page, graph, `topdown&model&cam=0,0,${ZOOM}`);
+		const node = toScreen(40, 0);
+		await page.mouse.click(node.x, node.y);
+		await expect.poll(async () => (await roadEnds(page)).a?.last.x).toBeLessThan(36);
+		const end = (await roadEnds(page)).a.last.x;
+		await drag(page, toScreen(end, 0), toScreen(25, 0));
+		// 15 m short of j, 11 m past the cut; stored on the piece ending at j.
+		await expect.poll(async () => (await roadEnds(page)).a.last.x).toBeCloseTo(25, 0);
+		const setbacks = nodeOf(await liveGraph(page), 'j').junction?.setbacks ?? {};
+		expect(setbacks.b).toBeCloseTo(15, 0);
 	});
 });

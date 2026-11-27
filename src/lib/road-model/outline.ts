@@ -1,9 +1,22 @@
 // A node's curb outline: each road end's curb points, the corner curves
 // between neighbouring ends, and the mouth straight across each roadway.
 
+import { area, fromPath, type Paths, subtract, toPath, union } from './clip';
 import { angleOf, centreOf, type EndInfo, type LaneEnd, lateral } from './ends';
-import { cubic, curveBetween, dedupe, dist, dot, neg, offsetPoint, TAPER } from './geometry';
-import { type Pt, isRoadway } from './model';
+import {
+	crossSection,
+	cubic,
+	curveBetween,
+	dedupe,
+	dist,
+	dot,
+	frameAt,
+	neg,
+	offsetPoint,
+	sampleDistances,
+	TAPER
+} from './geometry';
+import { endKey, farEnd, type Pt, isRoadway } from './model';
 
 // The curb outline's corners: one between each pair of neighbouring road
 // ends with a roadway (of the lanes `counts` keeps), by angle round the
@@ -98,6 +111,28 @@ function ending(pts: Pt[], gap: number) {
 	return out;
 }
 
+// The way a road's edge through `p`, a point on its end, leaves that end as
+// the road draws it: straight to the edge's point at the road's next row
+// (roadRows in road.ts, every 2 m).
+function drawnEdge(end: EndInfo, p: Pt) {
+	const { road, path } = end.geo;
+	const rows = sampleDistances(path.length);
+	const d = end.ref.end === 'start' ? rows[1] : rows[rows.length - 2];
+	const f = frameAt(path, d);
+	const o = lateral(end, p) + (road.lean ?? 0) * (d - end.frame.distance);
+	const q = offsetPoint(f.p, f.n, o);
+	const l = dist(p, q) || 1;
+	return { x: (q.x - p.x) / l, y: (q.y - p.y) / l };
+}
+
+// Where the line through `p` along `u` meets the one through `q` along `v`.
+function meeting(p: Pt, u: Pt, q: Pt, v: Pt) {
+	const cross = u.x * v.y - u.y * v.x;
+	if (Math.abs(cross) < 1e-9) return null;
+	const s = ((q.x - p.x) * v.y - (q.y - p.y) * v.x) / cross;
+	return offsetPoint(p, u, s);
+}
+
 // A corner curve from one curb to the next: leaves along the first road into
 // the junction and arrives along the second, with arc-like handles.
 function cornerCurve(a: Curb, b: Curb) {
@@ -163,10 +198,15 @@ function cornerCurve(a: Curb, b: Curb) {
 		// little inside the other road's line, as roads meeting at a sharp angle
 		// do. No curve fits between them; any would swing into the other road's
 		// mouth and pinch it. The curb runs along both edges to where they meet,
-		// back along an end's own edge where nothing lies beyond it.
+		// back along an end's own edge where nothing lies beyond it: along that
+		// edge as the road draws it (drawnEdge), which on a curve leaves the
+		// end's tangent at once.
 		const reaches = (s: number, bare: boolean) => s > 0.05 || (bare && s > -OVERLAP);
 		if (reaches(sAt, a.bareLeave) && reaches(tAt, b.bareArrive)) {
-			return ending([p0, offsetPoint(p0, d0, sAt), p3], 0.02);
+			const ea = sAt < 0 ? neg(drawnEdge(a.end, p0)) : d0;
+			const eb = tAt < 0 ? drawnEdge(b.end, p3) : d3;
+			const meet = ea === d0 && eb === d3 ? null : meeting(p0, ea, p3, eb);
+			return ending([p0, meet ?? offsetPoint(p0, d0, sAt), p3], 0.02);
 		}
 	}
 	let k =
@@ -193,7 +233,9 @@ function cornerCurve(a: Curb, b: Curb) {
 }
 
 export interface Outline {
-	polygon: Pt[];
+	// The paving's edge: one ring, or one for each part of nodes merged into
+	// one that no roadway joins.
+	rings: Pt[][];
 	corners: { a: string; b: string; pts: Pt[] }[];
 	curbs: Map<string, Curb>;
 }
@@ -255,7 +297,98 @@ export function outlineOf(
 	// Each corner ends where the next end's mouth begins; the mouth runs on
 	// across to where the next corner leaves.
 	const polygon = corners.flatMap((c) => [...c.pts, ...curbs.get(c.b)!.mouth.slice(1, -1)]);
-	return { polygon, corners, curbs };
+	return { rings: [polygon], corners, curbs };
+}
+
+// The curb outline of nodes merged into one (merge.ts), each node's road
+// ends a part (`parts`), `ends` those that remain: what the nodes' own
+// outlines and the roadways of the roads merged away between them pave
+// apart. Its paving (`rings`) is all of those together, so where two nodes'
+// outlines overlap (their setbacks on a short road between them reach past
+// each other, a gore's tip between) nothing is left out, and no node's paving
+// lies over a road that remains at another. Each corner runs
+// from a remaining end round its node's outline, and where it comes to the
+// mouth of a road merged away it follows that road's curb to its far end
+// and carries on round the outline of the node there, until it comes to a
+// remaining end. A node of two roads has its curb along its lanes' edges, as
+// drawn apart.
+export function joinedOutline(parts: EndInfo[][], ends: EndInfo[]): Outline {
+	const kept = new Set(ends.map((e) => e.key));
+	const leaving = new Map<string, Outline['corners'][number]>();
+	const curbs = new Map<string, Curb>();
+	const owns: { rings: Pt[][]; keys: Set<string> }[] = [];
+	for (const part of parts) {
+		const own = outlineOf(part, part.length === 2 ? [[part[0]], [part[1]]] : null);
+		for (const c of own.corners) leaving.set(c.a, c);
+		for (const [key, curb] of own.curbs) curbs.set(key, curb);
+		owns.push({ rings: own.rings, keys: new Set(part.map((e) => e.key)) });
+	}
+	const strip = (curb: Curb) =>
+		toPath([...curbAlong(curb, true), ...curbAlong(curb, false).reverse()]);
+	// Each node's own paving, less any road that remains and ends at another
+	// of them (a node's corner can reach out over a road beyond a short ramp
+	// merged away between them), and each road merged away, curb to curb.
+	const paved: Paths = [];
+	const remaining = [...curbs].filter(([key]) => kept.has(key));
+	for (const own of owns) {
+		const others = remaining.filter(([key]) => !own.keys.has(key)).map(([, c]) => strip(c));
+		const rings = union(own.rings.filter((r) => r.length >= 3).map(toPath));
+		paved.push(...(others.length ? subtract(rings, union(others)) : rings));
+	}
+	const merged = new Set<string>();
+	for (const [key, curb] of curbs) {
+		if (kept.has(key) || merged.has(curb.end.ref.road)) continue;
+		merged.add(curb.end.ref.road);
+		paved.push(strip(curb));
+	}
+	const corners: Outline['corners'] = [];
+	for (const start of leaving.values()) {
+		if (!kept.has(start.a)) continue;
+		const pts = [...start.pts];
+		let b = start.b;
+		for (let guard = 0; !kept.has(b) && guard <= parts.length; guard++) {
+			const here = curbs.get(b)!;
+			const on = leaving.get(endKey(farEnd(here.end.ref)));
+			if (!on) break;
+			pts.push(...curbAlong(here, here.arrive === here.lo), ...on.pts);
+			b = on.b;
+		}
+		if (kept.has(b)) corners.push({ a: start.a, b, pts });
+	}
+	// The corners in order round each ring.
+	const next = new Map(corners.map((c) => [c.a, c]));
+	const done = new Set<string>();
+	const ordered: Outline['corners'] = [];
+	for (const first of corners)
+		for (let c = first; !done.has(c.a); c = next.get(c.b) ?? first) {
+			done.add(c.a);
+			ordered.push(c);
+		}
+	return {
+		rings: union(paved)
+			.filter((r) => area(r) > 0)
+			.map(fromPath),
+		corners: ordered,
+		curbs: new Map([...curbs].filter(([key]) => kept.has(key)))
+	};
+}
+
+// A road's curb from one end to the other, on its left edge (`lo`) or its
+// right: the edge of its outermost roadway lane there, as the road draws it
+// (its rows, roadRows in road.ts), so a corner run back along that edge
+// (drawnEdge) lies on it.
+function curbAlong(curb: Curb, lo: boolean) {
+	const { road, path } = curb.end.geo;
+	const from = curb.end.ref.end;
+	const pts = sampleDistances(path.length).map((s) => {
+		const f = frameAt(path, s);
+		const roadway = crossSection(road, s).filter((l) => isRoadway(l.lane));
+		const o = lo
+			? Math.min(...roadway.map((l) => l.left))
+			: Math.max(...roadway.map((l) => l.right));
+		return offsetPoint(f.p, f.n, o);
+	});
+	return from === 'start' ? pts : pts.reverse();
 }
 
 // The curb outlines across a node of two sides (linkSides in ends.ts): one
@@ -269,9 +402,9 @@ export function outlineOf(
 export function outlinesAcross(between: { a: EndInfo; b: EndInfo; lanes: Set<LaneEnd> }[]) {
 	const outlines = between
 		.map(({ a, b, lanes }) => outlineOf([a, b], [[a], [b]], (l) => lanes.has(l)))
-		.filter((o) => o.polygon.length >= 3);
+		.filter((o) => o.rings[0].length >= 3);
 	return {
-		polygons: outlines.map((o) => o.polygon),
+		polygons: outlines.map((o) => o.rings[0]),
 		corners: outlines.flatMap((o) => o.corners),
 		curbs: outlines.flatMap((o) => [...o.curbs.values()])
 	};

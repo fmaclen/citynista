@@ -28,6 +28,10 @@ export function nodeRingGeometry() {
 // road.
 export const NODE_Y_OFFSET = 0.4;
 
+// How many rings are placed (setPosition), counted only while a test turns
+// counting on (`on`).
+export const ringsPlaced = { on: false, count: 0 };
+
 export class NodeRenderer {
 	private scene: THREE.Scene;
 	private screenSized: ScreenSized;
@@ -65,6 +69,7 @@ export class NodeRenderer {
 
 	// Where the ring shows (see nodePoint); a node without a ring gets one.
 	setPosition(node: Node, p: { x: number; y: number }) {
+		if (ringsPlaced.on) ringsPlaced.count++;
 		const mesh = this.meshes.get(node.id) ?? this.createNode(node);
 		if (mesh.position.x !== p.x || mesh.position.z !== p.y)
 			mesh.position.set(p.x, NODE_Y_OFFSET, p.y);

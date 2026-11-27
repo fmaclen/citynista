@@ -96,6 +96,19 @@ export interface SegmentData {
 	// end; absent is 0.
 	offsetStart?: number;
 	offsetEnd?: number;
+	// On a footpath: the controls set by hand on the carriageways it crosses
+	// (core/crossing-controls.ts). Absent, each crossing gives way.
+	controls?: CrossingControl[];
+}
+
+// A control set by hand for a footpath segment and a carriageway it crosses,
+// held by every crossing it makes of that carriageway: the car road, by that
+// road's segments, and the carriageway, by the ids of its car lanes (absent,
+// every carriageway of the road).
+export interface CrossingControl {
+	roads: string[];
+	lanes?: string[];
+	control: 'none' | 'stop' | 'yield' | 'signal';
 }
 
 export interface GraphData {

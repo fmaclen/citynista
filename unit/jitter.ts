@@ -2,15 +2,23 @@ import { expect, test } from 'bun:test';
 import { readdirSync, readFileSync } from 'node:fs';
 import type { GraphData } from '../src/lib/core/types';
 import { check } from '../src/lib/road-model/checks';
-import type { Drawing } from '../src/lib/road-model/drawing';
-import { editorDrawing, liveShape, pieces } from './model';
+import type { Scene as Drawing } from '../src/lib/core/networks';
+import {
+	carDiff,
+	carPart,
+	editorDrawing,
+	liveShape,
+	logged,
+	pieces,
+	withoutFootpaths
+} from './model';
 
 // The drawing while things move (bun run test:jitter; the file name keeps it
 // out of `bun test ./unit`). Every test graph and the neighbourhood example
-// is rebuilt through one PlaceBuilder and one Drawing as the editor rebuilds on
-// every drag frame, and each frame has to pass the drawing rules in
-// road-model/checks.ts and draw exactly what a PlaceBuilder and Drawing built from
-// scratch draw, so a cache that misses a change fails. Three parts: every
+// is rebuilt through one Networks as the editor rebuilds on every drag frame,
+// told what each move wrote as the editor's graph tells it (`logged`),
+// and each frame has to pass the drawing rules in road-model/checks.ts and
+// draw exactly what a Networks built from scratch draws, so a cache that misses a change fails. Three parts: every
 // node nudged one at a time and put back, nodes dragged by seeded random
 // amounts, and a node walked into its neighbour until their junctions merge
 // and back until they split. A failure names the graph and the move: rerun
@@ -30,37 +38,13 @@ const GRAPHS: [string, GraphData][] = [
 // Rules a graph already breaks on the current drawing, left out for that
 // graph only.
 const KNOWN: Record<string, string[]> = {
-	// A footpath crossing a street through a node (arc at rest, bend moved
-	// 5 m north or south): a wedge of ground up to 2 cm wide and over half a
-	// metre long between the path's end and the crossing's sidewalk, whose
-	// square end is turned by the first step of its curve.
-	footpaths: ['crack at arc', 'crack at bend'],
 	// tee nudged south, or tee-e or tee-w north: tee-west's and tee-east's
 	// lines cross tee's.
 	'junction-materials': ['lines cross'],
-	// A sidewalk spike at (192.2, 60.9); with the spread sample moved 5 m,
-	// east: segment-284's lines cross segment-285's, west: segment-380's cross
-	// segment-451's. In those frames each pair, two
-	// arms of one junction swung together, lie over each other short of it
-	// (sidewalk, verge and a hair of lane), as do segment-289 and segment-293
-	// (sidewalk); at node-137 and node-184 a wedge of ground up to 4 cm wide
-	// opens between a road's sidewalk and the corner sidewalk. Moved west,
-	// segment-380 and segment-451, lying over each other, both lie over a
-	// sliver of node-181's paving between their mouths (0.05 m², same layer).
-	neighbourhood: [
-		'crack at node-137',
-		'crack at node-184',
-		'sidewalk spike',
-		'lines cross: segment-284 and segment-285',
-		'lines cross: segment-380 and segment-451',
-		'double cover: segment-284 and segment-285',
-		'double cover: segment-380 and segment-451',
-		'double cover: segment-380 and node-181 lane|asphalt and paving|asphalt',
-		'double cover: segment-451 and node-181 lane|asphalt and paving|asphalt',
-		'double cover: segment-289 and segment-293 walk|concrete'
-	],
 	// b or c moved 5 m north or south: the merged junction's own lines cross.
 	'tight-junction': ['lines cross: b+c and b+c'],
+	// The same, its middle piece's lanes named apart (the merge walk's scene).
+	'tight-link': ['lines cross: b+c and b+c'],
 	// a or b moved toward the other, tightening the hairpin: the sidewalk on
 	// the inside of the fold lies over the far lanes and their paint.
 	'tight-bend': ['paint on sidewalk', 'sidewalk over asphalt']
@@ -97,9 +81,27 @@ function frame(
 	const stale = differ(pieces(scene), pieces(editorDrawing()(graph)));
 	const found = [
 		...(rules ? problems(name, scene, skip) : []),
-		...stale.map((id) => `${id} differs from a fresh build`)
+		...stale.map((id) => `${id} differs from a fresh build`),
+		...carsMoved(graph, scene)
 	];
 	return { scene, found };
+}
+
+// Where the graph has footpaths, whether its car roads draw (but for their
+// paint) as a fresh build of the graph without them does (core/networks.ts).
+function carsMoved(graph: Live, scene: Drawing) {
+	const cars = [...graph.segments].filter(([, s]) => s.lanes.some((l) => l.role === 'vehicle'));
+	if (cars.length === graph.segments.size) return [];
+	builds++;
+	const alone = liveShape(
+		withoutFootpaths({
+			nodes: [...graph.nodes.values()].map(({ id, x, y, junction }) => ({ id, x, y, junction })),
+			segments: [...graph.segments.values()]
+		})
+	);
+	return carDiff(carPart(scene), carPart(editorDrawing()(alone))).map(
+		(d) => `the car roads differ from a build without the footpaths: ${d}`
+	);
 }
 
 // A seeded generator (mulberry32), so a seed always makes the same drags.
@@ -168,6 +170,10 @@ function holdHome(graph: Live, ids: string[]) {
 // rules there; every move is put back and compared with the drawing before.
 const CITY_NODES = 100;
 const SPREAD = 80;
+// A city's nudges take a minute and a half: three rule checks of it, most
+// of the time, and in each frame two builds of it from scratch, one without
+// its footpaths. Twice that leaves room for a busy machine.
+const CITY_TIME = 240_000;
 
 function moveGroups(graph: Live) {
 	const ids = [...graph.nodes.keys()].sort();
@@ -192,34 +198,38 @@ const DIRECTIONS = [
 ];
 
 for (const [name, data] of GRAPHS) {
-	test(`${name}: every node nudged and put back draws cleanly and freshly`, () => {
-		const city = data.nodes.length > CITY_NODES;
-		const graph = liveShape(structuredClone(data));
-		const draw = editorDrawing();
-		const first = frame(name, graph, draw);
-		const failures = first.found.map((p) => `${name} at rest: ${p}`);
-		const home = pieces(first.scene);
-		for (const group of moveGroups(graph)) {
-			const label = group.length === 1 ? group[0] : `${group.length} spread nodes`;
-			const back = holdHome(graph, group);
-			for (const d of NUDGES)
-				for (const [dx, dy] of DIRECTIONS) {
-					const move = `${label} moved (${dx * d}, ${dy * d})`;
-					for (const id of group) {
-						const n = graph.nodes.get(id)!;
-						moveNode(graph, id, n.x + dx * d, n.y + dy * d);
+	test(
+		`${name}: every node nudged and put back draws cleanly and freshly`,
+		() => {
+			const city = data.nodes.length > CITY_NODES;
+			const graph = logged(liveShape(structuredClone(data)));
+			const draw = editorDrawing();
+			const first = frame(name, graph, draw);
+			const failures = first.found.map((p) => `${name} at rest: ${p}`);
+			const home = pieces(first.scene);
+			for (const group of moveGroups(graph)) {
+				const label = group.length === 1 ? group[0] : `${group.length} spread nodes`;
+				const back = holdHome(graph, group);
+				for (const d of NUDGES)
+					for (const [dx, dy] of DIRECTIONS) {
+						const move = `${label} moved (${dx * d}, ${dy * d})`;
+						for (const id of group) {
+							const n = graph.nodes.get(id)!;
+							moveNode(graph, id, n.x + dx * d, n.y + dy * d);
+						}
+						const rules = !city || (d === NUDGES.at(-1) && dy === 0);
+						for (const p of frame(name, graph, draw, [], rules).found)
+							failures.push(`${name} ${move}: ${p}`);
+						back();
+						builds++;
+						for (const id of differ(pieces(draw(graph)), home))
+							failures.push(`${name} ${move} and put back: ${id} differs from before`);
 					}
-					const rules = !city || (d === NUDGES.at(-1) && dy === 0);
-					for (const p of frame(name, graph, draw, [], rules).found)
-						failures.push(`${name} ${move}: ${p}`);
-					back();
-					builds++;
-					for (const id of differ(pieces(draw(graph)), home))
-						failures.push(`${name} ${move} and put back: ${id} differs from before`);
-				}
-		}
-		expect(failures).toEqual([]);
-	}, 120_000);
+			}
+			expect(failures).toEqual([]);
+		},
+		CITY_TIME
+	);
 }
 
 // Random drags, for moves the nudges never combine: each step moves
@@ -240,7 +250,7 @@ for (const [name, data] of GRAPHS) {
 		const failures: string[] = [];
 		for (const seed of seeds) {
 			const rand = random(seed);
-			const graph = liveShape(structuredClone(data));
+			const graph = logged(liveShape(structuredClone(data)));
 			const draw = editorDrawing();
 			const ids = [...graph.nodes.keys()];
 			const home = new Map([...graph.nodes].map(([id, n]) => [id, { x: n.x, y: n.y }]));
@@ -283,20 +293,13 @@ for (const [name, data] of GRAPHS) {
 // same way. Each lists the rules it breaks on the current drawing, left out
 // of its walk.
 const WALKS: Record<string, string[]> = {
-	// Nearing the merge, the footpath's sidewalk runs over asphalt and paint
-	// lands on it; and in the last half metre before the two nodes draw as
-	// one (the path between them 5.5 m long or less), the sidewalk carried
-	// across t lies over j's corner sidewalk, by up to 1.1 m².
-	'short-footpath': [
-		'paint on sidewalk',
-		'sidewalk over asphalt',
-		'double cover: t and j walk|concrete'
-	],
 	// Nearing the merge, sidewalk runs over asphalt, w1j1's lines cross j1's,
 	// and in the last 1.5 m before the two junctions draw as one their corner
 	// sidewalks lie over each other.
 	offset: ['sidewalk over asphalt', 'lines cross', 'double cover: j1 and j2 walk|concrete'],
-	'tight-junction': []
+	// tight-junction's road, its 5 m middle piece's lanes named apart from the
+	// rest, so b and c are nodes of two roads (not one road carried on).
+	'tight-link': []
 };
 const PAST_MERGE = 2;
 const FINE = 0.05;
@@ -304,7 +307,7 @@ const FINE = 0.05;
 for (const [name, skip] of Object.entries(WALKS)) {
 	test(`${name}: a junction walked into its neighbour merges, and splits walked back`, () => {
 		const data = GRAPHS.find(([n]) => n === name)![1];
-		const graph = liveShape(structuredClone(data));
+		const graph = logged(liveShape(structuredClone(data)));
 		const draw = editorDrawing();
 		const length = (sid: string) => {
 			const s = graph.segments.get(sid)!;

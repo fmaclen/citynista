@@ -19,6 +19,12 @@
 	const source = $derived(editor.laneSource);
 	const lanes = $derived(source && source !== 'mixed' ? source.lanes : []);
 
+	// A row stands for its lane by id: a road's lanes are a new list after
+	// every edit (editor.editLanes), and a row kept across it keeps its focus.
+	// A preset slot's lanes have no ids: its list is new after every edit
+	// too, its lanes the same objects, so a row stands for its lane itself.
+	const rowKey = (lane: Lane) => lane.id ?? lane;
+
 	const ROLE_OPTIONS: { value: LaneRole; label: string }[] = [
 		{ value: 'vehicle', label: 'Vehicle' },
 		{ value: 'pedestrian', label: 'Pedestrian' },
@@ -93,7 +99,7 @@
 	let places: { top: number; bottom: number }[] = [];
 	let floating: HTMLElement | null = null;
 
-	function moved<T>(list: T[], from: number, to: number) {
+	function moved<T>(list: readonly T[], from: number, to: number) {
 		const out = [...list];
 		out.splice(to, 0, ...out.splice(from, 1));
 		return out;
@@ -206,7 +212,7 @@
 
 	// The row of a lane just removed slides closed; rows that go any other
 	// way (undo, a different selection) just go.
-	let removed = $state<Lane | null>(null);
+	let removed = $state.raw<Lane | null>(null);
 
 	function removeLane(index: number) {
 		if (lanes.length <= 1) return;
@@ -319,7 +325,7 @@
 					class="flex h-6 w-full shrink-0 overflow-hidden rounded-md border border-border"
 					title="Cross-section preview"
 				>
-					{#each shown as lane, i (lane)}
+					{#each shown as lane, i (rowKey(lane))}
 						<div
 							class="relative flex h-full shrink-0 items-center justify-center overflow-hidden text-[10px] text-white/70 transition-[width] duration-150 ease-out"
 							style="width: {(lane.width / totalWidth) * 100}%; background-color: {laneSwatchColor(
@@ -345,7 +351,7 @@
 				<div
 					class="-mt-2 grid grid-cols-[auto_auto_minmax(0,1fr)_minmax(0,1fr)_auto_auto_auto_auto] gap-x-1.5"
 				>
-					{#each shown as lane, i (lane)}
+					{#each shown as lane, i (rowKey(lane))}
 						{@const slot = drag !== null && drag.to === i}
 						<div
 							class="col-span-full grid grid-cols-subgrid"

@@ -83,15 +83,18 @@ test('across a node: nothing is painted beside paths that swap sides', () => {
 });
 
 // A straight road through m of the given lanes (car lanes forward, F, or
-// sidewalks, W): the lines on the road and on across the node.
+// sidewalks, W): the lines on the road and on across the node. The two
+// roads' lanes are named apart (two roads drawn on their own), so m stays a
+// node: one road cut there is drawn whole (core/place.ts).
 function straightOn(section: string) {
-	const lanes: EditorLane[] = section.split(' ').map((code, i) => ({
-		id: `l${i}`,
-		role: code[0] === 'W' ? 'pedestrian' : 'vehicle',
-		material: code[0] === 'W' ? 'concrete' : 'asphalt',
-		width: Number(code.slice(1)),
-		direction: code[0] === 'W' ? 'bidirectional' : 'forward'
-	}));
+	const lanes = (road: string): EditorLane[] =>
+		section.split(' ').map((code, i) => ({
+			id: `${road}${i}`,
+			role: code[0] === 'W' ? 'pedestrian' : 'vehicle',
+			material: code[0] === 'W' ? 'concrete' : 'asphalt',
+			width: Number(code.slice(1)),
+			direction: code[0] === 'W' ? 'bidirectional' : 'forward'
+		}));
 	const { scene } = buildModel({
 		nodes: [
 			{ id: 'a', x: -50, y: 0 },
@@ -99,8 +102,8 @@ function straightOn(section: string) {
 			{ id: 'b', x: 50, y: 0 }
 		],
 		segments: [
-			{ id: 'one', startNodeId: 'a', endNodeId: 'm', lanes },
-			{ id: 'two', startNodeId: 'm', endNodeId: 'b', lanes }
+			{ id: 'one', startNodeId: 'a', endNodeId: 'm', lanes: lanes('a') },
+			{ id: 'two', startNodeId: 'm', endNodeId: 'b', lanes: lanes('b') }
 		]
 	});
 	const show = (d: Description, end: 'first' | 'last') =>

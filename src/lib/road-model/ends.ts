@@ -5,11 +5,14 @@
 import { toPath } from './clip';
 import {
 	crosses,
+	crossSection,
 	curveBetween,
 	dist,
 	dot,
 	type EndFrame,
 	endFrame,
+	frameAt,
+	type LaneSpan,
 	neg,
 	offsetPoint,
 	type PathSample,
@@ -48,7 +51,7 @@ export interface EndInfo {
 	lanes: LaneEnd[];
 }
 
-export function endsOf(junction: Junction, roads: Map<string, RoadGeo>): EndInfo[] {
+export function endsOf(junction: Pick<Junction, 'ends'>, roads: Map<string, RoadGeo>): EndInfo[] {
 	const out: EndInfo[] = [];
 	for (const ref of junction.ends) {
 		const geo = roads.get(ref.road);
@@ -97,6 +100,91 @@ export function connectionCurve(
 	const w1 = to.right - to.left;
 	// Widths blend as the path moves across (TAPER.EASE).
 	const widths = points.map((_, i) => w0 + (w1 - w0) * TAPER.EASE(i / samples));
+	return { from, to, points, widths };
+}
+
+// A line through nodes merged into one by way of the roads merged away
+// between them: from `p` leaving along `dir`, along each road of `via` from
+// the end it is entered by, `at` metres right of its drawn line at each
+// station (given its cross-section there and whether it is walked from its
+// start), across each node between on an even curve, to `q` arriving along
+// `run`. So what follows those roads is drawn the same whether or not a
+// node of theirs sits between. Each point has the width `at` gives there,
+// blended across a node from `w0` at `p` to `w1` at `q`; `steps` is how
+// many pieces a curve across a node of that chord takes.
+export function alongVia(
+	p: Pt,
+	w0: number,
+	dir: Pt,
+	via: EndInfo[],
+	at: (spans: LaneSpan[], forward: boolean, i: number) => { o: number; w: number },
+	q: Pt,
+	w1: number,
+	run: Pt,
+	steps = stepsAcross
+) {
+	const points: Pt[] = [p];
+	const widths = [w0];
+	let heading = dir;
+	const across = (to: Pt, w: number, t: Pt) => {
+		const from = points[points.length - 1];
+		const wFrom = widths[widths.length - 1];
+		const n = steps(dist(from, to));
+		curveBetween(from, heading, to, t, n)
+			.slice(1)
+			.forEach((x, i) => {
+				points.push(x);
+				widths.push(wFrom + (w - wFrom) * TAPER.EASE((i + 1) / n));
+			});
+	};
+	via.forEach((h, i) => {
+		const { road, path } = h.geo;
+		const forward = h.ref.end === 'start';
+		(forward ? path.s : [...path.s].reverse()).forEach((d, k) => {
+			const f = frameAt(path, d);
+			const { o, w } = at(crossSection(road, d), forward, i);
+			const x = offsetPoint(f.p, f.n, o);
+			const t = forward ? f.t : neg(f.t);
+			if (k === 0) across(x, w, t);
+			else {
+				points.push(x);
+				widths.push(w);
+			}
+			heading = t;
+		});
+	});
+	across(q, w1, run);
+	const keep = points.map((x, i) => i === 0 || dist(x, points[i - 1]) > 0.01);
+	return { points: points.filter((_, i) => keep[i]), widths: widths.filter((_, i) => keep[i]) };
+}
+
+// A connection's path chained through roads merged away (Connection.via):
+// along the lane it takes on each, `parts` holding their ends.
+export function chainCurve(
+	from: LaneEnd,
+	fromEnd: EndInfo,
+	via: LaneRef[],
+	parts: EndInfo[],
+	to: LaneEnd,
+	toEnd: EndInfo
+): Curve | null {
+	const roads = via.map((ref) =>
+		parts.find((e) => e.ref.road === ref.road && e.ref.end === ref.end)
+	);
+	if (roads.some((e) => !e)) return null;
+	const { points, widths } = alongVia(
+		from.point,
+		from.right - from.left,
+		neg(fromEnd.frame.run),
+		roads as EndInfo[],
+		(spans, _, i) => {
+			const span = spans.find((s) => s.lane.id === via[i].lane) ?? spans[0];
+			return { o: (span.left + span.right) / 2, w: span.right - span.left };
+		},
+		to.point,
+		to.right - to.left,
+		toEnd.frame.run
+	);
 	return { from, to, points, widths };
 }
 

@@ -1,9 +1,11 @@
-import type { ModeHandlers } from './types';
+import { CLICK_SLOP_PX, type ModeHandlers } from './types';
+import type { Segment } from '../core/segment.svelte';
 import type { Editor } from '../editor.svelte';
 import type { JunctionCrossing, LaneRef } from '../core/types';
 import type { LaneConnection } from '../core/lane-connections';
-import { crossingAt } from '../core/place';
+import { crossingAt, segmentAtEnd } from '../core/place';
 import { CROSSING_DEPTH, CROSSING_FROM_END } from '../road-model/approach';
+import { carries } from '../core/lane-types';
 import { endsOf, type EndInfo } from '../road-model/ends';
 import { kindOf } from '../road-model/connect';
 import {
@@ -13,10 +15,12 @@ import {
 	type LaneRef as ModelLaneRef,
 	type Pt as Point
 } from '../road-model/model';
-import { crossSection, frameAt, offsetPoint, project } from '../road-model/geometry';
+import { crossSection, endFrame, frameAt, offsetPoint, project } from '../road-model/geometry';
 import { CROSSING_HANDLE, hitsHandle } from '../rendering/handle-shapes';
 import { HANDLE_HIT_SLACK_PX, LANE_DOT_PX } from '../rendering/editor-palette';
-import { pickAt } from './picking';
+import { oneWalkway, pickAt, toSegment } from './picking';
+import { roadLine } from '../core/road-line';
+import { WALK } from '../core/footpaths';
 
 // The lane connector: a transient mode scoped to one node (entered by
 // double-clicking it). Each lane shows a dot at its mouth: a filled disc where
@@ -28,14 +32,16 @@ import { pickAt } from './picking';
 // handle: drag the handle to slide it along the road, click it to switch
 // the crossing off (a hollow handle) or on again. Dragging between
 // the two sidewalk dots of one road adds a crossing there. A badge on each
-// approach steps its control through none, stop, yield and signal.
+// approach steps its control through none, stop, yield and signal. A
+// crossing a footpath makes is paint and offers nothing. At a footpath node
+// each footpath there shows a dot, joined to every other footpath's and to
+// the sidewalk the node lies on: a footpath meets all it touches, and nothing
+// there is edited.
 //
 // The mode is modal: while it's open nothing else hovers or selects. Clicking a
 // road or node is ignored (so you can't accidentally grab the road next door);
 // leave with Escape or a click on empty ground.
 
-// How far a press on a crossing handle may wander and still be a click.
-const CLICK_SLOP_PX = 3;
 // A new crosswalk lands this far beyond the end of its road's taper.
 const NEW_CROSSING_BEYOND = 3;
 // Lane dots of two road ends that nearly meet sit at least this far apart.
@@ -54,12 +60,17 @@ export interface ConnectorEndpoint {
 
 type Toggle = { from: ModelLaneRef; to: ModelLaneRef };
 
-// Opens the connector on a node of two or more roads. The node's taper, and
-// with it every lane dot, holds still while its connections are edited; the
+// Whether the connector opens on a node: one of two or more roads, or a
+// footpath's end on a street's sidewalk (Derived.sidewalks).
+export const opensConnector = (editor: Editor, nodeId: string) =>
+	(editor.graph.nodes.get(nodeId)?.connectedSegments.length ?? 0) >= 2 ||
+	!!editor.roadRenderer.derived?.sidewalks.has(nodeId);
+
+// Opens the connector on a node (opensConnector). The node's taper, and with
+// it every lane dot, holds still while its connections are edited; the
 // editor lets it go when the connector closes (`closeConnector`).
 export function openConnector(editor: Editor, nodeId: string) {
-	const node = editor.graph.nodes.get(nodeId);
-	if (!node || node.connectedSegments.length < 2) return;
+	if (!opensConnector(editor, nodeId)) return;
 	editor.clearSelection();
 	editor.roadRenderer.holdTaper(nodeId);
 	editor.connectorNodeId = nodeId;
@@ -69,35 +80,200 @@ export function openConnector(editor: Editor, nodeId: string) {
 const connectorNode = (editor: Editor) =>
 	editor.connectorNodeId ? editor.graph.nodes.get(editor.connectorNodeId) : undefined;
 
+// The connector's node where a road only carries on through it: drawn as
+// one road, shown as a node of its two segments (Derived.through).
+const connectorThrough = (editor: Editor) =>
+	editor.connectorNodeId
+		? (editor.roadRenderer.derived?.through(editor.connectorNodeId) ?? null)
+		: null;
+
 const connectorJunction = (editor: Editor) =>
 	editor.connectorNodeId
-		? editor.roadRenderer.derived?.junctions.get(editor.connectorNodeId)
+		? (connectorThrough(editor)?.junction ??
+			editor.roadRenderer.derived?.junctions.get(editor.connectorNodeId))
 		: undefined;
 
 // The road ends at the connector's node, as the drawing reads them.
 function connectorEnds(editor: Editor): EndInfo[] {
 	const junction = connectorJunction(editor);
 	const scene = editor.roadRenderer.scene;
-	return junction && scene ? endsOf(junction, scene.geos) : [];
+	const through = connectorThrough(editor);
+	const geos = through && scene ? new Map([...scene.geos, ...through.geos]) : scene?.geos;
+	return junction && geos ? endsOf(junction, geos) : [];
+}
+
+// The control badges: one for each approach of a junction, stored under the
+// segment it comes along. None at a footpath's node, nor at a node a car road
+// only carries on through.
+function connectorBadges(editor: Editor) {
+	const node = connectorNode(editor);
+	const scene = editor.roadRenderer.scene;
+	if (!node || !scene) return [];
+	const roads = node.connectedSegments.flatMap((id) => editor.graph.segments.get(id) ?? []);
+	if (!roads.some((s) => carries(s.lanes)) || connectorThrough(editor)) return [];
+	const own = scene.node(node.id);
+	// Each approach's control is stored under the segment that ends at the
+	// node, which the drawing names by its road (segmentAtEnd).
+	const units = editor.roadRenderer.derived?.units;
+	const stored = (key: string) => {
+		const at = key.lastIndexOf(':');
+		const end = key.slice(at + 1) === 'start' ? 'start' : 'end';
+		return units ? `${segmentAtEnd(units, key.slice(0, at), end)}:${end}` : key;
+	};
+	return (own?.approaches ?? []).map((a) => ({
+		key: stored(a.end),
+		control: a.control,
+		x: a.badge.x,
+		y: a.badge.y
+	}));
+}
+
+// Where a road's shown line ends at one of its nodes.
+function shownEnd(editor: Editor, segment: Segment, nodeId: string) {
+	const line = roadLine(editor.graph, segment);
+	return segment.startNodeId === nodeId ? line[0] : line.at(-1)!;
+}
+
+// At a node holding footpaths: a dot on each footpath's middle lane and one
+// on each walkway a footpath's end there lies on (Derived.sidewalks); each
+// footpath joined to every other its paving meets and to the walkway its own
+// end lies on, each link drawn along the line a walker follows the model
+// gives it. Between two footpaths that is the line the node's bend or joint
+// holds (core/footpaths.ts), which paves between them; where their ends lie
+// on walkways instead, each one's line onto its walkway, the one run on into
+// the other, and only where both lie on one walkway or their ends meet.
+// Each footpath's dot stands where its lines start. Null at any other node.
+function footpathJoin(editor: Editor) {
+	const node = connectorNode(editor);
+	const derived = editor.roadRenderer.derived;
+	const scene = editor.roadRenderer.scene;
+	if (!node || !derived || !scene) return null;
+	const walks = node.connectedSegments.flatMap((id) => editor.graph.segments.get(id) ?? []);
+	if (!walks.length || walks.some((s) => carries(s.lanes))) return null;
+	const middle = (s: Segment) => Math.floor((s.lanes.length - 1) / 2);
+	const joint = scene.node(WALK + node.id)?.paths ?? [];
+	const onWalk = derived.sidewalks.get(node.id) ?? [];
+	// The line each footpath's links start on.
+	const startOf = (id: string) =>
+		joint.find((p) => p.from.road === id)?.line[0] ??
+		joint.find((p) => p.to.road === id)?.line.at(-1) ??
+		onWalk.find((on) => on.path === id)?.line[0];
+	const dots = walks.map((s) => ({
+		ref: { segmentId: s.id, laneIndex: middle(s) },
+		point: startOf(s.id) ?? shownEnd(editor, s, node.id),
+		flow: 'both' as const
+	}));
+	type Dot = (typeof dots)[number];
+	const dotOf = (id: string) => dots.find((d) => d.ref.segmentId === id);
+	const link = (a: Dot, b: Dot, line: Point[]): LaneConnection => ({
+		from: a.ref,
+		to: b.ref,
+		fromPoint: a.point,
+		toPoint: b.point,
+		fromDir: { x: 0, y: 0 },
+		toDir: { x: 0, y: 0 },
+		line
+	});
+	const connections: LaneConnection[] = [];
+	for (const p of joint) {
+		const [a, b] = [dotOf(p.from.road), dotOf(p.to.road)];
+		if (a && b) connections.push(link(a, b, p.line));
+	}
+	// Footpaths whose ends lie on a walkway, joined through it where their
+	// paving meets: both on that one walkway (a street's sidewalk and the
+	// corners it runs into are one: oneWalkway), or their ends' cross-sections
+	// meeting. Two ending on different walkways apart (a street's two
+	// sidewalks, say) are each joined to their own alone.
+	const edgeOf = (id: string) => {
+		const geo = scene.geos.get(id);
+		const s = editor.graph.segments.get(id);
+		if (!geo || !s) return null;
+		const f = endFrame(geo.road, geo.path, s.startNodeId === node.id ? 'start' : 'end');
+		const spans = crossSection(geo.road, f.distance);
+		return [spans[0].left, spans.at(-1)!.right].map((d) => offsetPoint(f.p, f.n, d)) as [
+			Point,
+			Point
+		];
+	};
+	const meet = (p: string, q: string) => {
+		const [a, b] = [edgeOf(p), edgeOf(q)];
+		return !!a && !!b && apart(a, b) <= MEET;
+	};
+	if (!joint.length)
+		for (const [i, on] of onWalk.entries())
+			for (const other of onWalk.slice(i + 1)) {
+				const [a, b] = [dotOf(on.path), dotOf(other.path)];
+				const one = oneWalkway(on, other);
+				if (a && b && (one || meet(on.path, other.path)))
+					connections.push(link(a, b, [...on.line, ...[...other.line].reverse()]));
+			}
+	// Each footpath with the sidewalk its end lies on: one dot on each
+	// sidewalk, where the first footpath's line onto it ends.
+	const sidewalkDots = new Map<string, Dot>();
+	const lanes = new Set<string>();
+	for (const on of onWalk) {
+		const streetLane = editor.graph.segments.get(on.road)?.lanes.findIndex((l) => l.id === on.lane);
+		const dot = dotOf(on.path);
+		if (streetLane === undefined || streetLane < 0 || !dot) continue;
+		const key = `${on.road}:${on.lane}`;
+		if (!sidewalkDots.has(key))
+			sidewalkDots.set(key, {
+				ref: { segmentId: on.road, laneIndex: streetLane },
+				point: on.line.at(-1)!,
+				flow: 'both'
+			});
+		connections.push(link(dot, sidewalkDots.get(key)!, on.line));
+		lanes.add(on.lane);
+	}
+	return { lanes: [...lanes], dots: [...dots, ...sidewalkDots.values()], connections };
+}
+
+// How near two footpaths' end cross-sections must come for their paving to
+// meet (m).
+const MEET = 0.05;
+
+// How far apart two lines from a to b are: 0 where they cross.
+function apart([a, b]: [Point, Point], [c, d]: [Point, Point]) {
+	const side = (p: Point, q: Point, r: Point) =>
+		(q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x);
+	if (side(a, b, c) * side(a, b, d) < 0 && side(c, d, a) * side(c, d, b) < 0) return 0;
+	return Math.min(toSegment(a, c, d), toSegment(b, c, d), toSegment(c, a, b), toSegment(d, a, b));
+}
+
+// What the connector shows, for the page's `__editorLook`: its node and
+// each connection drawn, as its two lanes (`segment:lane index`), and the
+// line each is drawn along where it follows one (`lines`, in their order).
+function shown(editor: Editor, connections: LaneConnection[]) {
+	const key = (r: LaneRef) => `${r.segmentId}:${r.laneIndex}`;
+	editor.connectorShown = editor.connectorNodeId
+		? {
+				node: editor.connectorNodeId,
+				links: connections.map((c) => [key(c.from), key(c.to)]),
+				lines: connections.map((c) => c.line ?? [])
+			}
+		: null;
 }
 
 // Lane dots and the connections between them. Where only two roads meet,
 // every lane shows; at a junction of more, the travel lanes (its sidewalks
 // are its corners and crosswalks).
 function refreshConnectors(editor: Editor) {
-	const id = editor.connectorNodeId;
 	const junction = connectorJunction(editor);
 	const ends = connectorEnds(editor);
-	const node = id ? editor.roadRenderer.scene?.node(id) : undefined;
-	editor.controlBadges = (node?.approaches ?? []).map((a) => ({
-		key: a.end,
-		control: a.control,
-		x: a.badge.x,
-		y: a.badge.y
-	}));
+	editor.controlBadges = connectorBadges(editor);
+	const join = footpathJoin(editor);
+	editor.connectorJoined = join?.lanes ?? [];
+	if (join) {
+		editor.connectorEndpoints = [];
+		editor.connectionRenderer.show(join.connections, join.dots);
+		shown(editor, join.connections);
+		editor.crossingRenderer.clear();
+		return;
+	}
 	if (!junction || ends.length === 0) {
 		editor.connectorEndpoints = [];
 		editor.connectionRenderer.clear();
+		shown(editor, []);
 		editor.crossingRenderer.clear();
 		return;
 	}
@@ -149,6 +325,7 @@ function refreshConnectors(editor: Editor) {
 	}
 	editor.connectorEndpoints = endpoints;
 	editor.connectionRenderer.show(connections, endpoints);
+	shown(editor, connections);
 	// Each crossing: its handle across the road, on a straight line from
 	// sidewalk to sidewalk while it is on.
 	editor.crossingRenderer.show(
@@ -358,16 +535,21 @@ function switchCrossing(editor: Editor, index: number) {
 	editor.graph.save();
 }
 
-// Steps an approach's control on: none, stop, yield, signal, and round.
+// The control a badge steps on to from `control`: none, stop, yield,
+// signal, and round. A junction's approach and a footpath's crossing step
+// alike.
+const CONTROL_ORDER: Control[] = ['none', 'stop', 'yield', 'signal'];
+export const nextControl = (control: Control) =>
+	CONTROL_ORDER[(CONTROL_ORDER.indexOf(control) + 1) % CONTROL_ORDER.length];
+
+// Steps an approach's control on (nextControl).
 export function cycleControl(editor: Editor, key: string) {
 	const node = connectorNode(editor);
 	const current = editor.controlBadges.find((b) => b.key === key)?.control;
 	if (!node || !current) return;
-	const order: Control[] = ['none', 'stop', 'yield', 'signal'];
-	const next = order[(order.indexOf(current) + 1) % order.length];
 	node.junction = {
 		...node.junction,
-		control: { ...(node.junction?.control ?? {}), [key]: next }
+		control: { ...(node.junction?.control ?? {}), [key]: nextControl(current) }
 	};
 	editor.rebuildRoads();
 	editor.graph.save();
@@ -383,17 +565,18 @@ export function setupConnectorMode(editor: Editor): ModeHandlers {
 	// its road once the pointer moves past CLICK_SLOP_PX, else the release
 	// switches it.
 	let crossingDrag: { index: number; x: number; y: number; moved: boolean } | null = null;
-	// A mousedown on empty ground becomes an exit on mouseup, unless it turned
-	// into a drag.
+	// A mousedown on empty ground becomes an exit on mouseup, dragged or not.
 	let pendingExit = false;
 
 	const setCursor = (cursor: string) => {
 		canvas.style.cursor = cursor;
 	};
 
-	// Leaving the mode closes the connector (Editor.setupMode).
+	// Leaving the mode closes the connector (Editor.setupMode). A release
+	// given while another tool is being armed (Editor.settlePress) leaves it
+	// for that tool.
 	const exit = () => {
-		editor.mode = 'select';
+		if (editor.mode === 'connector') editor.mode = 'select';
 	};
 
 	const onMouseDown = (event: MouseEvent) => {
@@ -429,7 +612,11 @@ export function setupConnectorMode(editor: Editor): ModeHandlers {
 		if (crossingDrag !== null) {
 			const travel = Math.hypot(event.clientX - crossingDrag.x, event.clientY - crossingDrag.y);
 			if (travel > CLICK_SLOP_PX) crossingDrag.moved = true;
-			if (crossingDrag.moved) moveCrossing(editor, crossingDrag.index, world.x, world.z);
+			if (crossingDrag.moved) {
+				moveCrossing(editor, crossingDrag.index, world.x, world.z);
+				// A crossing sliding is an edit Undo takes back.
+				editor.holdsUndo(true);
+			}
 			return;
 		}
 
@@ -464,6 +651,7 @@ export function setupConnectorMode(editor: Editor): ModeHandlers {
 		if (crossingDrag !== null) {
 			const { index, moved } = crossingDrag;
 			crossingDrag = null;
+			editor.holdsUndo(false);
 			editor.lightHandle(null);
 			setCursor('default');
 			if (moved) editor.graph.save();
@@ -505,6 +693,7 @@ export function setupConnectorMode(editor: Editor): ModeHandlers {
 	const cleanup = () => {
 		dragStart = null;
 		crossingDrag = null;
+		pendingExit = false;
 		setCursor('default');
 		editor.connectionRenderer.clear();
 	};

@@ -36,7 +36,9 @@ import {
 	type LaneSpan,
 	type PathSample
 } from './geometry';
-import { CROSSING_DEPTH } from './approach';
+import { CROSSING_DEPTH, crosswalkOf } from './approach';
+import type { Share } from './holds';
+import { clearOf, type Crossed, crossingsOver } from './overlay';
 import { INSET, laneLines } from './lines';
 import {
 	isRaised,
@@ -322,10 +324,16 @@ export function hatchBar(path: PathSample, d: number, left: number, right: numbe
 	return toPath(quad(a, b, 0.25));
 }
 
+// `over` is the ground a network laid over the road crosses on it
+// (overlay.ts): its crossings; `share`, the lines the traffic meeting them
+// is held at that fall on the road and the ground its paint stops at for
+// them (holds.ts), which the road draws and clears, deciding nothing.
 export function describeRoad(
 	road: Road,
 	path: PathSample,
-	cut: { start: EndCut; end: EndCut }
+	cut: { start: EndCut; end: EndCut },
+	over: Crossed[] = [],
+	share: Share = { signs: [], cleared: [] }
 ): RoadDescription {
 	const length = path.length;
 	const rows = roadRows(road, path);
@@ -366,7 +374,9 @@ export function describeRoad(
 	// any other material than asphalt (a verge it is paved through; never a
 	// car lane, whatever it is made of).
 	const roadway: Paths = [];
+	const carLanes: Paths[] = [];
 	const medians: Paths = [];
+	const verges: Paths = [];
 	const others = new Map<number, Paths>();
 	const noses: { span: LaneSpan; r: number; from: number; to: number; shape: Paths }[] = [];
 	lanes.forEach((span, k) => {
@@ -388,8 +398,10 @@ export function describeRoad(
 			surfaces.push(surface);
 			if (lane.surface === 'hatch') hatched.set(k, surface);
 			if (isRoadway(lane)) roadway.push(...strip(k));
+			if (lane.kind === 'drive') carLanes.push(strip(k));
 			if (median) medians.push(...strip(k));
 			else if (!isRoadway(lane) && lane.surface !== 'asphalt') others.set(k, strip(k));
+			if (role === 'verge') verges.push(...strip(k));
 			return;
 		}
 		const paths = strip(k);
@@ -422,13 +434,13 @@ export function describeRoad(
 	const laid: { at: number; body: Paths }[] = [];
 	const half = CROSSING_DEPTH / 2;
 	for (const c of road.crossings ?? []) {
-		const d = Math.max(0, Math.min(length, c.at));
+		const at = crosswalkOf(road, length, c);
+		if (!at) continue;
+		const { d, sides, k0, k1 } = at;
+		const [p, q] = [k0 - 1, k1];
 		const spans = crossSection(road, d);
-		const sides = c.lanes.map((id) => spans.findIndex((sp) => sp.lane.id === id));
-		if (sides.includes(-1)) continue;
-		const [p, q] = [Math.min(...sides), Math.max(...sides)];
 		const f = frameAt(path, d);
-		const body = band(p + 1, q, d - half, d + half);
+		const body = band(k0, k1, d - half, d + half);
 		const under = laid.filter((l) => Math.abs(l.at - d) < 2 * half).flatMap((l) => l.body);
 		const fresh = subtract(body, under);
 		laid.push({ at: d, body });
@@ -455,7 +467,25 @@ export function describeRoad(
 			body: toRings(body, faults)
 		});
 	}
-	const bodies = union(crossings.flatMap((c) => c.body.map(toPath)));
+	// Crossings a network laid over the road makes on it (crossingsOver),
+	// their stripes along the road.
+	const overlaid = crossingsOver(
+		road.id,
+		over,
+		{ hard: roadway, lanes: carLanes, median: medians, verge: verges },
+		crossings,
+		faults
+	);
+	crossings.push(...overlaid);
+	// Its paint stops at each crossing, and at the ground cleared for the
+	// lines held traffic meets them at (Share.cleared): lane and edge lines
+	// and hatching alike.
+	const clears = [
+		...share.cleared,
+		...[...(cut.start.clear ?? []), ...(cut.end.clear ?? [])].map(toPath)
+	];
+	const cleared = clears.length ? union(clears) : [];
+	const bodies = union([...crossings.flatMap((c) => c.body.map(toPath)), ...cleared]);
 	const gaps = merged(depths);
 
 	// Paint, between the cuts at either end. A road with only a few metres
@@ -513,18 +543,23 @@ export function describeRoad(
 		along,
 		surfaces,
 		// Lines stop at crossings.
-		markings: lines
-			.flatMap((m) => cutAlong(path, m, gaps))
-			.map(
-				(m): Marking => ({
-					colour: m.colour,
-					dashed: m.dashed,
-					line: m.pts,
-					along: m.along,
-					...(m.rhythm && { rhythm: m.rhythm })
-				})
-			),
+		markings: clearOf(
+			lines
+				.flatMap((m) => cutAlong(path, m, gaps))
+				.map(
+					(m): Marking => ({
+						colour: m.colour,
+						dashed: m.dashed,
+						line: m.pts,
+						along: m.along,
+						...(m.rhythm && { rhythm: m.rhythm })
+					})
+				),
+			[...overlaid.flatMap((c) => c.body), ...cleared.map(fromPath)]
+		),
+		signs: share.signs,
 		crossings,
+		cleared: toRings(cleared, faults),
 		cut,
 		faults
 	};

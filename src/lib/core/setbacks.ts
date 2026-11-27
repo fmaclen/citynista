@@ -10,8 +10,16 @@ import type { End, Junction, Pt } from '../road-model/model';
 import type { Curve } from './segment-curve';
 import type { Segment } from './segment.svelte';
 
+// A road as a node reads it: one segment, or segments cut from one road
+// joined end to end through the nodes it only carries on through
+// (core/place.ts), read as that one road.
+export type RoadUnit = Pick<
+	Segment,
+	'id' | 'startNodeId' | 'endNodeId' | 'lanes' | 'lanesKey' | 'offsetStart' | 'offsetEnd'
+>;
+
 export interface Arm {
-	segment: Segment;
+	segment: RoadUnit;
 	curve: Curve;
 	end: End;
 	out: Pt;
@@ -22,10 +30,8 @@ export interface Arm {
 	full: { lo: number; hi: number };
 	roadway: { lo: number; hi: number };
 	half: number;
-	// Whether the road has sidewalks or verges beyond its roadway, and
-	// whether it has no car lanes at all (a footpath).
+	// Whether the road has sidewalks or verges beyond its roadway.
 	walks: boolean;
-	foot: boolean;
 }
 
 // Room past a crossing road's full width for a road's curb corners.
@@ -33,8 +39,7 @@ const CORNER_ROOM = 3;
 // A narrow road without sidewalks of its own that only joins another
 // (stopsOnCurb below) stops on that road's curb line (just inside it), so
 // that road's sidewalk carries straight on across its mouth, as a crosswalk
-// (road-model/corners.ts). A footpath stops right on a car road's curb line:
-// its paving never laps over that road's asphalt.
+// (road-model/corners.ts).
 const CURB_GAP = -0.1;
 // A road with sidewalks stops this far past the mouth of a road that stops
 // on its curb line: its curb turns straight into that road's edge.
@@ -48,19 +53,34 @@ const MIN_SIN = 0.3;
 // hand, held, or what the shifts need), never less than a little, nor less
 // than a bend needs (TAPER in road-model/geometry.ts).
 export function linkSetbacks(a: Arm, b: Arm, reach: number[]) {
-	const d = dot(a.out, b.out);
-	// A bend: both sides pull back far enough for the lanes to turn on a
-	// curve (R tan(deflection / 2)).
-	const deflection = Math.PI - Math.acos(Math.max(-1, Math.min(1, d)));
-	const r = TAPER.BEND_RADIUS * Math.max(a.half, b.half);
-	const bend = d < -TAPER.STRAIGHT ? 0 : r * Math.tan(Math.min(deflection, TAPER.SHARPEST) / 2);
+	const bend = bendBack(a.out, b.out, TAPER.BEND_RADIUS * Math.max(a.half, b.half));
 	return reach.map((x) => Math.max(TAPER.THROUGH_GAP, x, bend));
+}
+
+// A bend of two roads leaving a node along `a` and `b`: how far back from
+// the node both pull for their lanes to turn on a curve `radius` round
+// (R tan(deflection / 2)), the deflection read no sharper than
+// TAPER.SHARPEST, so a near hairpin turns tighter rather than on a long loop;
+// nothing where they run straight on. Footpaths bend by it too
+// (core/footpaths.ts).
+export function bendBack(a: Pt, b: Pt, radius: number) {
+	const d = dot(a, b);
+	const deflection = Math.PI - Math.acos(Math.max(-1, Math.min(1, d)));
+	return d < -TAPER.STRAIGHT ? 0 : radius * Math.tan(Math.min(deflection, TAPER.SHARPEST) / 2);
 }
 
 // At a junction of three or more roads, how far each road stops short of the
 // node when nothing is set by hand: far enough for curb corners or for the
-// crossing roads' curb lines.
-export function setbacks(arms: Arm[]) {
+// crossing roads' curb lines. Each is read along both roads' curves as drawn
+// (`clearOf`, from place.ts: how far along the arm until none of its width
+// lies over the stretch `span` across the other), however slanted or bent
+// they meet. A road meeting another at a slant needs no more than it would
+// if both ran straight on from the node, the other read no more steeply than
+// MIN_SIN.
+export function setbacks(
+	arms: Arm[],
+	clearOf: (arm: Arm, other: Arm, span: { lo: number; hi: number }) => number
+) {
 	const out = new Map<Arm, number>();
 	// Each arm's straight-on partner: the most nearly opposite arm, if it is
 	// nearly opposite.
@@ -103,13 +123,16 @@ export function setbacks(arms: Arm[]) {
 				? CORNER_ROOM
 				: arm.walks && stopsOnCurb(other)
 					? MOUTH_ROOM
-					: arm.foot && !other.foot
-						? 0
-						: CURB_GAP;
+					: CURB_GAP;
 			const edge = side >= 0 ? span.hi : -span.lo;
 			const clear = Math.max(0, edge + room);
-			const need = cos > 0 ? (clear + arm.half * cos) / sin : clear;
-			trim = Math.max(trim, need);
+			if (cos <= 0) {
+				trim = Math.max(trim, clear);
+				continue;
+			}
+			const straight = (clear + arm.half * cos) / sin;
+			const drawn = clearOf(arm, other, { lo: span.lo - room, hi: span.hi + room });
+			trim = Math.max(trim, Math.min(straight, drawn));
 		}
 		out.set(arm, trim);
 	}
@@ -118,8 +141,9 @@ export function setbacks(arms: Arm[]) {
 
 // The taper a node of two roads needs (long enough for the furthest any
 // connection shifts sideways), and the shortest it may be set to. Sidewalks
-// follow the roadway's taper; where only walks carry on (a footpath leaving
-// a road) the furthest a walk shifts sets it, at a walker's steeper rate.
+// follow the roadway's taper; where only walks carry on (no car lane joins
+// the two roads) the furthest a walk shifts sets it, at a walker's steeper
+// rate.
 export function taperFor(junction: Junction, geos: Map<string, RoadGeo>) {
 	const ends = endsOf(junction, geos);
 	let shift = 0;

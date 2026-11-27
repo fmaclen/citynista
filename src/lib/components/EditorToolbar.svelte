@@ -70,15 +70,10 @@
 		(editor.mode === 'draw' || editor.mode === 'circle') && !!editor.activeBrush
 	);
 
+	// Like every shortcut, these act only on keys sent to the page itself,
+	// never to a focused field or control (fromPage).
 	function onKeyDown(event: KeyboardEvent) {
-		const target = event.target;
-		if (
-			target instanceof HTMLInputElement ||
-			target instanceof HTMLTextAreaElement ||
-			(target instanceof HTMLElement && target.isContentEditable)
-		) {
-			return;
-		}
+		if (!fromPage(event)) return;
 
 		// While drawing, Delete empties the armed slot.
 		if (
@@ -96,7 +91,6 @@
 		if (
 			event.key === 'Tab' &&
 			armed &&
-			fromPage(event) &&
 			!event.shiftKey &&
 			!event.metaKey &&
 			!event.ctrlKey &&

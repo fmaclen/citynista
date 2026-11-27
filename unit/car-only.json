@@ -1,0 +1,306 @@
+{
+	"hairpin": {
+		"roads": [
+			["left", [38, -10], [3.385, -0.891]],
+			["right", [7.087, 3.499], [8, 40]]
+		],
+		"junctions": [["q", "r"]],
+		"checks": [
+			"paint outside the roads and outlines: 1.10 m²",
+			"paint on sidewalk: 1.51 m²",
+			"sidewalk over asphalt: 8.06 m²",
+			"car lanes across a sidewalk with no crossing: q+r (4.3, 3.5)",
+			"lines cross: left and q+r",
+			"lines cross: right and q+r",
+			"lines cross: q+r and q+r",
+			"lines cross: q+r and q+r",
+			"lines cross: q+r and q+r",
+			"double cover: q+r lane|asphalt",
+			"double cover: left and q+r lane|asphalt 2.28 m²"
+		]
+	},
+	"tighter hairpin": {
+		"roads": [
+			["left", [38, -10], [2.418, -0.636]],
+			["right", [5.062, 2.499], [6, 40]]
+		],
+		"junctions": [["q", "r"]],
+		"checks": [
+			"paint outside the roads and outlines: 0.26 m²",
+			"paint on sidewalk: 1.05 m²",
+			"sidewalk over asphalt: 9.87 m²",
+			"car lanes across a sidewalk with no crossing: q+r (4.3, 3.0)",
+			"lines cross: left and q+r",
+			"lines cross: q+r and q+r",
+			"lines cross: q+r and q+r",
+			"paint on a crossing: left 0.16 m²",
+			"double cover: q+r lane|asphalt and paving|asphalt",
+			"double cover: q+r lane|asphalt",
+			"double cover: left and right walk|concrete 1.39 m²",
+			"double cover: left and q+r lane|asphalt and paving|asphalt 13.21 m²",
+			"double cover: left and q+r lane|asphalt 2.89 m²",
+			"double cover: right and q+r lane|asphalt and paving|asphalt 0.08 m²"
+		]
+	},
+	"attached-ramp.json": {
+		"roads": [
+			["north", [0, -200], [0, -0.6]],
+			["south", [0, 0.6], [0, 200]],
+			["ramp", [-60, -150], [-13.927, -0.573]]
+		],
+		"junctions": [["m"]]
+	},
+	"bend-and-road.json": {
+		"roads": [
+			["north", [0, -60], [0, -2.175]],
+			["southeast", [1.538, 1.538], [50, 50]],
+			["loose", [-60, 80], [60, 80]]
+		],
+		"junctions": [["bend"]]
+	},
+	"busway-crossing.json": {
+		"roads": [
+			["west", [-80, 0], [-6.5, 0]],
+			["east", [6.5, 0], [80, 0]],
+			["north", [0, -80], [0, -14]],
+			["south", [0, 14], [0, 80]]
+		],
+		"junctions": [["c"]]
+	},
+	"connectors-demo.json": {
+		"roads": [
+			["seg-n", [0, -70], [0, -3.4]],
+			["seg-e", [70, 0], [3.4, 0]],
+			["seg-s", [0, 70], [0, 3.4]],
+			["seg-w", [-70, 0], [-3.4, 0]]
+		],
+		"junctions": [["c"]]
+	},
+	"crossroads.json": {
+		"roads": [
+			["arm0", [3.4, 0], [40, 0]],
+			["arm1", [0, 3.4], [0, 40]],
+			["arm2", [-3.4, 0], [-40, 0]],
+			["arm3", [0, -3.4], [0, -40]]
+		],
+		"junctions": [["c"]]
+	},
+	"curved-tee.json": {
+		"roads": [
+			["south", [-40, 90], [-5.106, 5.49]],
+			["north", [7.871, -7.108], [90, -40]],
+			["side", [15.027, 9.66], [70, 45]]
+		],
+		"junctions": [["c"]]
+	},
+	"footpath-junction.json": {
+		"roads": [["north", [0, -60], [0, 60]]],
+		"junctions": []
+	},
+	"footpaths-meeting.json": {
+		"roads": [["street-w", [-60, 0], [60, 0]]],
+		"junctions": []
+	},
+	"footpaths.json": {
+		"roads": [
+			["cross-street-a", [0, -40], [0, -0.6]],
+			["cross-street-b", [0, 0.6], [0, 40]],
+			["arc-street-a", [120, -40], [120, -0.6]],
+			["arc-street-b", [120, 0.6], [120, 40]],
+			["leave-street", [200, 0], [240, 0]],
+			["eased-street", [320, 0], [360, 0]],
+			["corner-street", [440, 0], [480, 0]],
+			["bend-street-a", [600, -50], [609.734, -0.538]],
+			["bend-street-b", [610.274, 0.534], [660, 20]]
+		],
+		"junctions": [["arc"], ["bend"], ["cross"]]
+	},
+	"handles.json": {
+		"roads": [
+			["curve", [-90, 20], [-40, 20]],
+			["narrow", [-10, 20], [15, 20]],
+			["wide", [35, 20], [60, 20]],
+			["je", [78.5, -30], [100, -30]],
+			["jw", [61.5, -30], [40, -30]],
+			["jn", [70, -38.5], [70, -60]]
+		],
+		"junctions": [["j"], ["t"]]
+	},
+	"junction-materials.json": {
+		"roads": [
+			["tee-west", [-310, -100], [-254.9, -100]],
+			["tee-east", [-245.1, -100], [-190, -100]],
+			["tee-south", [-250, -95.1], [-250, -40]],
+			["mix-north", [0, -160], [0, -102.9]],
+			["mix-south", [0, -97.1], [0, -40]],
+			["mix-west", [-60, -100], [-4.9, -100]],
+			["mix-east", [4.9, -100], [60, -100]],
+			["tie-north", [250, -160], [250, -104.9]],
+			["tie-south", [250, -95.1], [250, -40]],
+			["tie-west", [190, -100], [245.1, -100]],
+			["tie-east", [254.9, -100], [310, -100]],
+			["dirt-north", [-250, 60], [-250, 115.1]],
+			["dirt-south", [-250, 124.9], [-250, 180]],
+			["dirt-west", [-310, 120], [-254.9, 120]],
+			["dirt-east", [-245.1, 120], [-190, 120]],
+			["bend-west", [-60, 120], [-6, 120]],
+			["bend-south", [0, 126], [0, 180]]
+		],
+		"junctions": [["bend"], ["dirt"], ["mix"], ["tee"], ["tie"]]
+	},
+	"lane-kinds.json": {
+		"roads": [
+			["hatch-straight", [0, 0], [60, 0]],
+			["hatch-curved", [0, 40], [60, 40]],
+			["two-way-straight", [0, 80], [60, 80]],
+			["two-way-curved", [0, 120], [60, 120]]
+		],
+		"junctions": []
+	},
+	"median-corner.json": {
+		"roads": [
+			["segment-0", [-150, 0], [-18, 0]],
+			["segment-1", [0, -18], [0, -150]]
+		],
+		"junctions": [["node-1"]]
+	},
+	"median-crossing.json": {
+		"roads": [
+			["avenue-straight", [0, 0], [60, 0]],
+			["avenue-curved", [0, 50], [60, 50]]
+		],
+		"junctions": []
+	},
+	"off-ramp.json": {
+		"roads": [
+			["south", [0, 200], [0, 20]],
+			["north", [1.794, -19.919], [0, -200]],
+			["ramp", [25.842, -16.727], [90, -50]]
+		],
+		"junctions": [["m"]]
+	},
+	"offset.json": {
+		"roads": [
+			["w1j1", [-60, -40], [-8.5, -40]],
+			["j1e1", [8.5, -40], [60, -40]],
+			["mid", [0, -31.5], [0, 11.5]],
+			["w2j2", [-60, 20], [-8.5, 20]],
+			["j2e2", [8.5, 20], [60, 20]],
+			["tail", [0, 28.5], [0, 80]],
+			["free", [-160, -60], [-160, 40]]
+		],
+		"junctions": [["j1"], ["j2"]]
+	},
+	"road-joints.json": {
+		"roads": [
+			["seam-one", [-120, -60], [40, 0]],
+			["widen-wide", [40, -80], [77.584, -42.416]],
+			["widen-narrow", [83.417, -40], [180, -40]],
+			["lone", [-140, 100], [-60, 100]]
+		],
+		"junctions": [["widen"]]
+	},
+	"roundabout.json": {
+		"roads": [
+			["ring-exit-n", [3.842, -14.518], [-3.843, -14.518]],
+			["ring-exit-e", [14.518, 3.842], [14.518, -3.842]],
+			["ring-exit-s", [-3.648, 14.793], [3.648, 14.793]],
+			["ring-exit-w", [-14.793, -3.648], [-14.793, 3.648]],
+			["approach-n", [0, -110], [0, -54]],
+			["entry-ramp-n-a", [-2.315, -34.82], [-6.276, -17.643]],
+			["exit-ramp-n", [6.276, -17.642], [2.315, -34.82]],
+			["approach-e", [110, 0], [54, 0]],
+			["entry-ramp-e", [34.825, -2.315], [17.642, -6.276]],
+			["exit-ramp-e", [17.642, 6.276], [34.825, 2.315]],
+			["approach-s", [0, 110], [0, 54]],
+			["entry-ramp-s", [2.315, 34.825], [6.196, 17.853]],
+			["exit-ramp-s", [-6.196, 17.853], [-2.315, 34.825]],
+			["approach-w", [-110, 0], [-54, 0]],
+			["entry-ramp-w", [-34.825, 2.315], [-17.853, 6.196]],
+			["exit-ramp-w", [-17.853, -6.196], [-34.825, -2.315]]
+		],
+		"junctions": [
+			["entry-e", "exit-n"],
+			["entry-n", "exit-w"],
+			["entry-s", "exit-e"],
+			["entry-w", "exit-s"],
+			["split-e"],
+			["split-n"],
+			["split-s"],
+			["split-w"]
+		]
+	},
+	"setbacks.json": {
+		"roads": [
+			["kw", [-22.5, 0], [-60, 0]],
+			["ke", [0, 0], [60, 0]],
+			["ks", [0, 8.5], [0, 50]]
+		],
+		"junctions": [["k"]]
+	},
+	"short-footpath.json": {
+		"roads": [
+			["side", [-80, 0], [-20, 0]],
+			["main-n", [0, -60], [0, 60]]
+		],
+		"junctions": []
+	},
+	"skewed-four-setbacks.json": {
+		"roads": [
+			["nw", [-62.5, -64.7], [-5.489, -5.682]],
+			["sw", [-64.7, 62.5], [-17.261, 16.675]],
+			["e", [90, 1.6], [19.182, 0.341]],
+			["se", [62.5, 64.7], [22.233, 23.015]]
+		],
+		"junctions": [["k"]]
+	},
+	"skewed-four.json": {
+		"roads": [
+			["nw", [-62.5, -64.7], [-5.489, -5.682]],
+			["sw", [-64.7, 62.5], [-5.682, 5.489]],
+			["e", [90, 1.6], [19.182, 0.341]],
+			["se", [62.5, 64.7], [13.329, 13.799]]
+		],
+		"junctions": [["k"]]
+	},
+	"skewed-priority.json": {
+		"roads": [
+			["west", [-13.316, -4.322], [-76.1, -24.7]],
+			["east", [7.7, 1.501], [78.5, 15.3]],
+			["sw", [-4.407, 10.362], [-31.3, 73.6]],
+			["se", [3.855, 10.58], [27.4, 75.2]]
+		],
+		"junctions": [["k"]]
+	},
+	"tight-bend.json": {
+		"roads": [["hairpin", [0, 0], [20, 0]]],
+		"junctions": []
+	},
+	"tight-junction.json": {
+		"roads": [
+			["ab", [-60, 0], [65, 0]],
+			["ef", [-60, 60], [60, 60]]
+		],
+		"junctions": []
+	},
+	"tight-link.json": {
+		"roads": [
+			["ab", [-60, 0], [-0.6, 0]],
+			["bc", [0.6, 0], [4.4, 0]],
+			["cd", [5.6, 0], [65, 0]]
+		],
+		"junctions": [["b"], ["c"]]
+	},
+	"two-way-end.json": {
+		"roads": [["street", [0, 0], [60, 0]]],
+		"junctions": []
+	},
+	"uneven-three.json": {
+		"roads": [
+			["arm0", [3.4, 0], [60, 0]],
+			["arm1", [-0.59, 3.348], [-10.419, 59.088]],
+			["arm2", [-3.195, -1.163], [-56.382, -20.521]]
+		],
+		"junctions": [["c"]]
+	}
+}

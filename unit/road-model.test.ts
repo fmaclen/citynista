@@ -13,11 +13,12 @@ import {
 } from '../src/lib/road-model/clip';
 import { check } from '../src/lib/road-model/checks';
 import type { NodeDescription, Ring, Surface } from '../src/lib/road-model/description';
-import { Drawing } from '../src/lib/road-model/drawing';
+import type { Scene } from '../src/lib/core/networks';
 import { crossSection, frameAt, offsetPoint } from '../src/lib/road-model/geometry';
 import { band, connectionCurve, endsOf, laneEndOf } from '../src/lib/road-model/ends';
 import { outlineOf } from '../src/lib/road-model/outline';
 import type { Pt } from '../src/lib/road-model/model';
+import { shapeOf, walkAt } from '../src/lib/road-model/overlay';
 import { buildModel, readScene, segmentOf } from './model';
 import { LAYERS, layerOf, signShapes } from '../src/lib/rendering/road-meshes';
 
@@ -333,6 +334,25 @@ test('two lane changes close enough to merge keep the sidewalks running through'
 	expect(walks).toEqual(['north-south', 'north-south']);
 });
 
+test('two nodes of two roads merged keep their sidewalks running through, whichever way they were stored', () => {
+	// tight-link with b moved 2 m toward c, their 3 m piece merged away, and
+	// that piece listed first, as one drawn first is: at both nodes the
+	// sidewalks then run out of it into the road kept.
+	for (const first of [false, true]) {
+		const graph = readScene('tight-link');
+		graph.nodes.find((n) => n.id === 'b')!.x = 2;
+		if (first) graph.segments.sort((a) => (a.id === 'bc' ? -1 : 1));
+		const { scene } = buildModel(graph);
+		const joined = scene.place.junctions.find((j) => j.members.length > 1)!;
+		const sidewalk = (r: { road: string; lane: string }) =>
+			scene.geos.get(r.road)?.road.lanes.find((l) => l.id === r.lane)?.kind === 'walk';
+		const walks = joined.connections
+			.filter((c) => sidewalk(c.from) && sidewalk(c.to))
+			.map((c) => [c.from.road, c.to.road].sort().join('-'));
+		expect(walks).toEqual(['ab-cd', 'ab-cd']);
+	}
+});
+
 const drive = (direction: 'forward' | 'backward'): Lane => ({
 	role: 'vehicle',
 	material: 'asphalt',
@@ -463,7 +483,7 @@ const zebraOf = (node: NodeDescription) =>
 
 // What a junction draws on top at a point, as the renderer stacks its
 // layers: the material showing there, null where it leaves the ground.
-function surfaceAt(scene: Drawing, id: string, p: Pt) {
+function surfaceAt(scene: Scene, id: string, p: Pt) {
 	const top = scene
 		.node(id)!
 		.surfaces.filter((s) => inside(groundOf(s), p))
@@ -472,7 +492,7 @@ function surfaceAt(scene: Drawing, id: string, p: Pt) {
 }
 
 // The middle of a road's lane (by index) at a distance along it.
-function laneMiddle(scene: Drawing, road: string, lane: number, at: 'start' | 'end') {
+function laneMiddle(scene: Scene, road: string, lane: number, at: 'start' | 'end') {
 	const geo = scene.geos.get(road)!;
 	const d = at === 'start' ? 0 : geo.path.length;
 	const f = frameAt(geo.path, d);
@@ -486,11 +506,14 @@ const mixed = (): Lane[] => [
 ];
 
 test('a node between two identical roads draws each lane on in its own material', () => {
-	// One asphalt lane and one concrete lane, cut in two where the road bends.
+	// One asphalt lane and one concrete lane, carrying on where the road
+	// bends: two roads drawn on their own, their lanes named apart, so m is a
+	// node (one road cut there is drawn whole, core/place.ts).
+	const named = (prefix: string) => mixed().map((l, i) => ({ ...l, id: `${prefix}${i}` }));
 	const { scene } = buildModel(
 		graphOf({ a: [-60, -60], m: [0, 0], b: [80, 0] }, [
-			{ id: 'one', from: 'a', to: 'm', lanes: mixed() },
-			{ id: 'two', from: 'm', to: 'b', lanes: mixed(), control: [40, 40] }
+			{ id: 'one', from: 'a', to: 'm', lanes: named('a') },
+			{ id: 'two', from: 'm', to: 'b', lanes: named('b'), control: [40, 40] }
 		])
 	);
 	// All the way across the node, each lane is drawn in its own material.
@@ -1047,9 +1070,27 @@ test('two crossings lying over each other paint their shared ground once', () =>
 
 test('every sign at a node names the lanes it is painted across', () => {
 	const kinds = new Map<string, number>();
+	// Two one-way roads driving head on into a node: each lane ends there.
+	const oneWay = (id: string, from: string, to: string, direction: Lane['direction']) => ({
+		id,
+		startNodeId: from,
+		endNodeId: to,
+		lanes: [
+			{ id: 'l', role: 'vehicle' as const, material: 'asphalt' as const, width: 3.5, direction }
+		]
+	});
+	const headOn = {
+		nodes: [
+			{ id: 'a', x: 0, y: 0 },
+			{ id: 'b', x: 50, y: 0 },
+			{ id: 'c', x: 100, y: 0 }
+		],
+		segments: [oneWay('ab', 'a', 'b', 'forward'), oneWay('bc', 'b', 'c', 'backward')]
+	};
 	const graphs = [
 		...readdirSync('e2e/scenes').map((file) => sceneGraph(file.replace('.json', ''))),
-		JSON.parse(readFileSync('static/examples/neighbourhood.json', 'utf8')).graph
+		JSON.parse(readFileSync('static/examples/neighbourhood.json', 'utf8')).graph,
+		headOn
 	];
 	for (const graph of graphs) {
 		const { scene } = buildModel(graph);
@@ -1121,7 +1162,7 @@ test('paving shrunk anywhere from a millimetre to 20 cm short of its curbs is fo
 
 // The turn, in degrees, between each line of a road and the line of the node
 // that carries it on from the same point at the road's end (within 2 cm).
-function turnsWhereLinesMeet(scene: Drawing, nodeId: string) {
+function turnsWhereLinesMeet(scene: Scene, nodeId: string) {
 	const node = scene.node(nodeId)!;
 	const heading = (a: Pt, b: Pt) => {
 		const l = Math.hypot(b.x - a.x, b.y - a.y) || 1;
@@ -1182,4 +1223,295 @@ test('the lines a junction or a taper carries on from a road run on from the roa
 	expect(turns.length).toBe(8);
 	for (const turn of turns) expect(turn).toBeLessThan(0.5);
 	expect(check(scene)).toEqual([]);
+});
+
+test('an approach with room for its arrows that lacks one is reported', () => {
+	// The roundabout's entries give way at the ring, each with an arrow.
+	const { scene } = buildModel(readScene('roundabout'));
+	expect(check(scene)).toEqual([]);
+	const j = scene.place.junctions.find((x) => scene.node(x.id)!.approaches.some((a) => a.arrows))!;
+	const node = scene.node(j.id)!;
+	const bare = { ...node, signs: node.signs.filter((s) => s.kind !== 'arrow') };
+	const found = check({ ...scene, node: (id) => (id === j.id ? bare : scene.node(id)) });
+	expect(found.some((p) => p.startsWith(`arrows left out: ${j.id}`))).toBe(true);
+});
+
+// Whether some piece drawn paves a point for walking (walkAt).
+const walkedAt = (scene: Scene, p: Pt) =>
+	[
+		...scene.place.roads.map((r) => scene.road(r.id)),
+		...scene.place.junctions.map((j) => scene.node(j.id))
+	].some((d) => d && walkAt(d, p));
+
+// Three roads meeting at m, as a T (two running straight on, so the corner
+// between them is straight too) and as a Y, each shifted differently at its
+// two ends, so its lanes run at a slant (`lean`, metres of shift a metre
+// along) to the line it is drawn on, which its end lies square to. Each
+// corner's sidewalk runs back into both roads' own sidewalks square to their
+// ends, so the two meet across the sidewalk's whole width just in front of
+// each end, however the road leans, whichever way it is stored, straight or
+// curved.
+test("a corner's sidewalk meets each road's own across its whole width, however the road leans", () => {
+	const shapes: Record<string, Record<string, [number, number]>> = {
+		T: { a: [40, 0], b: [-40, 0], c: [0, 40] },
+		Y: { a: [40, 0], b: [-20, 34.6], c: [-20, -34.6] }
+	};
+	for (const [shape, arms] of Object.entries(shapes))
+		for (const lanes of [street, avenue])
+			for (const lean of [-0.16, -0.08, 0.08, 0.16])
+				for (const flip of [false, true])
+					for (const bow of [0, 6]) {
+						const segs = Object.entries(arms).map(([id, [x, y]]): Seg => {
+							// Shifted 2 m at the junction, less or more at the far end.
+							const [near, far] = [2, 2 - lean * 40];
+							const control: [number, number] = [x / 2 - (y / 40) * bow, y / 2 + (x / 40) * bow];
+							return flip
+								? {
+										id,
+										from: id,
+										to: 'm',
+										lanes: lanes(),
+										offsetStart: far,
+										offsetEnd: near,
+										control
+									}
+								: {
+										id,
+										from: 'm',
+										to: id,
+										lanes: lanes(),
+										offsetStart: near,
+										offsetEnd: far,
+										control
+									};
+						});
+						const { scene } = buildModel(graphOf({ m: [0, 0], ...arms }, segs));
+						const node = scene.node('m')!;
+						const label = `${shape} ${lanes === street ? 'street' : 'avenue'} lean ${lean} flip ${flip} bow ${bow}`;
+						expect(node.walkways?.length, label).toBe(3);
+						for (const w of node.walkways!)
+							for (const ref of [w.a, w.b]) {
+								const end = node.ends.find(
+									(e) => e.ref.road === ref.road && e.ref.end === ref.end
+								)!;
+								const walk = end.lanes.find((l) => l.lane.id === ref.lane)!;
+								for (let t = walk.left + 0.05; t < walk.right - 0.04; t += 0.1) {
+									const p = offsetPoint(
+										offsetPoint(end.frame.p, end.frame.n, t),
+										end.frame.out,
+										-0.03
+									);
+									expect(walkedAt(scene, p), `${label}: ${ref.road} at ${t.toFixed(2)}`).toBe(true);
+								}
+							}
+					}
+});
+
+// Six roads meeting, a corner between two streets running out of the
+// junction at a sharp angle with a curb swinging out past where the two
+// streets' sidewalk edges meet: the rounding between those edges crosses the curb, and
+// the corner's sidewalk keeps all of its band all the same, paved along its
+// middle, with no point of it running on from it.
+test('a corner whose curb swings out past where its sidewalks meet is paved all round, with no point', () => {
+	const path = () => createLanesFrom('path');
+	const { scene } = buildModel(
+		graphOf(
+			{
+				centre: [0, 0],
+				'arm-0': [-59.65604145768502, -57.46020749934989],
+				'arm-1': [7.190903948353953, -68.72499074564377],
+				'arm-2': [72.64889726560733, -49.312891380646164],
+				'arm-3': [53.9908755802293, 47.2183828816398],
+				'arm-4': [-10.17553637024968, 47.35585423767769],
+				'arm-5': [-90.86502401485353, 54.54076380979003],
+				p0: [-14.694788404740393, 10.380115695297718],
+				q0: [35.127231632359326, 28.282369105145335],
+				p1: [63.48425823729485, 7.991949412971735],
+				q1: [32.64614297542721, 54.185689175501466],
+				p2: [-67.35573369544, -49.57988605834544],
+				q2: [-6.791751240380108, -6.6838775016367435],
+				p3: [-68.14889570232481, 52.43060399778187],
+				q3: [4.168924069963396, -68.612927980721]
+			},
+			[
+				{
+					id: 'arm-0',
+					from: 'centre',
+					to: 'arm-0',
+					lanes: avenue(),
+					control: [-12.861137705094098, -46.34537388394794],
+					offsetStart: -3.6676226910203695,
+					offsetEnd: 0.2287731021642685
+				},
+				{
+					id: 'arm-1',
+					from: 'arm-1',
+					to: 'centre',
+					lanes: avenue(),
+					control: [-5.438842914391087, -35.30778101171323],
+					offsetStart: -3.965477893128991,
+					offsetEnd: -3.2015167511999607
+				},
+				{
+					id: 'arm-2',
+					from: 'centre',
+					to: 'arm-2',
+					lanes: street(),
+					control: [30.355956374757827, -33.44936715052206],
+					offsetStart: -1.7842912506312132,
+					offsetEnd: -3.5054131373763084
+				},
+				{
+					id: 'arm-3',
+					from: 'arm-3',
+					to: 'centre',
+					lanes: street(),
+					control: [31.10141693248805, 18.914295184703132],
+					offsetStart: -1.7378554213792086,
+					offsetEnd: 2.0932725556194782
+				},
+				{
+					id: 'arm-4',
+					from: 'centre',
+					to: 'arm-4',
+					lanes: street(),
+					control: [-19.411257959518593, 20.600183226463216],
+					offsetStart: 0.7514603529125452,
+					offsetEnd: 2.4324755370616913
+				},
+				{
+					id: 'arm-5',
+					from: 'arm-5',
+					to: 'centre',
+					lanes: avenue(),
+					control: [-29.155110615339805, 54.38856590300588],
+					offsetStart: -0.10174837149679661,
+					offsetEnd: -0.8195219226181507
+				},
+				{ id: 'path-0', from: 'p0', to: 'q0', lanes: path() },
+				{
+					id: 'path-1',
+					from: 'p1',
+					to: 'q1',
+					lanes: path(),
+					control: [6.2780295219272375, 5.418142676353455]
+				},
+				{ id: 'path-2', from: 'p2', to: 'q2', lanes: path() },
+				{
+					id: 'path-3',
+					from: 'p3',
+					to: 'q3',
+					lanes: path(),
+					control: [33.51634849794209, -11.688306201249361]
+				}
+			]
+		)
+	);
+	const node = scene.node('centre')!;
+	const corner = node.walkways!.find((w) => w.a.road === 'arm-3' && w.b.road === 'arm-4')!;
+	const line = corner.line;
+	for (let k = 1; k < line.length; k++)
+		for (let f = 0; f < 1; f += 0.25) {
+			const p = {
+				x: line[k - 1].x + (line[k].x - line[k - 1].x) * f,
+				y: line[k - 1].y + (line[k].y - line[k - 1].y) * f
+			};
+			expect(walkedAt(scene, p), `middle at (${p.x.toFixed(2)}, ${p.y.toFixed(2)})`).toBe(true);
+		}
+	// Its points ran on along the street's curb, to (-9.4, 37.2) and (-11.5, 22.0).
+	const spikes = check(scene).filter((s) => s.startsWith('sidewalk spike'));
+	const near = (s: string) => {
+		const [x, y] = s.match(/-?[\d.]+/g)!.map(Number);
+		return x > -15 && x < -5 && y > 15 && y < 45;
+	};
+	expect(spikes.filter(near)).toEqual([]);
+});
+
+// Six roads meeting, a corner between a street and an avenue whose curb
+// swings out past where their sidewalks' edges meet, so the rounding between
+// those edges crosses the avenue's grass verge round the corner: the verge
+// stays grass there, with no sidewalk under it.
+test('a corner whose curb swings out past where its sidewalks meet leaves its verge grass', () => {
+	const arm = (id: string, from: string, to: string, lanes: () => Lane[], more: number[]): Seg => ({
+		id,
+		from,
+		to,
+		lanes: lanes(),
+		offsetStart: more[0],
+		offsetEnd: more[1],
+		control: [more[2], more[3]]
+	});
+	const { scene } = buildModel(
+		graphOf(
+			{
+				centre: [0, 0],
+				'arm-0': [-22.382963603425484, -29.899523086727427],
+				'arm-1': [3.532287733469704, -33.66084986474954],
+				'arm-2': [53.8000789534598, -4.056999826622953],
+				'arm-3': [66.65053995835436, 50.573458484249265],
+				'arm-4': [-7.115036110275707, 45.418302790960034],
+				'arm-5': [-91.94599608501689, 26.612516994826958]
+			},
+			[
+				arm(
+					'arm-0',
+					'centre',
+					'arm-0',
+					avenue,
+					[-3.63072950206697, 1.864115759730339, -6.215720826359286, -18.67464626769967]
+				),
+				arm(
+					'arm-1',
+					'arm-1',
+					'centre',
+					street,
+					[-0.6128636691719294, 2.9896153770387173, 2.7602966726424705, -16.72610095435247]
+				),
+				arm(
+					'arm-2',
+					'centre',
+					'arm-2',
+					avenue,
+					[1.9667046833783388, -0.9983558878302574, 28.00968952310444, 12.686625217801522]
+				),
+				arm(
+					'arm-3',
+					'arm-3',
+					'centre',
+					avenue,
+					[-3.763049768283963, -0.5270090810954571, 33.29711192129663, 25.323838623570264]
+				),
+				arm(
+					'arm-4',
+					'centre',
+					'arm-4',
+					street,
+					[-0.703164478763938, -0.9654707610607147, 1.6581588805309435, 23.526216927576517]
+				),
+				arm(
+					'arm-5',
+					'arm-5',
+					'centre',
+					avenue,
+					[-2.958288276568055, 1.0949893407523632, -56.209484635390794, -22.060706467848668]
+				)
+			]
+		)
+	);
+	const node = scene.node('centre')!;
+	const verge = node.surfaces.filter((s) => s.role === 'verge');
+	// Along the verge round the arm-1 to arm-2 corner.
+	for (const q of [
+		{ x: 10.88, y: -12.11 },
+		{ x: 12.77, y: -9.95 },
+		{ x: 15.48, y: -7.64 },
+		{ x: 17.59, y: -6.33 }
+	]) {
+		const at = `(${q.x}, ${q.y})`;
+		expect(
+			verge.some((s) => inside(shapeOf(s), q)),
+			at
+		).toBe(true);
+		expect(walkedAt(scene, q), at).toBe(false);
+	}
 });

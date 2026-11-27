@@ -176,4 +176,52 @@ test.describe('Lane connector', () => {
 			expect(Object.values((await junctionOf(page))?.control ?? {})).toEqual([order[next]]);
 		}
 	});
+
+	test('a badge on a road cut short of the junction stores its control on the piece that ends there', async ({
+		page
+	}) => {
+		// A street from w east to a T at j, cut 4 m short of j at c: one road
+		// through c (core/place.ts), drawn named by its first piece, `a`.
+		await openGraph(page, CUT_TEE, `topdown&model&cam=20,0,${ZOOM_TEE}`);
+		const j = atTee(40, 0);
+		await page.mouse.dblclick(j.x, j.y);
+		const badges = page.getByRole('button', { name: /^Approach control/ });
+		await expect(badges).toHaveCount(3);
+		// The street's badge, the one furthest west.
+		const xs = await Promise.all(
+			[0, 1, 2].map(async (i) => (await badges.nth(i).boundingBox())!.x)
+		);
+		const west = badges.nth(xs.indexOf(Math.min(...xs)));
+		for (let i = 0; i < 4 && !(await west.getAttribute('aria-label'))!.endsWith('Yield'); i++)
+			await west.click();
+		await expect(west).toHaveAccessibleName('Approach control: Yield');
+		// Stored under the piece the user's badge sits on, which ends at j.
+		const control = nodeOf(await liveGraph(page), 'j').junction?.control ?? {};
+		expect(control['b:end']).toBe('yield');
+		expect(control['a:end']).toBeUndefined();
+		const drawn = (await roadModel(page))!.junctions.find((x) => x.members.includes('j'))!;
+		expect(drawn.control['a:end']).toBe('yield');
+	});
 });
+
+// A street from w east to a T at j (40, 0), cut at c 4 m short of j: two
+// pieces with the same lanes, `a` (w–c) and `b` (c–j). At 4x, centred on
+// (20, 0).
+const ZOOM_TEE = 4;
+const atTee = screenAt(ZOOM_TEE, { x: 20, y: 0 });
+const street = () => createLanesFrom('street').map((l, i) => ({ ...l, id: `l${i}` }));
+const CUT_TEE = {
+	nodes: [
+		{ id: 'w', x: -40, y: 0 },
+		{ id: 'c', x: 36, y: 0 },
+		{ id: 'j', x: 40, y: 0 },
+		{ id: 'n', x: 40, y: 40 },
+		{ id: 's', x: 40, y: -40 }
+	],
+	segments: [
+		{ id: 'a', startNodeId: 'w', endNodeId: 'c', lanes: street() },
+		{ id: 'b', startNodeId: 'c', endNodeId: 'j', lanes: street() },
+		{ id: 'up', startNodeId: 'j', endNodeId: 'n', lanes: street() },
+		{ id: 'down', startNodeId: 'j', endNodeId: 's', lanes: street() }
+	]
+};

@@ -1,0 +1,718 @@
+{
+	"ride street 1 up swung": {
+		"graph": "3edcb505d5a3b214",
+		"drawing": "bf4c24c2ab295cce"
+	},
+	"ride street 1 up body": {
+		"graph": "4a588a0bfc10e715",
+		"drawing": "c1f91c6b254b6c1c"
+	},
+	"ride street 1 up T": {
+		"graph": "19d06a0d6a6580eb",
+		"drawing": "d8b05268766ceb82"
+	},
+	"ride street 1 up bent swung": {
+		"graph": "3510748f1b03567d",
+		"drawing": "48876a66d364a07"
+	},
+	"ride street 1 up bent body": {
+		"graph": "4f5cdd31045bfec5",
+		"drawing": "a1da752280940dd4"
+	},
+	"ride street 1 up bent T": {
+		"graph": "9e73ff050b59ab3",
+		"drawing": "896d5855cb2d43a5"
+	},
+	"ride street 1 down swung": {
+		"graph": "d833148e47ff33ef",
+		"drawing": "723773023051a7fa"
+	},
+	"ride street 1 down body": {
+		"graph": "73e2a8507b7deebd",
+		"drawing": "ba9a9de0e03ee66a"
+	},
+	"ride street 1 down T": {
+		"graph": "14e5b5e0cb126e67",
+		"drawing": "c95aae3f9bd54f6b"
+	},
+	"ride street 1 down bent swung": {
+		"graph": "514f67a06c4deba",
+		"drawing": "a05eb8d40a4714d5"
+	},
+	"ride street 1 down bent body": {
+		"graph": "f3a43a35a50e8da1",
+		"drawing": "a2a90487ce3e2c65"
+	},
+	"ride street 1 down bent T": {
+		"graph": "31f4cb11486657c4",
+		"drawing": "d291f666e1313960"
+	},
+	"ride street -1 up swung": {
+		"graph": "a01a70d5a54c9f02",
+		"drawing": "bc50f7537fdc60cb"
+	},
+	"ride street -1 up body": {
+		"graph": "292d55fb24a075cb",
+		"drawing": "4165d65cc5a5c17f"
+	},
+	"ride street -1 up T": {
+		"graph": "2a153385d7e89137",
+		"drawing": "e9ce11edc775a141"
+	},
+	"ride street -1 up bent swung": {
+		"graph": "67ec3622c8cb5873",
+		"drawing": "73470e5b523b970e"
+	},
+	"ride street -1 up bent body": {
+		"graph": "a1ba0ee9a75f8b34",
+		"drawing": "eebbbdc8f5a9f417"
+	},
+	"ride street -1 up bent T": {
+		"graph": "7cde2ca9dbf009aa",
+		"drawing": "6a936256d8a1d77e"
+	},
+	"ride street -1 down swung": {
+		"graph": "9b68dc6d1c624701",
+		"drawing": "60a607b4da52a63c"
+	},
+	"ride street -1 down body": {
+		"graph": "4bd0c2ebc7c6cbf9",
+		"drawing": "dd3c40d2e75a2d72"
+	},
+	"ride street -1 down T": {
+		"graph": "1d6b84b7b1ed6040",
+		"drawing": "4460bd9203200f96"
+	},
+	"ride street -1 down bent swung": {
+		"graph": "b33d218bba02f9e",
+		"drawing": "74a43312b93fe75d"
+	},
+	"ride street -1 down bent body": {
+		"graph": "2b6c3a8ed977b698",
+		"drawing": "23a92489efa0fc8b"
+	},
+	"ride street -1 down bent T": {
+		"graph": "232154ce56968334",
+		"drawing": "887145920bc53a65"
+	},
+	"ride avenue 1 up swung": {
+		"graph": "c4bb3709e60872bd",
+		"drawing": "e6c2dd9da93f7e3e"
+	},
+	"ride avenue 1 up body": {
+		"graph": "ce78cef5f41f84c4",
+		"drawing": "47f415054a7ebdd0"
+	},
+	"ride avenue 1 up T": {
+		"graph": "6c3dcff4365d363d",
+		"drawing": "de2e156dac3b27fc"
+	},
+	"ride avenue 1 up bent swung": {
+		"graph": "c28e2a06ff2624d",
+		"drawing": "ff438b7ad1a91714"
+	},
+	"ride avenue 1 up bent body": {
+		"graph": "42b91caeca7e5fd0",
+		"drawing": "571fad1b332fce60"
+	},
+	"ride avenue 1 up bent T": {
+		"graph": "4bd9b6c62c73f2ee",
+		"drawing": "9484f8876e823707"
+	},
+	"ride avenue 1 down swung": {
+		"graph": "d12c530b0196229f",
+		"drawing": "e2df53f1f2384086"
+	},
+	"ride avenue 1 down body": {
+		"graph": "c81306a6d689044a",
+		"drawing": "fd788bd563a225c3"
+	},
+	"ride avenue 1 down T": {
+		"graph": "460c03079c00e71b",
+		"drawing": "4a9174c8a98f46ad"
+	},
+	"ride avenue 1 down bent swung": {
+		"graph": "7e317e527662c71c",
+		"drawing": "33606a030852e61f"
+	},
+	"ride avenue 1 down bent body": {
+		"graph": "9e050faf5b95eefe",
+		"drawing": "dbdb0446cbd8d9ba"
+	},
+	"ride avenue 1 down bent T": {
+		"graph": "5127d691ae0aff64",
+		"drawing": "bce7d39d6a4b99cc"
+	},
+	"ride avenue -1 up swung": {
+		"graph": "c11a4cf7f2b9eca",
+		"drawing": "b75c9d4deb11559f"
+	},
+	"ride avenue -1 up body": {
+		"graph": "ce4ddd575857de8",
+		"drawing": "26ce5e0233de8d8a"
+	},
+	"ride avenue -1 up T": {
+		"graph": "fcc109d282233794",
+		"drawing": "20f38152bca03d4a"
+	},
+	"ride avenue -1 up bent swung": {
+		"graph": "c8dfd82a84f27d0c",
+		"drawing": "c6add084b5f2f30c"
+	},
+	"ride avenue -1 up bent body": {
+		"graph": "4910982a342fff78",
+		"drawing": "332e4aa35e667ca8"
+	},
+	"ride avenue -1 up bent T": {
+		"graph": "45ae004562e8b4a3",
+		"drawing": "596caa4011b0a542"
+	},
+	"ride avenue -1 down swung": {
+		"graph": "a7afd34bc144d63",
+		"drawing": "3a07c9876bee0fed"
+	},
+	"ride avenue -1 down body": {
+		"graph": "d17a6fa0ee491df6",
+		"drawing": "155850539d41f890"
+	},
+	"ride avenue -1 down T": {
+		"graph": "9430552287769b66",
+		"drawing": "3dd807b23e96b8f9"
+	},
+	"ride avenue -1 down bent swung": {
+		"graph": "c82f4ba88da385ce",
+		"drawing": "5926098385aabc9e"
+	},
+	"ride avenue -1 down bent body": {
+		"graph": "5783dd66b0020cd2",
+		"drawing": "e40b5882fdf46672"
+	},
+	"ride avenue -1 down bent T": {
+		"graph": "183bbcd51f8ee1fb",
+		"drawing": "8129d79ecb1ea1e"
+	},
+	"curved street 1 end": {
+		"graph": "5e69a2c7617348e7",
+		"drawing": "e1eba3a2cdf85813"
+	},
+	"curved street 1 handle": {
+		"graph": "e723767f6df8a7c7",
+		"drawing": "a11a08997770f99e"
+	},
+	"curved street 1 both end": {
+		"graph": "6597fca5a3477f85",
+		"drawing": "def272dc5f9d6545"
+	},
+	"curved street 1 both handle": {
+		"graph": "678edc38a4481e9f",
+		"drawing": "507d498a4eb5e4a2"
+	},
+	"curved street -1 end": {
+		"graph": "4d28ef1a26ae163e",
+		"drawing": "eefa5fc2d016212f"
+	},
+	"curved street -1 handle": {
+		"graph": "3b4dbbe7dd2daf01",
+		"drawing": "ca8e32c659198f67"
+	},
+	"curved street -1 both end": {
+		"graph": "66a48716c0a32268",
+		"drawing": "ce4be60a283d8892"
+	},
+	"curved street -1 both handle": {
+		"graph": "68d9a7879e76c158",
+		"drawing": "82abc47e337019b3"
+	},
+	"curved avenue 1 end": {
+		"graph": "eebe8efaba981287",
+		"drawing": "a0f0f745b6bcac1e"
+	},
+	"curved avenue 1 handle": {
+		"graph": "88443da75e7d4df4",
+		"drawing": "71c8494fceebc8c0"
+	},
+	"curved avenue 1 both end": {
+		"graph": "4c7ae82f7b06c008",
+		"drawing": "456cf51547c3302e"
+	},
+	"curved avenue 1 both handle": {
+		"graph": "f06226dc86098053",
+		"drawing": "fbdb88db474585f8"
+	},
+	"curved avenue -1 end": {
+		"graph": "f2052655ef77926",
+		"drawing": "14395407b122d576"
+	},
+	"curved avenue -1 handle": {
+		"graph": "1a66ef77cc22a067",
+		"drawing": "82000042756ed5e1"
+	},
+	"curved avenue -1 both end": {
+		"graph": "d6528b00365957c5",
+		"drawing": "828797bb70027a05"
+	},
+	"curved avenue -1 both handle": {
+		"graph": "e9b8e83b3d65fa9d",
+		"drawing": "dbee765c64e41f0c"
+	},
+	"slide street -6,1": {
+		"graph": "8949d45a4933b53b",
+		"drawing": "c89c1f772fdce0d5"
+	},
+	"slide street 9,-3": {
+		"graph": "edc8fdab847c5868",
+		"drawing": "98739143137ca723"
+	},
+	"slide street 14,12": {
+		"graph": "e4d257321cb23807",
+		"drawing": "ab664bdb0654555a"
+	},
+	"slide street bent -6,1": {
+		"graph": "b3f29e4fbb16e6c1",
+		"drawing": "2c56c6bd7cd3fb7e"
+	},
+	"slide street bent 9,-3": {
+		"graph": "61ca04b2abe0d4e9",
+		"drawing": "72d7c59f7c7ced7e"
+	},
+	"slide street bent 14,12": {
+		"graph": "433a5da4ebcf2570",
+		"drawing": "ceada08bac35e139"
+	},
+	"slide avenue -6,1": {
+		"graph": "6670d12b07552fd5",
+		"drawing": "5d9b43f42102e67c"
+	},
+	"slide avenue 9,-3": {
+		"graph": "b1f0d5ea3c6e8060",
+		"drawing": "a63fafc3797da78e"
+	},
+	"slide avenue 14,12": {
+		"graph": "37c8167636e94d39",
+		"drawing": "497a9954641d74a1"
+	},
+	"slide avenue bent -6,1": {
+		"graph": "7ded4ce56e01973",
+		"drawing": "cd688b1d3d772b91"
+	},
+	"slide avenue bent 9,-3": {
+		"graph": "7f1fda16c27d207c",
+		"drawing": "fd11eae37a9a9f34"
+	},
+	"slide avenue bent 14,12": {
+		"graph": "a06588fe982c1248",
+		"drawing": "601c0a0336585d34"
+	},
+	"follow bent street up": {
+		"graph": "56c2576e92def8ea",
+		"drawing": "59c40b56ac209a59"
+	},
+	"follow widened street up": {
+		"graph": "f624fe0a57d512e3",
+		"drawing": "2cb65ced774e34eb"
+	},
+	"follow bent street up bent": {
+		"graph": "6f5b3dc61778084",
+		"drawing": "bab2e9bd51832244"
+	},
+	"follow widened street up bent": {
+		"graph": "7c374f91146d819e",
+		"drawing": "2625232b87e9949a"
+	},
+	"follow bent street down": {
+		"graph": "3108b1cb66939603",
+		"drawing": "1858c9c77ac5a438"
+	},
+	"follow widened street down": {
+		"graph": "d6bdbb4260048de1",
+		"drawing": "c405d4c5fa63b08e"
+	},
+	"follow bent street down bent": {
+		"graph": "c16d4ce11d5bd3be",
+		"drawing": "29184734250a54f5"
+	},
+	"follow widened street down bent": {
+		"graph": "5932c8ff152b7832",
+		"drawing": "b795e6c8002dc803"
+	},
+	"follow bent avenue up": {
+		"graph": "24dc5f5bdf688420",
+		"drawing": "37dcbdc8c8b00e6"
+	},
+	"follow widened avenue up": {
+		"graph": "1fb87f0b979a469c",
+		"drawing": "2e75fd6c7bcd3b95"
+	},
+	"follow bent avenue up bent": {
+		"graph": "c708cf786adecdc0",
+		"drawing": "945c931168d76cf5"
+	},
+	"follow widened avenue up bent": {
+		"graph": "74aea5d9a90a6b1e",
+		"drawing": "77057c34e1d5ab13"
+	},
+	"follow bent avenue down": {
+		"graph": "b7fc6907461d31d7",
+		"drawing": "99e2374d372125c8"
+	},
+	"follow widened avenue down": {
+		"graph": "b01430f04315796e",
+		"drawing": "f3c7b0d0605ecd50"
+	},
+	"follow bent avenue down bent": {
+		"graph": "846e8f329ff59400",
+		"drawing": "3b9611799cd5a44e"
+	},
+	"follow widened avenue down bent": {
+		"graph": "ae1c0ab942754746",
+		"drawing": "29d6c087569dfcfa"
+	},
+	"drop street long on sidewalk": {
+		"graph": "a314b058e787f97",
+		"drawing": "cad9f9987386de3a"
+	},
+	"drop street long on roadway": {
+		"graph": "721c14043a3fc3da",
+		"drawing": "a6ae0160fb3bc1ae"
+	},
+	"drop street long curved street on sidewalk": {
+		"graph": "532687d24f74ae02",
+		"drawing": "85d08039b99b9c23"
+	},
+	"drop street long curved street on roadway": {
+		"graph": "a9e93c3bd3845c4d",
+		"drawing": "d06a2f557651700c"
+	},
+	"drop street long bent on sidewalk": {
+		"graph": "effca70ffe5ded5a",
+		"drawing": "8af4420206cd42cf"
+	},
+	"drop street long bent on roadway": {
+		"graph": "c03c1e69d75927b5",
+		"drawing": "c856c8807ddc4ac7"
+	},
+	"drop street long bent curved street on sidewalk": {
+		"graph": "577c9057d4cd141b",
+		"drawing": "a74f063182863c87"
+	},
+	"drop street long bent curved street on roadway": {
+		"graph": "8ea5318c03e4226d",
+		"drawing": "14e47a77c62ee32a"
+	},
+	"drop street short on sidewalk": {
+		"graph": "39bf6b290c63447e",
+		"drawing": "ddc009b5f431968d"
+	},
+	"drop street short on roadway": {
+		"graph": "75718e0883859224",
+		"drawing": "de00bda568ab90ed"
+	},
+	"drop street short curved street on sidewalk": {
+		"graph": "e69e6b074491d7dc",
+		"drawing": "dd780a98a0bfdc79"
+	},
+	"drop street short curved street on roadway": {
+		"graph": "8d52549debc82dff",
+		"drawing": "bdcf773b27d3ea85"
+	},
+	"drop avenue long on sidewalk": {
+		"graph": "34fde312cc2e56e9",
+		"drawing": "95e0aa4d645716c2"
+	},
+	"drop avenue long on roadway": {
+		"graph": "d9e4fc90c79691f8",
+		"drawing": "f6f60b9c127a28fb"
+	},
+	"drop avenue long curved street on sidewalk": {
+		"graph": "89362c63df1e6bf3",
+		"drawing": "fb69690f29caa36c"
+	},
+	"drop avenue long curved street on roadway": {
+		"graph": "9daa1823bb915e2c",
+		"drawing": "704e4af000c363e4"
+	},
+	"drop avenue long bent on sidewalk": {
+		"graph": "cae1da294a28693f",
+		"drawing": "e8192eb58bac725f"
+	},
+	"drop avenue long bent on roadway": {
+		"graph": "a4a9626ae3adeb06",
+		"drawing": "865b11eacc488513"
+	},
+	"drop avenue long bent curved street on sidewalk": {
+		"graph": "ed95d15ca02847da",
+		"drawing": "8db586773e932aff"
+	},
+	"drop avenue long bent curved street on roadway": {
+		"graph": "6a2d1007006ac9c9",
+		"drawing": "10e6e984708295cb"
+	},
+	"drop avenue short on sidewalk": {
+		"graph": "843ea7d97a649f99",
+		"drawing": "667a1ec047533364"
+	},
+	"drop avenue short on roadway": {
+		"graph": "d6013faf1660abfb",
+		"drawing": "7c6f7b0666421946"
+	},
+	"drop avenue short curved street on sidewalk": {
+		"graph": "dbf37e82570b2822",
+		"drawing": "3431a73d37c2e473"
+	},
+	"drop avenue short curved street on roadway": {
+		"graph": "cc504541a7aac6cc",
+		"drawing": "fdcc8de558d5bebd"
+	},
+	"dead end street up as opened": {
+		"graph": "b8e5985987c87f03",
+		"drawing": "f8e816b67b10c226"
+	},
+	"dead end street up street end onto path end": {
+		"graph": "ef0102ba87f4058f",
+		"drawing": "6bf58afbdda09948"
+	},
+	"dead end street up path end onto street end": {
+		"graph": "a208da2a560a05fe",
+		"drawing": "79990c53bd425dec"
+	},
+	"dead end street down as opened": {
+		"graph": "63186805c8cff3df",
+		"drawing": "a780d5d5a1a7c690"
+	},
+	"dead end street down street end onto path end": {
+		"graph": "f943c9319b7cf763",
+		"drawing": "76db16d5523c1b0c"
+	},
+	"dead end street down path end onto street end": {
+		"graph": "707d085d76db6cfd",
+		"drawing": "7e32e627949f039f"
+	},
+	"dead end avenue up as opened": {
+		"graph": "6c5996841e059fee",
+		"drawing": "8edf059a30184665"
+	},
+	"dead end avenue up street end onto path end": {
+		"graph": "e4d6e4f969a04f52",
+		"drawing": "18645846938b914b"
+	},
+	"dead end avenue up path end onto street end": {
+		"graph": "d27ce8955b3b4fed",
+		"drawing": "71a7be4261815ff6"
+	},
+	"dead end avenue down as opened": {
+		"graph": "3370c8a6c7c88949",
+		"drawing": "aef46408394ac3d9"
+	},
+	"dead end avenue down street end onto path end": {
+		"graph": "6cc3d37bad67b4b7",
+		"drawing": "ccdbac4841a74e6"
+	},
+	"dead end avenue down path end onto street end": {
+		"graph": "38d6b489a77f387e",
+		"drawing": "e946b212c2487ee8"
+	},
+	"same kind dead end street": {
+		"graph": "d485bc64bba04f52",
+		"drawing": "750c4b79c8fd7b81"
+	},
+	"same kind dead end path": {
+		"graph": "df742f6ad3f3b8",
+		"drawing": "f7288b53091dff36"
+	},
+	"two dead ends 0": {
+		"graph": "7b4bd8d33ea958f6",
+		"drawing": "c886e02d96232e60"
+	},
+	"two dead ends 0.005": {
+		"graph": "4656d35dc8964f15",
+		"drawing": "5a5b2349b1751757"
+	},
+	"two dead ends 0.02": {
+		"graph": "18c30bdefdbbca41",
+		"drawing": "de0a868fa6eb2a6b"
+	},
+	"dead end with junction 0": {
+		"graph": "1d76c497aae328db",
+		"drawing": "5501300e20fcd116"
+	},
+	"dead end with junction 0.005": {
+		"graph": "43947949c9e92751",
+		"drawing": "aabbd77a2690475f"
+	},
+	"dead end with junction 0.02": {
+		"graph": "56abef5fbe358b64",
+		"drawing": "2bc092c0b48cd4f8"
+	},
+	"dead end with carried on 0": {
+		"graph": "63bfcbdee6e05e8e",
+		"drawing": "27cf35ede0f200de"
+	},
+	"dead end with carried on 0.005": {
+		"graph": "1b9b50dbc1f16d99",
+		"drawing": "a80f2d96b22d02c0"
+	},
+	"dead end with carried on 0.02": {
+		"graph": "3094a7b6dab84e9e",
+		"drawing": "e9831de852adb790"
+	},
+	"path end onto two dead ends 0": {
+		"graph": "2ca8c7fc5133932",
+		"drawing": "f643653e9746f80a"
+	},
+	"path end onto two dead ends 0.005": {
+		"graph": "f69f37e29edf2713",
+		"drawing": "c58875e762f9983d"
+	},
+	"junction dragged 0.005 from a dead end": {
+		"graph": "5e46727819da621c",
+		"drawing": "d0a8daf509bbe742"
+	},
+	"junction dragged 0.02 from a dead end": {
+		"graph": "2d6f588dfa29c24d",
+		"drawing": "4add16e7d108ec2"
+	},
+	"corner west corner 2 paths arm": {
+		"graph": "18cb765478f5b912",
+		"drawing": "8cac05cb3522cd20"
+	},
+	"corner west corner 2 paths road": {
+		"graph": "da12470300b86a51",
+		"drawing": "92a265aba815f17b"
+	},
+	"corner west corner 2 paths widen": {
+		"graph": "2cdacc2e77454b24",
+		"drawing": "7cdae1312d94602d"
+	},
+	"corner west corner 2 paths mixed arm": {
+		"graph": "bade203afe2bd69b",
+		"drawing": "ddd3d248058374a5"
+	},
+	"corner west corner 2 paths mixed road": {
+		"graph": "a7a77a4b817779b6",
+		"drawing": "dbf77c7e527bee6b"
+	},
+	"corner west corner 2 paths mixed widen": {
+		"graph": "f28cd4b7cbbbb10d",
+		"drawing": "a2bcb14f3bb579be"
+	},
+	"corner west corner 3 paths arm": {
+		"graph": "bb01d40cc19d9db8",
+		"drawing": "89e54889cc76feda"
+	},
+	"corner west corner 3 paths road": {
+		"graph": "61edd1763389ef02",
+		"drawing": "5187fc5e21c64283"
+	},
+	"corner west corner 3 paths widen": {
+		"graph": "b3fdf8b0559230f4",
+		"drawing": "ac7c54f569d247a3"
+	},
+	"corner west corner 3 paths mixed arm": {
+		"graph": "e87b584d59ddb0fc",
+		"drawing": "36217fb986568411"
+	},
+	"corner west corner 3 paths mixed road": {
+		"graph": "bead08c5e56fed68",
+		"drawing": "b62313d443910d3a"
+	},
+	"corner west corner 3 paths mixed widen": {
+		"graph": "567c32e855d8ee1e",
+		"drawing": "71816fc09fb42f2"
+	},
+	"corner east corner 2 paths arm": {
+		"graph": "c5ce966039066cb",
+		"drawing": "81dd8e751ef2d92a"
+	},
+	"corner east corner 2 paths road": {
+		"graph": "2689b8d5a33dc836",
+		"drawing": "6b7074c4a443f1da"
+	},
+	"corner east corner 2 paths widen": {
+		"graph": "48a2221737c8f404",
+		"drawing": "4600376bcf7822f9"
+	},
+	"corner east corner 2 paths mixed arm": {
+		"graph": "7b6aa674150817ba",
+		"drawing": "b3e45e461c997931"
+	},
+	"corner east corner 2 paths mixed road": {
+		"graph": "6eca6329417c58b4",
+		"drawing": "b4395e8a18c4e8a1"
+	},
+	"corner east corner 2 paths mixed widen": {
+		"graph": "d235dd8dacaa0ff7",
+		"drawing": "bace6c08bedb6f4d"
+	},
+	"corner east corner 3 paths arm": {
+		"graph": "62334e7ed33415f5",
+		"drawing": "df5d5e6e0fa7e2da"
+	},
+	"corner east corner 3 paths road": {
+		"graph": "1cd2df56a337969f",
+		"drawing": "ec95814b85ed6054"
+	},
+	"corner east corner 3 paths widen": {
+		"graph": "20ba5681fa396fa1",
+		"drawing": "af2cd8ec0b336c33"
+	},
+	"corner east corner 3 paths mixed arm": {
+		"graph": "e674c0ed200a91a",
+		"drawing": "e62a4f6899d523a3"
+	},
+	"corner east corner 3 paths mixed road": {
+		"graph": "8b25dc93dfe91c10",
+		"drawing": "21d530a69cae4caa"
+	},
+	"corner east corner 3 paths mixed widen": {
+		"graph": "8b43713deb4714a",
+		"drawing": "34bce2b42640e5af"
+	},
+	"corner arm 2 paths arm": {
+		"graph": "15528a04d9f98277",
+		"drawing": "e62e5a909294a491"
+	},
+	"corner arm 2 paths road": {
+		"graph": "c17839f8210fab8d",
+		"drawing": "12e16258758641cf"
+	},
+	"corner arm 2 paths widen": {
+		"graph": "b73b46aa32a81170",
+		"drawing": "ba774e15dfa51eaa"
+	},
+	"corner arm 2 paths mixed arm": {
+		"graph": "bd935e2d2914323d",
+		"drawing": "e30acd88c8dc32f8"
+	},
+	"corner arm 2 paths mixed road": {
+		"graph": "b638a4252d52f07c",
+		"drawing": "cdd238ad3129fda0"
+	},
+	"corner arm 2 paths mixed widen": {
+		"graph": "fef71fddbe0d2aaf",
+		"drawing": "4a867108e3f4484"
+	},
+	"corner arm 3 paths arm": {
+		"graph": "5e4cd2be00da9ca",
+		"drawing": "64b77c0bcd19019a"
+	},
+	"corner arm 3 paths road": {
+		"graph": "edf4a89ec577669a",
+		"drawing": "3ed7bb5dcafe1a1d"
+	},
+	"corner arm 3 paths widen": {
+		"graph": "a4f59aed85892314",
+		"drawing": "993672ef9b19abc6"
+	},
+	"corner arm 3 paths mixed arm": {
+		"graph": "a989a13a20928a80",
+		"drawing": "566ffdff1a1c78c1"
+	},
+	"corner arm 3 paths mixed road": {
+		"graph": "92a839085e267b08",
+		"drawing": "2e02a6c7aac40975"
+	},
+	"corner arm 3 paths mixed widen": {
+		"graph": "93d75caacf8739e1",
+		"drawing": "6d4ad82885f9508b"
+	}
+}

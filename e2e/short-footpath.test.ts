@@ -1,8 +1,19 @@
 import { expect, test, type Page } from '@playwright/test';
 import { check } from '../src/lib/road-model/checks';
 import { area, toPath } from '../src/lib/road-model/clip';
-import { Drawing } from '../src/lib/road-model/drawing';
-import { liveGraph, openScene, roadModel, screenAt, type Pt } from './app';
+import {
+	drawingOf,
+	expectFreshDrawing,
+	liveGraph,
+	openScene,
+	type Pt,
+	roadModel,
+	screenAt
+} from './app';
+
+// Whatever a test here edits, the editor draws as a fresh build of its graph
+// would.
+test.afterEach(({ page }) => expectFreshDrawing(page));
 
 // e2e/scenes/short-footpath.json: a side street (w–t, two lanes and a 2 m
 // sidewalk each side) ends at t, where a 20 m footpath (t–j) carries both
@@ -30,26 +41,29 @@ const tAt = async (page: Page) => (await liveGraph(page)).nodes.find((n) => n.id
 
 // The drawing the editor runs on, as it stands after the drag.
 async function drawn(page: Page) {
-	const place = (await roadModel(page))!;
-	const scene = new Drawing(place);
-	scene.build();
-	return { place, scene };
+	const scene = await drawingOf(page);
+	return { place: scene.place, scene };
 }
 
 async function expectFootpathKept(page: Page, t: number) {
 	const { place, scene } = await drawn(page);
-	// The footpath is drawn as its own road, not merged away into one
-	// junction with the main street...
+	// The footpath is drawn as its own strip, from its node at t on...
 	const path = place.roads.find((r) => r.id === 'path')!;
 	expect(path).toBeDefined();
-	expect(path.points[0].x).toBeGreaterThan(t);
-	// ...and the side street stops short of t, never running on past it.
+	expect(path.points[0].x).toBeCloseTo(t, 6);
+	// ...and the side street, built as if the footpath weren't there, runs
+	// on to t, never past it.
 	const side = place.roads.find((r) => r.id === 'side')!;
-	expect(side.points.at(-1)!.x).toBeLessThan(t);
-	// The footpath crosses the main street on a zebra at j.
-	const j = scene.node('j')!;
-	expect(j).toBeDefined();
-	const zebra = j.crossings
+	expect(side.points.at(-1)!.x).toBeLessThanOrEqual(t + 1e-6);
+	// The footpath crosses the main street on a zebra at j, drawn by the
+	// main street's pieces there.
+	const pieces = [
+		...place.roads.map((r) => scene.road(r.id)!),
+		...place.junctions.map((j) => scene.node(j.id)!)
+	];
+	const zebra = pieces
+		.flatMap((d) => d.crossings)
+		.filter((c) => c.body.flat().some((p) => Math.hypot(p.x, p.y) < 8))
 		.flatMap((c) => c.runs.filter((r) => r.kind === 'zebra').flatMap((r) => r.rings))
 		.reduce((s, ring) => s + Math.abs(area(toPath(ring))), 0);
 	expect(zebra).toBeGreaterThan(2);
